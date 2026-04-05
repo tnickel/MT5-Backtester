@@ -1,0 +1,22 @@
+target/
+*.class
+*.jar
+*.war
+*.ear
+
+# Eclipse
+.classpath
+.project
+.settings/
+
+# IntelliJ IDEA
+.idea/
+*.iml
+*.iws
+
+# Backtester specific
+backtest_reports/
+artifacts/
+.gemini/
+logs/
+bin/
