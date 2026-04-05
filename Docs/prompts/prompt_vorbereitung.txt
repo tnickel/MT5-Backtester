@@ -1,0 +1,62 @@
+Meine Idee mit google Antgravity einen Backtester zu bauen, hierzu will ich antigravity zusatzinformationen geben.
+Deswegen bauche ich einen Prompt für eine Deep Research Analyse die folgendes ermitteln soll.
+
+Es soll für den Meatrader5 ein automatischer Backtester geschrieben werden. Hierzu soll der Depp Research prompt folgende Dinge ermitteln.
+a) Welche Schnittstellen hat der Metatrader5 zum aufruf per cli skripte, suche hierzu auch in der doku und auf www.mql5.com
+b) Suche in Github ob jemand schon soetwas gemacht hat und welchen code man dazu verwenden kann, schaue nach was schon da ist.
+c) Das Programm soll dann ein javaprogramm mit graphischer oberfläche werdend
+d) Schaue nach woher man kursdaten bekommen könnte www.dukascopy.com bietet kostenlose Kursdaten, diese müssen in den Metatrader importieren werden, am esten automatischerdas
+das soll die Software unterstützen.
+
+Ermittle die daten und zusatzinfos, ich brauche von dem ganzen hier ein prompt der genug daten sammelt und ein fertiges dokument erstellt. Das dokument 
+werde ich dann in doc ablegen so das die KI dann es als zusatzinformation nutzen kann.
+Schreibe dort konkrete schnittstellenbeshreibungen zum metatraer5 rein und auch quellen und wie es geht dukascopy daten von dukaccopy zu laden und in den metatrader zu importieren
+
+schreibe mir jetzt den deep research prompt hierzu. 
+Füge noch hinzu was du denkst was noch sinvoll ist. 
+
+Also Ziel ist es ein dokument zu haben was ich im doc ordner habe und die Antgravity nutzen kann um mir ein programm mit graphischer Oberfläche zu bauen für
+automatische backtests.
+
+----------------
+Deep Research PromptRolle & Ziel:
+Du bist ein Senior Software Architekt und Experte für algorithmisches Trading, MetaTrader 5 (MQL5) und Systemintegration. Führe eine umfassende "Deep Research"-Analyse durch, um ein detailliertes technisches Spezifikations- und Referenzdokument zu erstellen.
+
+Zweck des Dokuments: > Das finale Dokument wird als Wissensbasis (Context) für einen KI-Coding-Agenten dienen, der ein Java-Programm mit grafischer Oberfläche (GUI) entwickeln soll. Diese Java-Software soll automatische Backtests im MetaTrader 5 starten, historische Daten verwalten und die Ergebnisse auswerten.
+
+Bitte recherchiere und dokumentiere die folgenden Aspekte detailliert, mit konkreten Code-Beispielen, API-Endpunkten und Quellenangaben (URLs):
+
+1. Schnittstellen und CLI-Steuerung von MetaTrader 5:
+
+Recherchiere in der offiziellen MQL5-Dokumentation (www.mql5.com) und im Web, wie man den MT5-Strategietester über die Kommandozeile (CLI) startet und steuert (Stichwort: terminal64.exe /config:tester.ini).
+
+Liefere eine konkrete Beschreibung, wie eine solche .ini-Konfigurationsdatei aufgebaut sein muss, um einen EA, ein Symbol, einen Zeitraum und die Startparameter für den Backtest festzulegen.
+
+Wie kann das externe Programm erkennen, dass der Backtest beendet ist? (z.B. durch das Lesen der generierten XML/HTML-Report-Dateien von MT5).
+
+Alternative: Recherchiere die offizielle Python-Bibliothek MetaTrader5. Skizziere, ob es sinnvoller wäre, wenn das Java-Programm als Wrapper fungiert und Python-Skripte für die MT5-Kommunikation aufruft.
+
+2. Beschaffung und Import von Dukascopy-Kursdaten:
+
+Recherchiere Methoden, wie man kostenlose, hochauflösende Tick- oder Minutendaten (OHLCV) von www.dukascopy.com herunterladen kann (z.B. über deren API, Bi5-Format oder Tools wie Tickstory/QuantDataManager).
+
+Wie kann dieser Download-Prozess automatisiert werden (gibt es Python-Skripte oder REST-APIs dafür)?
+
+Crucial Step: Wie importiert man diese Fremddaten in den MetaTrader 5? Recherchiere das Konzept der "Custom Symbols" (Benutzerdefinierte Symbole) in MT5. Liefere eine Schritt-für-Schritt-Erklärung oder MQL5/Python-Skripte, wie man CSV-Daten automatisiert in ein Custom Symbol im MT5 einspeist, damit der Backtester sie nutzen kann.
+
+3. GitHub Prior Art (Bestehender Code & Projekte):
+
+Durchsuche GitHub nach bestehenden Repositories, die MT5-Backtests automatisieren (Suchbegriffe: "MT5 backtest automation", "Metatrader 5 CLI tester", "Dukascopy to MT5", "Python MetaTrader5 backtester").
+
+Fasse die besten Architekturansätze zusammen und extrahiere nützliche Code-Snippets (z.B. wie andere Entwickler den CLI-Aufruf oder den Datenimport gelöst haben).
+
+Welche Open-Source-Bibliotheken können für das Herunterladen von Dukascopy-Daten wiederverwendet werden? (z.B. dukascopy-node oder Python-Pendants).
+
+4. Architektur-Vorgaben für die Java GUI:
+
+Wie sollte die Kommunikation zwischen der Java-GUI (z.B. JavaFX oder Swing) und dem MT5 idealerweise ablaufen? (Empfehlung: Java generiert die .ini-Datei, nutzt ProcessBuilder zum Starten von terminal64.exe, und parst anschließend die von MT5 generierte XML-Report-Datei).
+
+Welche Java-Bibliotheken empfehlen sich für das Parsen der MT5-Ergebnisberichte und das Verarbeiten von großen CSV-Kursdaten?
+
+Ausgabeformat:
+Generiere ein sauberes, extrem detailliertes Markdown-Dokument. Nutze übersichtliche Kapitel, Code-Blöcke für Skripte (MQL5, Python, Java, INI-Files) und verlinke alle gefundenen Quellen. Das Dokument muss so geschrieben sein, dass ein KI-Programmierer ohne weiteres Googlen sofort mit der Programmierung der Java-Software und der MT5-Skripte beginnen kann.

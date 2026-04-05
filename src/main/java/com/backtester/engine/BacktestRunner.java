@@ -1,0 +1,334 @@
+package com.backtester.engine;
+
+import com.backtester.config.AppConfig;
+import com.backtester.report.BacktestResult;
+import com.backtester.report.ReportParser;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import java.io.*;
+import java.nio.file.*;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
+import java.util.concurrent.TimeUnit;
+import java.util.function.Consumer;
+import java.util.stream.Stream;
+
+/**
+ * Orchestrates the execution of a single MT5 backtest:
+ * 1. Creates the output subdirectory
+ * 2. Generates the tester.ini
+ * 3. Launches terminal64.exe via ProcessBuilder
+ * 4. Consumes stdout/stderr to prevent 64KB deadlock
+ * 5. Waits for process completion
+ * 6. Searches for and copies the report from MT5 directory
+ * 7. Parses the resulting XML report
+ */
+public class BacktestRunner {
+
+    private static final Logger log = LoggerFactory.getLogger(BacktestRunner.class);
+    private final AppConfig config;
+    private final IniGenerator iniGenerator;
+    private final ReportParser reportParser;
+    private Consumer<String> logCallback;
+    private volatile boolean cancelled = false;
+    private Process currentProcess;
+
+    /** The report filename used in the INI (without path) */
+    private static final String REPORT_FILENAME = "BacktestReport";
+
+    public BacktestRunner() {
+        this.config = AppConfig.getInstance();
+        this.iniGenerator = new IniGenerator();
+        this.reportParser = new ReportParser();
+    }
+
+    /**
+     * Set a callback to receive log messages (for GUI display).
+     */
+    public void setLogCallback(Consumer<String> callback) {
+        this.logCallback = callback;
+    }
+
+    /**
+     * Runs a backtest with the given configuration.
+     * This is a BLOCKING call — run it in a background thread (SwingWorker).
+     *
+     * @param btConfig the backtest parameters
+     * @return the parsed result, or null on failure
+     */
+    public BacktestResult runBacktest(BacktestConfig btConfig) {
+        cancelled = false;
+
+        String terminalPath = config.getMt5TerminalPath();
+        if (!Files.exists(Paths.get(terminalPath))) {
+            logMessage("ERROR: MT5 terminal not found at: " + terminalPath);
+            return null;
+        }
+
+        Path mt5Dir = Paths.get(terminalPath).getParent();
+
+        try {
+            // 1. Create output directory
+            String timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss"));
+            String dirName = btConfig.toDirectoryName() + "_" + timestamp;
+            Path outputDir = config.getReportsDirectory().resolve(dirName);
+            Files.createDirectories(outputDir);
+            logMessage("Created output directory: " + outputDir);
+
+            // 2. Generate tester.ini
+            // IMPORTANT: MT5 writes the report RELATIVE to its own directory.
+            // So we use just a filename, then search for it after the backtest.
+            String reportName = REPORT_FILENAME + ".xml";
+            Path iniPath = outputDir.resolve("tester.ini");
+            iniGenerator.generate(btConfig, iniPath, reportName);
+            logMessage("Generated tester.ini (Report=" + reportName + ")");
+
+            // 3. Build process command
+            ProcessBuilder pb;
+            if (config.isPortableMode()) {
+                pb = new ProcessBuilder(
+                    terminalPath,
+                    "/portable",
+                    "/config:" + iniPath.toAbsolutePath().toString()
+                );
+            } else {
+                pb = new ProcessBuilder(
+                    terminalPath,
+                    "/config:" + iniPath.toAbsolutePath().toString()
+                );
+            }
+
+            // CRITICAL: Merge stderr into stdout to prevent 64KB deadlock
+            pb.redirectErrorStream(true);
+            pb.directory(mt5Dir.toFile());
+
+            logMessage("Starting MT5: " + String.join(" ", pb.command()));
+
+            // 4. Start process
+            currentProcess = pb.start();
+
+            // 5. Asynchronous stream consumer (prevents 64KB buffer deadlock)
+            Thread outputConsumer = new Thread(() -> {
+                try (BufferedReader reader = new BufferedReader(
+                        new InputStreamReader(currentProcess.getInputStream()))) {
+                    String line;
+                    while ((line = reader.readLine()) != null) {
+                        logMessage("[MT5] " + line);
+                    }
+                } catch (IOException e) {
+                    if (!cancelled) {
+                        log.error("Error reading MT5 output", e);
+                    }
+                }
+            }, "MT5-Output-Consumer");
+            outputConsumer.setDaemon(true);
+            outputConsumer.start();
+
+            // 6. Wait for process to finish
+            logMessage("Waiting for MT5 backtest to complete...");
+            boolean finished = currentProcess.waitFor(4, TimeUnit.HOURS);
+
+            if (!finished) {
+                logMessage("WARNING: Backtest timed out after 4 hours, terminating...");
+                currentProcess.destroyForcibly();
+                return null;
+            }
+
+            if (cancelled) {
+                logMessage("Backtest was cancelled.");
+                return null;
+            }
+
+            int exitCode = currentProcess.exitValue();
+            logMessage("MT5 terminated with exit code: " + exitCode);
+
+            // 7. Search for the report file
+            // MT5 can place the report in several locations:
+            //   a) MT5_DIR/ReportName.xml (most common)
+            //   b) MT5_DIR/Reports/ReportName.xml
+            //   c) MT5_DIR/Tester/ReportName.xml
+            //   d) Or with .htm extension instead of .xml
+            Path reportInOutput = outputDir.resolve("report.xml");
+            boolean reportFound = findAndCopyReport(mt5Dir, reportName, reportInOutput);
+
+            BacktestResult result = new BacktestResult();
+            result.setSymbol(btConfig.getSymbol());
+            result.setPeriod(btConfig.getPeriod());
+            result.setExpert(btConfig.getExpert());
+            result.setOutputDirectory(outputDir.toString());
+
+            if (reportFound) {
+                result = reportParser.parse(reportInOutput);
+                result.setSymbol(btConfig.getSymbol());
+                result.setPeriod(btConfig.getPeriod());
+                result.setExpert(btConfig.getExpert());
+                result.setOutputDirectory(outputDir.toString());
+                result.setSuccess(true);
+                logMessage("Backtest completed successfully!");
+                logMessage("Results: Profit=" + result.getTotalProfit() +
+                          ", Trades=" + result.getTotalTrades() +
+                          ", Drawdown=" + result.getMaxDrawdown() + "%");
+            } else {
+                logMessage("WARNING: Report file not found in MT5 directory.");
+                logMessage("Searched in: " + mt5Dir);
+                logMessage("Looked for: " + reportName + " and variants (.htm, .html)");
+                logMessage("The backtest may have failed, or the EA produced no trades.");
+                result.setSuccess(false);
+                result.setMessage("Report file not found - check MT5 logs");
+            }
+
+            // ALWAYS write summary (so the results table shows something)
+            writeSummary(outputDir, result, btConfig);
+            return result;
+
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            logMessage("Backtest interrupted");
+            return null;
+        } catch (Exception e) {
+            logMessage("ERROR: " + e.getMessage());
+            log.error("Backtest execution failed", e);
+            return null;
+        }
+    }
+
+    private boolean findAndCopyReport(Path mt5Dir, String reportName, Path destination) {
+        // Possible report file names (MT5 may use different extensions)
+        String baseName = reportName.replace(".xml", "");
+        String[] possibleNames = {
+            reportName,                    // BacktestReport.xml
+            baseName + ".htm",             // BacktestReport.htm
+            baseName + ".html",            // BacktestReport.html
+        };
+
+        // Possible directories where MT5 might place the report
+        Path[] searchDirs = {
+            mt5Dir,                                    // MT5 root
+            mt5Dir.resolve("Reports"),                 // Reports subdirectory
+            mt5Dir.resolve("Tester"),                  // Tester subdirectory
+            mt5Dir.resolve("MQL5").resolve("Reports"), // MQL5/Reports
+        };
+
+        for (Path dir : searchDirs) {
+            if (!Files.exists(dir)) continue;
+            for (String name : possibleNames) {
+                Path candidate = dir.resolve(name);
+                if (Files.exists(candidate)) {
+                    try {
+                        logMessage("Found report: " + candidate);
+                        Files.copy(candidate, destination, StandardCopyOption.REPLACE_EXISTING);
+                        logMessage("Report copied to: " + destination);
+
+                        copyAssociatedFiles(candidate, destination);
+
+                        // Also copy any .htm version for viewing
+                        if (name.endsWith(".htm") || name.endsWith(".html")) {
+                            Path htmDest = destination.getParent().resolve("report.htm");
+                            Files.copy(candidate, htmDest, StandardCopyOption.REPLACE_EXISTING);
+                        }
+                        return true;
+                    } catch (IOException e) {
+                        log.error("Failed to copy report", e);
+                    }
+                }
+            }
+        }
+
+        // Fallback: Search recursively for any file matching the report name
+        logMessage("Searching recursively in MT5 directory for report...");
+        try (Stream<Path> walker = Files.walk(mt5Dir, 3)) {
+            Path found = walker
+                .filter(p -> {
+                    String fname = p.getFileName().toString().toLowerCase();
+                    return fname.startsWith(baseName.toLowerCase()) &&
+                           (fname.endsWith(".xml") || fname.endsWith(".htm") || fname.endsWith(".html"));
+                })
+                .findFirst()
+                .orElse(null);
+
+            if (found != null) {
+                logMessage("Found report via recursive search: " + found);
+                Files.copy(found, destination, StandardCopyOption.REPLACE_EXISTING);
+                copyAssociatedFiles(found, destination);
+                return true;
+            }
+        } catch (IOException e) {
+            log.error("Error searching for report", e);
+        }
+
+        return false;
+    }
+
+    private void copyAssociatedFiles(Path sourceFile, Path destination) {
+        Path dir = sourceFile.getParent();
+        String baseName = sourceFile.getFileName().toString();
+        try (Stream<Path> siblingFiles = Files.walk(dir, 1)) {
+            siblingFiles.filter(p -> {
+                String fName = p.getFileName().toString();
+                return fName.startsWith(baseName) && !fName.equals(baseName);
+            }).forEach(p -> {
+                try {
+                    Path associatedDest = destination.getParent().resolve(p.getFileName().toString());
+                    Files.copy(p, associatedDest, StandardCopyOption.REPLACE_EXISTING);
+                    logMessage("Copied associated file: " + p.getFileName());
+                } catch (IOException ex) {
+                    log.warn("Failed to copy associated file: " + p, ex);
+                }
+            });
+        } catch (IOException ex) {
+            log.warn("Could not list sibling files in " + dir, ex);
+        }
+    }
+
+    /**
+     * Cancel the currently running backtest.
+     */
+    public void cancel() {
+        cancelled = true;
+        if (currentProcess != null && currentProcess.isAlive()) {
+            currentProcess.destroyForcibly();
+            logMessage("Backtest process terminated.");
+        }
+    }
+
+    /**
+     * Write a summary file that contains both result data and configuration info.
+     * This is ALWAYS written, even if the report wasn't found.
+     */
+    private void writeSummary(Path outputDir, BacktestResult result, BacktestConfig btConfig) {
+        Path summaryFile = outputDir.resolve("summary.txt");
+        try (Writer writer = Files.newBufferedWriter(summaryFile)) {
+            writer.write("=== MT5 Backtest Summary ===\n");
+            writer.write("Expert: " + result.getExpert() + "\n");
+            writer.write("Symbol: " + result.getSymbol() + "\n");
+            writer.write("Period: " + result.getPeriod() + "\n");
+            writer.write("From: " + btConfig.getFromDate() + "\n");
+            writer.write("To: " + btConfig.getToDate() + "\n");
+            writer.write("Model: " + BacktestConfig.MODEL_NAMES[btConfig.getModel()] + "\n");
+            writer.write("Deposit: " + btConfig.getDeposit() + " " + btConfig.getCurrency() + "\n");
+            writer.write("Leverage: " + btConfig.getLeverage() + "\n");
+            writer.write("Status: " + (result.isSuccess() ? "SUCCESS" : "FAILED - " + result.getMessage()) + "\n");
+            writer.write("\n--- Results ---\n");
+            writer.write("Total Profit: " + result.getTotalProfit() + "\n");
+            writer.write("Total Trades: " + result.getTotalTrades() + "\n");
+            writer.write("Win Rate: " + result.getWinRate() + "%\n");
+            writer.write("Max Drawdown: " + result.getMaxDrawdown() + "%\n");
+            writer.write("Profit Factor: " + result.getProfitFactor() + "\n");
+            writer.write("Sharpe Ratio: " + result.getSharpeRatio() + "\n");
+            writer.write("Output: " + outputDir + "\n");
+            log.info("Summary written to {}", summaryFile);
+        } catch (IOException e) {
+            log.error("Failed to write summary", e);
+        }
+    }
+
+    private void logMessage(String message) {
+        String timestamped = LocalDateTime.now().format(
+            DateTimeFormatter.ofPattern("HH:mm:ss")) + " " + message;
+        log.info(message);
+        if (logCallback != null) {
+            logCallback.accept(timestamped);
+        }
+    }
+}

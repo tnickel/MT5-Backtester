@@ -1,0 +1,21 @@
+Ich brauche in Programm in java mit graphischer Oberfläche, als maven projekt was in eclipse importierbar ist.
+Das Programm ist ein Metatraer5 Backtester, der automatisch backtests durchfürhen soll.
+
+Man gibt Currency Pair, timeframe, start und endzeitpunkt an sowie auch den backtestmode an.
+Das Program führt dann den backtest durch und liefert die Ergebnisse in einem bestimmten verzeichnis.
+
+Es wird konfiguriert wo der metatrader zu finden ist.
+Es wird auch konfiguriert wo das Ausgabeverzeichniss ist.
+Es wird für jeden Backtest ein unterverzichniss mit Namen_Timeframe_CurrencyPair und Algo angegeben.
+Es wird auch ein Algo für den Backtest angegeben, das ist der Mt5 robot der gebacktestet wird.
+Es gibt die Möglichkeit dukascopydaten aus dem internet zu laden und für den Backtest zu verwenden
+Baue sowas ein das du dukascopy M1 daten von Dukascopy aus dem internet lädas und auch in den Metrader einbauen kannst.
+Das sind zwei stufen laden und zum Metrader übertragen,
+Mache ein menue welche währungspaar geladen werden und welche zum metatrader übertragen werden.
+
+Verwende das dokument google_research.md welches sich in D:\AntiGravitySoftware\GitWorkspace\Backtester\Docs befindet um dich zu informieren.
+Hautsächlich soll das programm mit oberfläche in java geschrieben werden, du darfst aber auch phyton integrieren oder was anderes wenn du der meinung bist
+das es besser ist.
+lege ein config verzeichniss ab wo du dir die config speicherst
+lege ein verzeichniss backtests_reports an wo die backtets abgelegt werden.
+und auch ein data verzeichniss wo du dir die duka daten speicherst.
