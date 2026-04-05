@@ -237,7 +237,7 @@ public class BacktestPanel extends JPanel {
         resultsTable.setFont(new Font("Segoe UI", Font.PLAIN, 12));
         resultsTable.setRowHeight(26);
         resultsTable.getTableHeader().setFont(new Font("Segoe UI", Font.BOLD, 12));
-        resultsTable.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
+        resultsTable.setSelectionMode(ListSelectionModel.MULTIPLE_INTERVAL_SELECTION);
         resultsTable.setAutoCreateRowSorter(true);
 
         // Set column widths
@@ -282,7 +282,7 @@ public class BacktestPanel extends JPanel {
         refreshBtn.addActionListener(e -> loadExistingResults());
 
         JButton deleteBtn = new JButton("🗑 Delete");
-        deleteBtn.addActionListener(e -> deleteSelectedResult());
+        deleteBtn.addActionListener(e -> deleteSelectedResults());
 
         toolbar.add(showReportBtn);
         toolbar.add(openDirBtn);
@@ -526,35 +526,39 @@ public class BacktestPanel extends JPanel {
                 SwingUtilities.getWindowAncestor(this), dir);
     }
 
-    private void deleteSelectedResult() {
-        int row = resultsTable.getSelectedRow();
-        if (row < 0) {
+    private void deleteSelectedResults() {
+        int[] rows = resultsTable.getSelectedRows();
+        if (rows.length == 0) {
             JOptionPane.showMessageDialog(this,
-                    "Please select a result to delete.",
+                    "Please select one or more results to delete.",
                     "No Selection", JOptionPane.INFORMATION_MESSAGE);
             return;
         }
-        String dir = (String) resultsTableModel.getValueAt(
-                resultsTable.convertRowIndexToModel(row), 8);
 
         int confirm = JOptionPane.showConfirmDialog(this,
-                "Delete this backtest result?\n" + dir,
+                "Are you sure you want to delete the " + rows.length + " selected test run(s)?\nThis will permanently delete the associated files from disk.",
                 "Confirm Delete", JOptionPane.YES_NO_OPTION, JOptionPane.WARNING_MESSAGE);
 
         if (confirm == JOptionPane.YES_OPTION) {
-            try {
-                Path dirPath = Paths.get(dir);
-                if (Files.exists(dirPath)) {
-                    try (var files = Files.walk(dirPath)) {
-                        files.sorted(java.util.Comparator.reverseOrder())
-                             .map(Path::toFile)
-                             .forEach(File::delete);
+            // Sort rows in descending order to avoid index shifting issues when removing from model
+            java.util.Arrays.sort(rows);
+            for (int i = rows.length - 1; i >= 0; i--) {
+                int modelRow = resultsTable.convertRowIndexToModel(rows[i]);
+                String dir = (String) resultsTableModel.getValueAt(modelRow, 8);
+                try {
+                    Path dirPath = Paths.get(dir);
+                    if (Files.exists(dirPath)) {
+                        try (var files = Files.walk(dirPath)) {
+                            files.sorted(java.util.Comparator.reverseOrder())
+                                 .map(Path::toFile)
+                                 .forEach(File::delete);
+                        }
                     }
+                    resultsTableModel.removeRow(modelRow);
+                    logPanel.log("INFO", "Deleted: " + dir);
+                } catch (Exception e) {
+                    logPanel.log("ERROR", "Failed to delete: " + e.getMessage());
                 }
-                resultsTableModel.removeRow(resultsTable.convertRowIndexToModel(row));
-                logPanel.log("INFO", "Deleted: " + dir);
-            } catch (Exception e) {
-                logPanel.log("ERROR", "Failed to delete: " + e.getMessage());
             }
         }
     }
