@@ -15,13 +15,16 @@ import java.awt.event.ActionEvent;
 import java.io.File;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
 
 /**
  * Multi-Backtester configuration and execution panel.
- * Uses a comfortable UI for batch permutations.
+ * Master-Detail View implementation for accumulated batch runs.
  */
 public class MultiBacktestPanel extends JPanel {
 
@@ -47,10 +50,20 @@ public class MultiBacktestPanel extends JPanel {
     private JButton cancelButton;
     private JProgressBar progressBar;
 
-    // Results table
+    // Results Master-Detail
+    private static class BatchRunModel {
+        String name;
+        Path reportPath;
+        List<BacktestResult> results = new ArrayList<>();
+        @Override
+        public String toString() { return name; }
+    }
+
+    private DefaultListModel<BatchRunModel> batchListModel;
+    private JList<BatchRunModel> batchList;
+
     private DefaultTableModel resultsTableModel;
     private JTable resultsTable;
-    private Path latestMultiReportPath;
 
     private MultiBacktestRunner currentRunner;
 
@@ -65,8 +78,8 @@ public class MultiBacktestPanel extends JPanel {
         JPanel resultsPanel = createResultsPanel();
 
         JSplitPane splitPane = new JSplitPane(JSplitPane.VERTICAL_SPLIT, configPanel, resultsPanel);
-        splitPane.setDividerLocation(420);
-        splitPane.setResizeWeight(0.5);
+        splitPane.setDividerLocation(360);
+        splitPane.setResizeWeight(0.2);
 
         add(splitPane, BorderLayout.CENTER);
     }
@@ -276,23 +289,46 @@ public class MultiBacktestPanel extends JPanel {
 
     private JPanel createResultsPanel() {
         JPanel panel = new JPanel(new BorderLayout(5, 5));
-
-        JLabel title = new JLabel("Batch Run Results");
-        title.setFont(new Font("Segoe UI", Font.BOLD, 14));
-        title.setForeground(new Color(241, 154, 78));
         
-        String[] cols = {"Comb.", "Robot", "Symbol", "Period", "Trades", "Win Rate", "Drawdown", "Profit", "Status", "Directory"};
+        // ---- Master View (List of Batches) ----
+        batchListModel = new DefaultListModel<>();
+        batchList = new JList<>(batchListModel);
+        batchList.setSelectionMode(ListSelectionModel.MULTIPLE_INTERVAL_SELECTION);
+        batchList.setFont(new Font("Segoe UI", Font.BOLD, 12));
+        
+        JPanel masterPanel = new JPanel(new BorderLayout());
+        masterPanel.add(new JLabel(" Batch History"), BorderLayout.NORTH);
+        masterPanel.add(new JScrollPane(batchList), BorderLayout.CENTER);
+        
+        JButton deleteBatchBtn = new JButton("🗑 Delete Batch");
+        deleteBatchBtn.addActionListener(e -> deleteSelectedBatches());
+        
+        JButton openMultiReportBtn = new JButton("🌐 Open Multi-Report Node");
+        openMultiReportBtn.addActionListener(e -> openSelectedMultiReport());
+        
+        JPanel batchBtnP = new JPanel(new GridLayout(2,1));
+        batchBtnP.add(openMultiReportBtn);
+        batchBtnP.add(deleteBatchBtn);
+        masterPanel.add(batchBtnP, BorderLayout.SOUTH);
+
+        // ---- Detail View (Table of Runs) ----
+        String[] cols = {"Comb.", "Robot", "Symbol", "Period", "Trades", "Win Rate", "Drawdown", "Profit", "Status", "Directory", "ResultObject"};
         resultsTableModel = new DefaultTableModel(cols, 0) {
             @Override public boolean isCellEditable(int r, int c) { return false; }
         };
 
         resultsTable = new JTable(resultsTableModel);
         resultsTable.setRowHeight(24);
-        resultsTable.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
-        // Hide directory column
+        resultsTable.setSelectionMode(ListSelectionModel.MULTIPLE_INTERVAL_SELECTION);
+        resultsTable.setAutoCreateRowSorter(true);
+        
+        // Hide directory and result object columns
         resultsTable.getColumnModel().getColumn(9).setMinWidth(0);
         resultsTable.getColumnModel().getColumn(9).setMaxWidth(0);
         resultsTable.getColumnModel().getColumn(9).setWidth(0);
+        resultsTable.getColumnModel().getColumn(10).setMinWidth(0);
+        resultsTable.getColumnModel().getColumn(10).setMaxWidth(0);
+        resultsTable.getColumnModel().getColumn(10).setWidth(0);
 
         resultsTable.addMouseListener(new java.awt.event.MouseAdapter() {
             @Override
@@ -301,37 +337,61 @@ public class MultiBacktestPanel extends JPanel {
             }
         });
 
-        JPanel topP = new JPanel(new BorderLayout());
-        topP.add(title, BorderLayout.WEST);
+        JPanel detailPanel = new JPanel(new BorderLayout());
+        detailPanel.add(new JLabel(" Runs for Selected Batch"), BorderLayout.NORTH);
+        detailPanel.add(new JScrollPane(resultsTable), BorderLayout.CENTER);
 
-        JPanel btnP = new JPanel(new FlowLayout(FlowLayout.RIGHT, 5, 0));
+        JPanel detailBtnP = new JPanel(new FlowLayout(FlowLayout.RIGHT, 5, 0));
         JButton showSingleBtn = new JButton("📊 Show Single Report");
         showSingleBtn.addActionListener(e -> showSelectedSingleReport());
+        JButton deleteRunBtn = new JButton("🗑 Delete Selected Runs");
+        deleteRunBtn.addActionListener(e -> deleteSelectedRuns());
         
-        JButton showMultiBtn = new JButton("🌐 Open Multi-Report HTML");
-        showMultiBtn.addActionListener(e -> {
-            if (latestMultiReportPath != null && java.nio.file.Files.exists(latestMultiReportPath)) {
-                try { Desktop.getDesktop().browse(latestMultiReportPath.toUri()); } 
-                catch (Exception ex) { ex.printStackTrace(); }
-            } else {
-                JOptionPane.showMessageDialog(this, "No Multi-Report generated yet.", "Info", JOptionPane.INFORMATION_MESSAGE);
+        detailBtnP.add(showSingleBtn);
+        detailBtnP.add(deleteRunBtn);
+        detailPanel.add(detailBtnP, BorderLayout.SOUTH);
+
+        // Connect Master to Detail
+        batchList.addListSelectionListener(e -> {
+            if (!e.getValueIsAdjusting()) {
+                refreshDetailTable();
             }
         });
 
-        btnP.add(showSingleBtn);
-        btnP.add(showMultiBtn);
-        topP.add(btnP, BorderLayout.EAST);
-
-        panel.add(topP, BorderLayout.NORTH);
-        panel.add(new JScrollPane(resultsTable), BorderLayout.CENTER);
+        JSplitPane splitPane = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, masterPanel, detailPanel);
+        splitPane.setDividerLocation(180);
+        panel.add(splitPane, BorderLayout.CENTER);
 
         return panel;
+    }
+
+    private void refreshDetailTable() {
+        resultsTableModel.setRowCount(0);
+        BatchRunModel selected = batchList.getSelectedValue();
+        if (selected == null) return;
+        
+        int idx = 1;
+        for (BacktestResult result : selected.results) {
+            resultsTableModel.addRow(new Object[]{
+                idx++,
+                result.getExpert(),
+                result.getSymbol(),
+                result.getPeriod(),
+                result.getTotalTrades(),
+                String.format("%.1f%%", result.getWinRate()),
+                String.format("%.2f%%", result.getMaxDrawdown()),
+                String.format("%.2f", result.getTotalProfit()),
+                result.isSuccess() ? "OK" : "FAIL",
+                result.getOutputDirectory(),
+                result
+            });
+        }
     }
 
     private void showSelectedSingleReport() {
         int r = resultsTable.getSelectedRow();
         if (r >= 0) {
-            String dirStr = (String) resultsTableModel.getValueAt(r, 9);
+            String dirStr = (String) resultsTableModel.getValueAt(resultsTable.convertRowIndexToModel(r), 9);
             if (dirStr != null && !dirStr.isEmpty()) {
                 File dir = new File(dirStr);
                 if (dir.exists()) {
@@ -340,6 +400,83 @@ public class MultiBacktestPanel extends JPanel {
                     JOptionPane.showMessageDialog(this, "Directory no longer exists.", "Error", JOptionPane.ERROR_MESSAGE);
                 }
             }
+        }
+    }
+
+    private void deleteSelectedBatches() {
+        List<BatchRunModel> selected = batchList.getSelectedValuesList();
+        if (selected.isEmpty()) return;
+        
+        int confirm = JOptionPane.showConfirmDialog(this,
+                "Delete " + selected.size() + " batch run(s)?\nThis will permanently delete all enclosed directories.",
+                "Confirm Batch Deletion", JOptionPane.YES_NO_OPTION, JOptionPane.WARNING_MESSAGE);
+
+        if (confirm == JOptionPane.YES_OPTION) {
+            for (BatchRunModel batch : selected) {
+                // Delete multi report file if exists
+                if (batch.reportPath != null && Files.exists(batch.reportPath)) {
+                    try { Files.delete(batch.reportPath); } catch (Exception ignored) {}
+                }
+                // Delete all individual runs
+                for (BacktestResult res : batch.results) {
+                    deleteDirectory(res.getOutputDirectory());
+                }
+                batchListModel.removeElement(batch);
+            }
+            resultsTableModel.setRowCount(0);
+        }
+    }
+
+    private void deleteSelectedRuns() {
+        int[] rows = resultsTable.getSelectedRows();
+        if (rows.length == 0) return;
+        
+        BatchRunModel activeBatch = batchList.getSelectedValue();
+        if (activeBatch == null) return;
+
+        int confirm = JOptionPane.showConfirmDialog(this,
+                "Are you sure you want to delete the " + rows.length + " selected test run(s)?",
+                "Confirm Delete", JOptionPane.YES_NO_OPTION, JOptionPane.WARNING_MESSAGE);
+
+        if (confirm == JOptionPane.YES_OPTION) {
+            java.util.Arrays.sort(rows);
+            for (int i = rows.length - 1; i >= 0; i--) {
+                int modelRow = resultsTable.convertRowIndexToModel(rows[i]);
+                String dir = (String) resultsTableModel.getValueAt(modelRow, 9);
+                BacktestResult res = (BacktestResult) resultsTableModel.getValueAt(modelRow, 10);
+                
+                deleteDirectory(dir);
+                
+                activeBatch.results.remove(res);
+                resultsTableModel.removeRow(modelRow);
+            }
+        }
+    }
+
+    private void openSelectedMultiReport() {
+        BatchRunModel selected = batchList.getSelectedValue();
+        if (selected != null && selected.reportPath != null && Files.exists(selected.reportPath)) {
+            try { Desktop.getDesktop().browse(selected.reportPath.toUri()); } 
+            catch (Exception ex) { ex.printStackTrace(); }
+        } else {
+            JOptionPane.showMessageDialog(this, "No valid Multi-Report generated for this node yet.", "Info", JOptionPane.INFORMATION_MESSAGE);
+        }
+    }
+
+    private void deleteDirectory(String dirPathStr) {
+        if (dirPathStr == null || dirPathStr.isEmpty()) return;
+        try {
+            Path dirPath = Paths.get(dirPathStr);
+            if (Files.exists(dirPath)) {
+                try (var files = Files.walk(dirPath)) {
+                    files.sorted(java.util.Comparator.reverseOrder())
+                         .map(Path::toFile)
+                         .forEach(File::delete);
+                }
+                logPanel.log("INFO", "Deleted: " + dirPathStr);
+            }
+        } catch (Exception e) {
+            logPanel.log("ERROR", "Failed to delete: " + e.getMessage());
         }
     }
 
@@ -377,7 +514,12 @@ public class MultiBacktestPanel extends JPanel {
         conf.setToDate(toDatePicker.getDate());
         conf.setDeposit((Integer) depositSpinner.getValue());
 
-        resultsTableModel.setRowCount(0);
+        // Create new Node in Tree / List
+        BatchRunModel newBatch = new BatchRunModel();
+        newBatch.name = "▶ Batch " + LocalDateTime.now().format(DateTimeFormatter.ofPattern("HH:mm:ss")) + " ("+conf.getTotalCombinations()+" Tasks)";
+        batchListModel.addElement(newBatch);
+        batchList.setSelectedValue(newBatch, true);
+
         startButton.setEnabled(false);
         cancelButton.setEnabled(true);
 
@@ -395,19 +537,25 @@ public class MultiBacktestPanel extends JPanel {
             },
             result -> {
                 count[0]++;
+                newBatch.results.add(result);
                 progressBar.setString("Running " + count[0] + " / " + total);
-                resultsTableModel.addRow(new Object[]{
-                    count[0],
-                    result.getExpert(),
-                    result.getSymbol(),
-                    result.getPeriod(),
-                    result.getTotalTrades(),
-                    String.format("%.1f%%", result.getWinRate()),
-                    String.format("%.2f%%", result.getMaxDrawdown()),
-                    String.format("%.2f", result.getTotalProfit()),
-                    result.isSuccess() ? "OK" : "FAIL",
-                    result.getOutputDirectory()
-                });
+                
+                // Only immediately add to table if this batch is currently selected
+                if (batchList.getSelectedValue() == newBatch) {
+                    resultsTableModel.addRow(new Object[]{
+                        newBatch.results.size(),
+                        result.getExpert(),
+                        result.getSymbol(),
+                        result.getPeriod(),
+                        result.getTotalTrades(),
+                        String.format("%.1f%%", result.getWinRate()),
+                        String.format("%.2f%%", result.getMaxDrawdown()),
+                        String.format("%.2f", result.getTotalProfit()),
+                        result.isSuccess() ? "OK" : "FAIL",
+                        result.getOutputDirectory(),
+                        result
+                    });
+                }
             }
         ) {
             @Override
@@ -417,10 +565,12 @@ public class MultiBacktestPanel extends JPanel {
                     startButton.setEnabled(true);
                     cancelButton.setEnabled(false);
                     progressBar.setString("Batch finished");
-                    latestMultiReportPath = currentRunner.getGeneratedReportPath();
+                    newBatch.reportPath = currentRunner.getGeneratedReportPath();
+                    batchList.revalidate();
+                    batchList.repaint();
                     
-                    if (latestMultiReportPath != null) {
-                        try { Desktop.getDesktop().browse(latestMultiReportPath.toUri()); } 
+                    if (newBatch.reportPath != null) {
+                        try { Desktop.getDesktop().browse(newBatch.reportPath.toUri()); } 
                         catch (Exception ex) { ex.printStackTrace(); }
                     }
                 }
