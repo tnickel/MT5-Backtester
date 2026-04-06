@@ -77,12 +77,15 @@ public class BacktestRunner {
             logMessage("Created output directory: " + outputDir);
 
             // 2. Generate tester.ini
-            // IMPORTANT: MT5 writes the report RELATIVE to its own directory.
-            // So we use just a filename, then search for it after the backtest.
-            String reportName = REPORT_FILENAME + ".xml";
+            // IMPORTANT: MT5's Report= value is a BASE name. MT5 appends .htm automatically.
+            // So Report=BacktestReport results in BacktestReport.htm + BacktestReport.png etc.
+            String reportName = REPORT_FILENAME;
             Path iniPath = outputDir.resolve("tester.ini");
             iniGenerator.generate(btConfig, iniPath, reportName);
             logMessage("Generated tester.ini (Report=" + reportName + ")");
+
+            // 2b. Clean up old report files from MT5 directory to avoid stale data
+            cleanupOldReports(mt5Dir, reportName);
 
             // 3. Build process command
             ProcessBuilder pb;
@@ -144,12 +147,8 @@ public class BacktestRunner {
             logMessage("MT5 terminated with exit code: " + exitCode);
 
             // 7. Search for the report file
-            // MT5 can place the report in several locations:
-            //   a) MT5_DIR/ReportName.xml (most common)
-            //   b) MT5_DIR/Reports/ReportName.xml
-            //   c) MT5_DIR/Tester/ReportName.xml
-            //   d) Or with .htm extension instead of .xml
-            Path reportInOutput = outputDir.resolve("report.xml");
+            // MT5 creates Report.htm, Report.png, Report-hst.png, Report-mfemae.png, Report-holding.png
+            Path reportInOutput = outputDir.resolve("report.htm");
             boolean reportFound = findAndCopyReport(mt5Dir, reportName, reportInOutput);
 
             BacktestResult result = new BacktestResult();
@@ -193,13 +192,13 @@ public class BacktestRunner {
         }
     }
 
-    private boolean findAndCopyReport(Path mt5Dir, String reportName, Path destination) {
-        // Possible report file names (MT5 may use different extensions)
-        String baseName = reportName.replace(".xml", "");
+    private boolean findAndCopyReport(Path mt5Dir, String reportBaseName, Path destination) {
+        // MT5 creates the report as <baseName>.htm with associated image files
         String[] possibleNames = {
-            reportName,                    // BacktestReport.xml
-            baseName + ".htm",             // BacktestReport.htm
-            baseName + ".html",            // BacktestReport.html
+            reportBaseName + ".htm",        // BacktestReport.htm (main)
+            reportBaseName + ".html",       // BacktestReport.html
+            reportBaseName + ".xml",        // BacktestReport.xml (legacy)
+            reportBaseName + ".xml.htm",    // BacktestReport.xml.htm (old bug compat)
         };
 
         // Possible directories where MT5 might place the report
@@ -220,13 +219,9 @@ public class BacktestRunner {
                         Files.copy(candidate, destination, StandardCopyOption.REPLACE_EXISTING);
                         logMessage("Report copied to: " + destination);
 
-                        copyAssociatedFiles(candidate, destination);
+                        // Copy all associated files (images: .png, -hst.png, -mfemae.png, -holding.png)
+                        copyAssociatedFiles(candidate, destination.getParent());
 
-                        // Also copy any .htm version for viewing
-                        if (name.endsWith(".htm") || name.endsWith(".html")) {
-                            Path htmDest = destination.getParent().resolve("report.htm");
-                            Files.copy(candidate, htmDest, StandardCopyOption.REPLACE_EXISTING);
-                        }
                         return true;
                     } catch (IOException e) {
                         log.error("Failed to copy report", e);
@@ -241,8 +236,8 @@ public class BacktestRunner {
             Path found = walker
                 .filter(p -> {
                     String fname = p.getFileName().toString().toLowerCase();
-                    return fname.startsWith(baseName.toLowerCase()) &&
-                           (fname.endsWith(".xml") || fname.endsWith(".htm") || fname.endsWith(".html"));
+                    return fname.startsWith(reportBaseName.toLowerCase()) &&
+                           (fname.endsWith(".htm") || fname.endsWith(".html") || fname.endsWith(".xml"));
                 })
                 .findFirst()
                 .orElse(null);
@@ -250,7 +245,7 @@ public class BacktestRunner {
             if (found != null) {
                 logMessage("Found report via recursive search: " + found);
                 Files.copy(found, destination, StandardCopyOption.REPLACE_EXISTING);
-                copyAssociatedFiles(found, destination);
+                copyAssociatedFiles(found, destination.getParent());
                 return true;
             }
         } catch (IOException e) {
@@ -260,16 +255,35 @@ public class BacktestRunner {
         return false;
     }
 
-    private void copyAssociatedFiles(Path sourceFile, Path destination) {
-        Path dir = sourceFile.getParent();
-        String baseName = sourceFile.getFileName().toString();
-        try (Stream<Path> siblingFiles = Files.walk(dir, 1)) {
+    /**
+     * Copies all associated files (images, etc.) that belong to a report.
+     * MT5 generates files like: Report.png, Report-hst.png, Report-mfemae.png, Report-holding.png
+     * All share the same base prefix as the report file.
+     */
+    private void copyAssociatedFiles(Path reportFile, Path destDir) {
+        Path dir = reportFile.getParent();
+        // Get the base name for matching (e.g. "BacktestReport" from "BacktestReport.htm")
+        String reportFileName = reportFile.getFileName().toString();
+        // Strip extension to get the root base name
+        String baseName = reportFileName;
+        // Remove all extensions (e.g. "BacktestReport.xml.htm" -> "BacktestReport")
+        int firstDot = baseName.indexOf('.');
+        if (firstDot > 0) {
+            baseName = baseName.substring(0, firstDot);
+        }
+        
+        final String matchPrefix = baseName;
+        logMessage("Searching for associated files with prefix: " + matchPrefix);
+        
+        try (Stream<Path> siblingFiles = Files.list(dir)) {
             siblingFiles.filter(p -> {
                 String fName = p.getFileName().toString();
-                return fName.startsWith(baseName) && !fName.equals(baseName);
+                // Match files starting with the base name that are NOT the report itself
+                return fName.startsWith(matchPrefix) && !fName.equals(reportFileName)
+                        && !Files.isDirectory(p);
             }).forEach(p -> {
                 try {
-                    Path associatedDest = destination.getParent().resolve(p.getFileName().toString());
+                    Path associatedDest = destDir.resolve(p.getFileName().toString());
                     Files.copy(p, associatedDest, StandardCopyOption.REPLACE_EXISTING);
                     logMessage("Copied associated file: " + p.getFileName());
                 } catch (IOException ex) {
@@ -278,6 +292,31 @@ public class BacktestRunner {
             });
         } catch (IOException ex) {
             log.warn("Could not list sibling files in " + dir, ex);
+        }
+    }
+
+    /**
+     * Removes old report files from the MT5 directory before a new test.
+     * This prevents stale files (especially images from previous runs) from contaminating new results.
+     * Also cleans up legacy BacktestReport.xml.* files from the old naming bug.
+     */
+    private void cleanupOldReports(Path mt5Dir, String reportBaseName) {
+        try (Stream<Path> files = Files.list(mt5Dir)) {
+            files.filter(p -> {
+                String name = p.getFileName().toString();
+                // Match both new format (BacktestReport.*) and old format (BacktestReport.xml.*)
+                return (name.startsWith(reportBaseName + ".") || name.startsWith(reportBaseName + ".xml"))
+                        && !Files.isDirectory(p);
+            }).forEach(p -> {
+                try {
+                    Files.delete(p);
+                    logMessage("Cleaned up old report file: " + p.getFileName());
+                } catch (IOException e) {
+                    log.warn("Could not delete old report file: " + p, e);
+                }
+            });
+        } catch (IOException e) {
+            log.warn("Could not clean up old reports in " + mt5Dir, e);
         }
     }
 
@@ -308,6 +347,8 @@ public class BacktestRunner {
             writer.write("Model: " + BacktestConfig.MODEL_NAMES[btConfig.getModel()] + "\n");
             writer.write("Deposit: " + btConfig.getDeposit() + " " + btConfig.getCurrency() + "\n");
             writer.write("Leverage: " + btConfig.getLeverage() + "\n");
+            writer.write("ExpertParameters: " + (btConfig.getExpertParameters() != null && !btConfig.getExpertParameters().isEmpty() ? btConfig.getExpertParameters() : "none (compiled defaults)") + "\n");
+            writer.write("Config: " + result.getConfigInfo() + "\n");
             writer.write("Status: " + (result.isSuccess() ? "SUCCESS" : "FAILED - " + result.getMessage()) + "\n");
             writer.write("\n--- Results ---\n");
             writer.write("Total Profit: " + result.getTotalProfit() + "\n");

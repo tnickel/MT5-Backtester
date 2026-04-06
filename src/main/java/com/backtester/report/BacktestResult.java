@@ -15,6 +15,11 @@ public class BacktestResult {
     private boolean success = false;
     private String message = "";
 
+    /** Whether the EA used its compiled default config (no custom .set file) */
+    private boolean usedDefaultConfig = true;
+    /** Description of which config was used (e.g. "Custom (3 modified)" or "Default") */
+    private String configInfo = "Default";
+
     // Financial metrics
     private double totalProfit = 0;
     private double grossProfit = 0;
@@ -61,6 +66,12 @@ public class BacktestResult {
 
     public String getMessage() { return message; }
     public void setMessage(String message) { this.message = message; }
+
+    public boolean isUsedDefaultConfig() { return usedDefaultConfig; }
+    public void setUsedDefaultConfig(boolean usedDefaultConfig) { this.usedDefaultConfig = usedDefaultConfig; }
+
+    public String getConfigInfo() { return configInfo; }
+    public void setConfigInfo(String configInfo) { this.configInfo = configInfo; }
 
     public double getTotalProfit() { return totalProfit; }
     public void setTotalProfit(double totalProfit) { this.totalProfit = totalProfit; }

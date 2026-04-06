@@ -259,7 +259,7 @@ public class ReportViewerDialog extends JDialog {
 
         JButton openReportBtn = new JButton("\uD83C\uDF10 Open in Browser");
         openReportBtn.setFont(new Font("Segoe UI", Font.PLAIN, 12));
-        openReportBtn.addActionListener(e -> openReport("report.xml"));
+        openReportBtn.addActionListener(e -> openReport("report.htm"));
         buttons.add(openReportBtn);
 
         JButton closeBtn = new JButton("Close");
@@ -293,21 +293,29 @@ public class ReportViewerDialog extends JDialog {
     private void openReport(String filename) {
         if (outputDir == null) return;
         Path reportPath = Paths.get(outputDir).resolve(filename);
+        
+        // Fallback: try old .xml format if .htm not found
+        if (!Files.exists(reportPath) && filename.endsWith(".htm")) {
+            Path xmlFallback = Paths.get(outputDir).resolve("report.xml");
+            if (Files.exists(xmlFallback)) {
+                reportPath = xmlFallback;
+            }
+        }
+        
         if (Files.exists(reportPath)) {
             try {
-                // MT5 saves reports as .xml but they are actually HTML.
-                // Browsers fail to render .xml with unclosed HTML tags (e.g. <meta>).
-                // Create an .html copy so the browser treats it as HTML.
-                String name = filename;
+                // Ensure file has .htm or .html extension for browser rendering
+                String name = reportPath.getFileName().toString();
                 if (name.endsWith(".xml")) {
-                    name = name.replace(".xml", ".html");
+                    Path htmlPath = Paths.get(outputDir).resolve(name.replace(".xml", ".html"));
+                    if (!Files.exists(htmlPath) || Files.getLastModifiedTime(htmlPath).compareTo(
+                            Files.getLastModifiedTime(reportPath)) < 0) {
+                        Files.copy(reportPath, htmlPath, StandardCopyOption.REPLACE_EXISTING);
+                    }
+                    Desktop.getDesktop().browse(htmlPath.toUri());
+                } else {
+                    Desktop.getDesktop().browse(reportPath.toUri());
                 }
-                Path htmlPath = Paths.get(outputDir).resolve(name);
-                if (!Files.exists(htmlPath) || Files.getLastModifiedTime(htmlPath).compareTo(
-                        Files.getLastModifiedTime(reportPath)) < 0) {
-                    Files.copy(reportPath, htmlPath, StandardCopyOption.REPLACE_EXISTING);
-                }
-                Desktop.getDesktop().browse(htmlPath.toUri());
             } catch (Exception e) {
                 JOptionPane.showMessageDialog(this,
                         "Could not open report:\n" + e.getMessage(),
@@ -336,12 +344,14 @@ public class ReportViewerDialog extends JDialog {
         BacktestResult result = new BacktestResult();
         result.setOutputDirectory(directory);
 
-        // 1. Try parsing the actual MT5 report (HTML in .xml file)
+        // 1. Try parsing the actual MT5 report (.htm file, or legacy .xml)
+        Path reportHtm = dir.resolve("report.htm");
         Path reportXml = dir.resolve("report.xml");
-        if (Files.exists(reportXml)) {
+        Path reportToParse = Files.exists(reportHtm) ? reportHtm : (Files.exists(reportXml) ? reportXml : null);
+        if (reportToParse != null) {
             try {
                 com.backtester.report.ReportParser parser = new com.backtester.report.ReportParser();
-                result = parser.parse(reportXml);
+                result = parser.parse(reportToParse);
                 result.setOutputDirectory(directory);
                 result.setSuccess(true);
             } catch (Exception e) {
