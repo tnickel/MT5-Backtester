@@ -2,7 +2,9 @@ package com.backtester.engine;
 
 import java.time.LocalDate;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * POJO holding parameters for a multi-backtest run (batch execution).
@@ -22,6 +24,9 @@ public class MultiBacktestConfig {
     private int deposit = 10000;
     private String currency = "USD";
     private String leverage = "1:100";
+
+    /** Maps expert path -> .set filename for ExpertParameters */
+    private Map<String, String> expertParametersMap = new HashMap<>();
 
     // --- Getters & Setters ---
     public List<String> getExperts() { return experts; }
@@ -54,6 +59,18 @@ public class MultiBacktestConfig {
     public String getLeverage() { return leverage; }
     public void setLeverage(String leverage) { this.leverage = leverage; }
 
+    public void setExpertParameters(String expertPath, String setFileName) {
+        expertParametersMap.put(expertPath, setFileName);
+    }
+
+    public String getExpertParameters(String expertPath) {
+        return expertParametersMap.get(expertPath);
+    }
+
+    public Map<String, String> getExpertParametersMap() {
+        return expertParametersMap;
+    }
+
     /**
      * Calculates the total number of combination runs expected.
      */
@@ -85,6 +102,11 @@ public class MultiBacktestConfig {
                     cfg.setDeposit(deposit);
                     cfg.setCurrency(currency);
                     cfg.setLeverage(leverage);
+                    // Set EA-specific parameters if available
+                    String setFile = expertParametersMap.get(exp);
+                    if (setFile != null) {
+                        cfg.setExpertParameters(setFile);
+                    }
                     configs.add(cfg);
                 }
             }

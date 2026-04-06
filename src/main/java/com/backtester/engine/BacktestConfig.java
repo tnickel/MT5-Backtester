@@ -27,7 +27,7 @@ public class BacktestConfig {
      * 3 = Math calculations
      * 4 = Every tick based on real ticks
      */
-    private int model = 0;
+    private int model = 1;
 
     /** Execution mode: 0=Normal, -1=Random delay, >0=delay ms */
     private int executionMode = 0;
@@ -50,8 +50,8 @@ public class BacktestConfig {
     /** Optimization mode: 0=disabled */
     private int optimization = 0;
 
-    /** Report file name (relative to MT5 dir) */
-    private String reportFileName = "backtest_report.xml";
+    /** Report base name (MT5 appends .htm automatically) */
+    private String reportFileName = "backtest_report";
 
     /** Whether to replace existing report */
     private boolean replaceReport = true;

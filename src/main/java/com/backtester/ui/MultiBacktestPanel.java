@@ -1,6 +1,7 @@
 package com.backtester.ui;
 
 import com.backtester.config.AppConfig;
+import com.backtester.config.EaParameterManager;
 import com.backtester.engine.BacktestConfig;
 import com.backtester.engine.MultiBacktestConfig;
 import com.backtester.engine.MultiBacktestRunner;
@@ -30,6 +31,7 @@ public class MultiBacktestPanel extends JPanel {
 
     private final LogPanel logPanel;
     private final AppConfig config;
+    private final EaParameterManager eaParamManager = new EaParameterManager();
 
     // Inputs: Experts
     private DefaultListModel<String> expertsModel;
@@ -203,8 +205,19 @@ public class MultiBacktestPanel extends JPanel {
                 expertsModel.remove(sel[i]);
             }
         });
+        JButton cfgBtn = new JButton("⚙ Config");
+        cfgBtn.setToolTipText("Edit input parameters for selected EA");
+        cfgBtn.addActionListener(e -> {
+            String selectedEa = expertsList.getSelectedValue();
+            if (selectedEa != null) {
+                EaConfigDialog.showForExpert(SwingUtilities.getWindowAncestor(this), selectedEa);
+            } else {
+                JOptionPane.showMessageDialog(this, "Please select an EA first.", "No Selection", JOptionPane.INFORMATION_MESSAGE);
+            }
+        });
         btnP.add(addBtn);
         btnP.add(rmvBtn);
+        btnP.add(cfgBtn);
         p.add(btnP, BorderLayout.SOUTH);
 
         return p;
@@ -312,7 +325,7 @@ public class MultiBacktestPanel extends JPanel {
         masterPanel.add(batchBtnP, BorderLayout.SOUTH);
 
         // ---- Detail View (Table of Runs) ----
-        String[] cols = {"Comb.", "Robot", "Symbol", "Period", "Trades", "Win Rate", "Drawdown", "Profit", "Status", "Directory", "ResultObject"};
+        String[] cols = {"Comb.", "Robot", "Symbol", "Period", "Trades", "Win Rate", "Drawdown", "Profit", "Status", "Config", "Directory", "ResultObject"};
         resultsTableModel = new DefaultTableModel(cols, 0) {
             @Override public boolean isCellEditable(int r, int c) { return false; }
         };
@@ -322,13 +335,13 @@ public class MultiBacktestPanel extends JPanel {
         resultsTable.setSelectionMode(ListSelectionModel.MULTIPLE_INTERVAL_SELECTION);
         resultsTable.setAutoCreateRowSorter(true);
         
-        // Hide directory and result object columns
-        resultsTable.getColumnModel().getColumn(9).setMinWidth(0);
-        resultsTable.getColumnModel().getColumn(9).setMaxWidth(0);
-        resultsTable.getColumnModel().getColumn(9).setWidth(0);
+        // Hide directory and result object columns (indices 10,11 now)
         resultsTable.getColumnModel().getColumn(10).setMinWidth(0);
         resultsTable.getColumnModel().getColumn(10).setMaxWidth(0);
         resultsTable.getColumnModel().getColumn(10).setWidth(0);
+        resultsTable.getColumnModel().getColumn(11).setMinWidth(0);
+        resultsTable.getColumnModel().getColumn(11).setMaxWidth(0);
+        resultsTable.getColumnModel().getColumn(11).setWidth(0);
 
         resultsTable.addMouseListener(new java.awt.event.MouseAdapter() {
             @Override
@@ -382,6 +395,7 @@ public class MultiBacktestPanel extends JPanel {
                 String.format("%.2f%%", result.getMaxDrawdown()),
                 String.format("%.2f", result.getTotalProfit()),
                 result.isSuccess() ? "OK" : "FAIL",
+                result.getConfigInfo(),
                 result.getOutputDirectory(),
                 result
             });
@@ -391,7 +405,7 @@ public class MultiBacktestPanel extends JPanel {
     private void showSelectedSingleReport() {
         int r = resultsTable.getSelectedRow();
         if (r >= 0) {
-            String dirStr = (String) resultsTableModel.getValueAt(resultsTable.convertRowIndexToModel(r), 9);
+            String dirStr = (String) resultsTableModel.getValueAt(resultsTable.convertRowIndexToModel(r), 10);
             if (dirStr != null && !dirStr.isEmpty()) {
                 File dir = new File(dirStr);
                 if (dir.exists()) {
@@ -442,8 +456,8 @@ public class MultiBacktestPanel extends JPanel {
             java.util.Arrays.sort(rows);
             for (int i = rows.length - 1; i >= 0; i--) {
                 int modelRow = resultsTable.convertRowIndexToModel(rows[i]);
-                String dir = (String) resultsTableModel.getValueAt(modelRow, 9);
-                BacktestResult res = (BacktestResult) resultsTableModel.getValueAt(modelRow, 10);
+                String dir = (String) resultsTableModel.getValueAt(modelRow, 10);
+                BacktestResult res = (BacktestResult) resultsTableModel.getValueAt(modelRow, 11);
                 
                 deleteDirectory(dir);
                 
@@ -514,6 +528,19 @@ public class MultiBacktestPanel extends JPanel {
         conf.setToDate(toDatePicker.getDate());
         conf.setDeposit((Integer) depositSpinner.getValue());
 
+        // Prepare EA parameters for each expert
+        for (String expert : expList) {
+            String setFileName = eaParamManager.prepareForBacktest(expert);
+            if (setFileName != null) {
+                conf.setExpertParameters(expert, setFileName);
+                boolean isCustom = eaParamManager.hasCustomConfig(expert);
+                logPanel.log("INFO", "EA Config [" + EaParameterManager.extractEaBaseName(expert) + "]: Using " + 
+                    (isCustom ? "CUSTOM" : "DEFAULT") + " parameters");
+            } else {
+                logPanel.log("INFO", "EA Config [" + EaParameterManager.extractEaBaseName(expert) + "]: No .set file - using compiled defaults");
+            }
+        }
+
         // Create new Node in Tree / List
         BatchRunModel newBatch = new BatchRunModel();
         newBatch.name = "▶ Batch " + LocalDateTime.now().format(DateTimeFormatter.ofPattern("HH:mm:ss")) + " ("+conf.getTotalCombinations()+" Tasks)";
@@ -552,6 +579,7 @@ public class MultiBacktestPanel extends JPanel {
                         String.format("%.2f%%", result.getMaxDrawdown()),
                         String.format("%.2f", result.getTotalProfit()),
                         result.isSuccess() ? "OK" : "FAIL",
+                        result.getConfigInfo(),
                         result.getOutputDirectory(),
                         result
                     });

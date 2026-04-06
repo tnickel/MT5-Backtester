@@ -14,6 +14,7 @@ import java.io.File;
 import java.nio.file.*;
 import java.time.LocalDate;
 import java.util.stream.Stream;
+import com.backtester.config.EaParameterManager;
 
 /**
  * Backtest configuration and execution panel.
@@ -30,6 +31,8 @@ public class BacktestPanel extends JPanel {
     private JComboBox<String> modelCombo;
     private JTextField expertField;
     private JButton expertBrowseBtn;
+    private JButton expertConfigBtn;
+    private JLabel configStatusLabel;
     private DatePicker fromDatePicker;
     private DatePicker toDatePicker;
     private JSpinner depositSpinner;
@@ -48,6 +51,7 @@ public class BacktestPanel extends JPanel {
     // Runner
     private BacktestRunner currentRunner;
     private SwingWorker<BacktestResult, String> currentWorker;
+    private final EaParameterManager eaParamManager = new EaParameterManager();
 
     public BacktestPanel(LogPanel logPanel) {
         this.logPanel = logPanel;
@@ -99,11 +103,29 @@ public class BacktestPanel extends JPanel {
         expertField.setToolTipText("Path relative to MQL5/Experts/ (e.g. MyEAs\\MyRobot)");
         JPanel expertPanel = new JPanel(new BorderLayout(5, 0));
         expertPanel.add(expertField, BorderLayout.CENTER);
+        JPanel expertBtnPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 3, 0));
+        expertBtnPanel.setOpaque(false);
         expertBrowseBtn = new JButton("...");
         expertBrowseBtn.setPreferredSize(new Dimension(40, 28));
         expertBrowseBtn.addActionListener(e -> browseExpert());
-        expertPanel.add(expertBrowseBtn, BorderLayout.EAST);
+        expertConfigBtn = new JButton("⚙");
+        expertConfigBtn.setPreferredSize(new Dimension(40, 28));
+        expertConfigBtn.setToolTipText("Edit EA Input Parameters");
+        expertConfigBtn.addActionListener(e -> openEaConfig());
+        expertBtnPanel.add(expertBrowseBtn);
+        expertBtnPanel.add(expertConfigBtn);
+        expertPanel.add(expertBtnPanel, BorderLayout.EAST);
         form.add(expertPanel, gbc);
+
+        // Config status label (own row)
+        row++;
+        gbc.gridx = 1; gbc.gridy = row; gbc.weightx = 1;
+        gbc.insets = new Insets(0, 8, 4, 8);
+        configStatusLabel = new JLabel("");
+        configStatusLabel.setFont(new Font("Segoe UI", Font.ITALIC, 11));
+        configStatusLabel.setForeground(new Color(241, 178, 78));
+        form.add(configStatusLabel, gbc);
+        gbc.insets = new Insets(6, 8, 6, 8);
 
         // Symbol
         row++;
@@ -337,6 +359,16 @@ public class BacktestPanel extends JPanel {
         btConfig.setCurrency((String) currencyCombo.getSelectedItem());
         btConfig.setLeverage(leverageField.getText().trim());
 
+        // Set EA parameters from config manager
+        String setFileName = eaParamManager.prepareForBacktest(expert);
+        if (setFileName != null) {
+            btConfig.setExpertParameters(setFileName);
+            boolean isCustom = eaParamManager.hasCustomConfig(expert);
+            logPanel.log("INFO", "EA Config: Using " + (isCustom ? "CUSTOM" : "DEFAULT") + " parameters (" + setFileName + ")");
+        } else {
+            logPanel.log("INFO", "EA Config: No .set file found - using EA compiled defaults");
+        }
+
         // UI state
         startButton.setEnabled(false);
         cancelButton.setEnabled(true);
@@ -361,6 +393,16 @@ public class BacktestPanel extends JPanel {
                     BacktestResult result = get();
                     if (result != null) {
                         addResultToTable(result);
+                        // Track config info
+                        boolean isCustom = eaParamManager.hasCustomConfig(expert);
+                        if (setFileName != null) {
+                            result.setUsedDefaultConfig(!isCustom);
+                            int modCount = eaParamManager.countModifiedParameters(expert);
+                            result.setConfigInfo(isCustom ? "Custom (" + modCount + " modified)" : "Default");
+                        } else {
+                            result.setUsedDefaultConfig(true);
+                            result.setConfigInfo("No config (compiled defaults)");
+                        }
                         if (result.isSuccess()) {
                             logPanel.log("INFO", "Backtest completed successfully");
                         } else {
@@ -423,11 +465,13 @@ public class BacktestPanel extends JPanel {
                     BacktestResult result = new BacktestResult();
                     result.setOutputDirectory(dir.toString());
 
-                    // First try to parse the actual report
+                    // First try to parse the actual report (.htm or legacy .xml)
+                    Path reportHtm = dir.resolve("report.htm");
                     Path reportXml = dir.resolve("report.xml");
-                    if (Files.exists(reportXml)) {
+                    Path reportToParse = Files.exists(reportHtm) ? reportHtm : (Files.exists(reportXml) ? reportXml : null);
+                    if (reportToParse != null) {
                         try {
-                            BacktestResult parsed = parser.parse(reportXml);
+                            BacktestResult parsed = parser.parse(reportToParse);
                             if (parsed != null) {
                                 result = parsed;
                             }
@@ -509,6 +553,38 @@ public class BacktestPanel extends JPanel {
             } else {
                 expertField.setText(selected.getAbsolutePath());
             }
+            updateConfigStatus();
+        }
+    }
+
+    private void openEaConfig() {
+        String expert = expertField.getText().trim();
+        if (expert.isEmpty()) {
+            JOptionPane.showMessageDialog(this,
+                    "Please specify the Expert Advisor first.",
+                    "No EA Selected", JOptionPane.INFORMATION_MESSAGE);
+            return;
+        }
+        EaConfigDialog.showForExpert(SwingUtilities.getWindowAncestor(this), expert);
+        updateConfigStatus();
+    }
+
+    private void updateConfigStatus() {
+        String expert = expertField.getText().trim();
+        if (expert.isEmpty()) {
+            configStatusLabel.setText("");
+            return;
+        }
+        if (eaParamManager.hasCustomConfig(expert)) {
+            int modCount = eaParamManager.countModifiedParameters(expert);
+            configStatusLabel.setText("⚡ Custom Config (" + modCount + " parameters modified)");
+            configStatusLabel.setForeground(new Color(241, 178, 78));
+        } else if (eaParamManager.hasDefaultConfig(expert)) {
+            configStatusLabel.setText("✓ Default Config available");
+            configStatusLabel.setForeground(new Color(100, 200, 120));
+        } else {
+            configStatusLabel.setText("○ No config found (EA compiled defaults)");
+            configStatusLabel.setForeground(new Color(160, 165, 175));
         }
     }
 
