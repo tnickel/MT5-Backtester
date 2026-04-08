@@ -170,11 +170,14 @@ public class ReportParser {
             result.setMaxDrawdown(parsePercentageValue(ddStr));
             result.setMaxDrawdownAbsolute(parseNumber(ddStr));
 
-            // If no equity drawdown, try balance drawdown
-            if (result.getMaxDrawdown() == 0) {
-                String balDd = extractedValues.getOrDefault("maxBalanceDrawdown", "0");
-                result.setMaxDrawdown(parsePercentageValue(balDd));
-                result.setMaxDrawdownAbsolute(parseNumber(balDd));
+            String balDd = extractedValues.getOrDefault("maxBalanceDrawdown", "0");
+            result.setBalanceDrawdown(parsePercentageValue(balDd));
+            result.setBalanceDrawdownAbsolute(parseNumber(balDd));
+            
+            // If equity drawdown was 0 but balance drawdown is > 0, fallback
+            if (result.getMaxDrawdown() == 0 && result.getBalanceDrawdown() > 0) {
+                result.setMaxDrawdown(result.getBalanceDrawdown());
+                result.setMaxDrawdownAbsolute(result.getBalanceDrawdownAbsolute());
             }
 
             // Short/Long positions: format is "169 (75.15%)"
@@ -354,6 +357,9 @@ public class ReportParser {
 
         Matcher trMatcher = Pattern.compile("<tr bgcolor=\"#[^\"]+\".*?>(.*?)</tr>", Pattern.CASE_INSENSITIVE).matcher(tradesSection);
         int tradeNum = 0;
+        java.text.SimpleDateFormat sdf = new java.text.SimpleDateFormat("yyyy.MM.dd HH:mm:ss");
+        java.text.SimpleDateFormat sdfShort = new java.text.SimpleDateFormat("yyyy.MM.dd");
+        
         while (trMatcher.find()) {
             String rowInner = trMatcher.group(1);
             List<String> tds = new ArrayList<>();
@@ -364,15 +370,21 @@ public class ReportParser {
             
             // Standard MT5 row has around 13 columns. The balance is usually the 2nd to last column.
             if (tds.size() >= 12) {
+                String dateStr = tds.get(0);
+                long timestamp = 0;
+                try {
+                    if (dateStr.length() >= 19) timestamp = sdf.parse(dateStr.substring(0, 19)).getTime();
+                    else if (dateStr.length() >= 10) timestamp = sdfShort.parse(dateStr.substring(0, 10)).getTime();
+                } catch (Exception ignored) {}
+
                 String balStr = tds.get(tds.size() - 2);
                 try {
                     double val = parseNumber(balStr);
                     // Filter: must be reasonably close to initial deposit
                     if (val > initialDeposit * 0.1 && val < initialDeposit * 10) {
                         tradeNum++;
-                        // For a simple balance curve, we set equity = balance. 
-                        // MT5 reports don't include tick-by-tick equity floating loss in this table.
-                        history.add(new double[]{tradeNum, val, val});
+                        // Set equity = balance. Add timestamp as 4th element.
+                        history.add(new double[]{tradeNum, val, val, timestamp});
                     }
                 } catch (Exception e) {
                     // Skip invalid rows

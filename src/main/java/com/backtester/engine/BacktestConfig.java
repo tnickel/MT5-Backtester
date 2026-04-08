@@ -141,10 +141,11 @@ public class BacktestConfig {
         "Every tick (real ticks)"
     };
 
-    /** Major currency pairs */
+    /** Major currency pairs and crosses */
     public static final String[] SYMBOLS = {
         "EURUSD", "GBPUSD", "USDJPY", "USDCHF", "AUDUSD",
         "NZDUSD", "USDCAD", "EURGBP", "EURJPY", "GBPJPY",
+        "AUDCAD", "AUDNZD", "AUDCHF", "NZDJPY", "CADJPY", "CADCHF",
         "XAUUSD", "XAGUSD"
     };
 }

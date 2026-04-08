@@ -8,6 +8,8 @@ import javax.swing.table.*;
 import java.awt.*;
 import java.awt.event.*;
 import java.util.List;
+import com.google.gson.Gson;
+import com.google.gson.reflect.TypeToken;
 
 /**
  * Modal dialog for editing EA input parameters (.set file configuration).
@@ -35,6 +37,9 @@ public class EaConfigDialog extends JDialog {
     private JButton generateButton;
     private JPanel noConfigPanel;
     private JPanel configPanel;
+
+    private JButton storeDbBtn;
+    private JButton getDbBtn;
 
     /** Color constants */
     private static final Color MODIFIED_BG = new Color(60, 50, 30);
@@ -267,12 +272,12 @@ public class EaConfigDialog extends JDialog {
         JPanel leftBtns = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
         leftBtns.setOpaque(false);
 
-        resetButton = new JButton("🔄 Reset to Default");
+        resetButton = new JButton("🔄 Reset");
         resetButton.setFont(new Font("Segoe UI", Font.PLAIN, 13));
         resetButton.setToolTipText("Reset all parameters to their default values");
         resetButton.addActionListener(e -> resetToDefault());
 
-        JButton deleteCustomBtn = new JButton("🗑 Delete Custom Config");
+        JButton deleteCustomBtn = new JButton("🗑 Delete Custom");
         deleteCustomBtn.setFont(new Font("Segoe UI", Font.PLAIN, 13));
         deleteCustomBtn.setToolTipText("Delete custom configuration, use defaults");
         deleteCustomBtn.addActionListener(e -> deleteCustomConfig());
@@ -280,25 +285,42 @@ public class EaConfigDialog extends JDialog {
         leftBtns.add(resetButton);
         leftBtns.add(deleteCustomBtn);
 
+        JPanel centerBtns = new JPanel(new FlowLayout(FlowLayout.CENTER, 8, 0));
+        centerBtns.setOpaque(false);
+
+        storeDbBtn = new JButton("💾 Store DB");
+        storeDbBtn.setFont(new Font("Segoe UI", Font.PLAIN, 13));
+        storeDbBtn.setToolTipText("Backup this configuration to the database");
+        storeDbBtn.addActionListener(e -> storeInDatabase());
+
+        getDbBtn = new JButton("📥 Get from DB");
+        getDbBtn.setFont(new Font("Segoe UI", Font.PLAIN, 13));
+        getDbBtn.setToolTipText("Load configuration from the database");
+        getDbBtn.addActionListener(e -> getFromDatabase());
+
+        centerBtns.add(storeDbBtn);
+        centerBtns.add(getDbBtn);
+
         JPanel rightBtns = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0));
         rightBtns.setOpaque(false);
 
-        saveButton = new JButton("💾 Save & Close");
+        saveButton = new JButton("Save & Close");
         saveButton.setFont(new Font("Segoe UI", Font.BOLD, 13));
         saveButton.setBackground(new Color(40, 120, 70));
         saveButton.setForeground(Color.WHITE);
-        saveButton.setPreferredSize(new Dimension(160, 34));
+        saveButton.setPreferredSize(new Dimension(130, 34));
         saveButton.addActionListener(e -> saveAndClose());
 
         JButton cancelButton = new JButton("Cancel");
         cancelButton.setFont(new Font("Segoe UI", Font.PLAIN, 13));
-        cancelButton.setPreferredSize(new Dimension(100, 34));
+        cancelButton.setPreferredSize(new Dimension(80, 34));
         cancelButton.addActionListener(e -> dispose());
 
         rightBtns.add(saveButton);
         rightBtns.add(cancelButton);
 
         panel.add(leftBtns, BorderLayout.WEST);
+        panel.add(centerBtns, BorderLayout.CENTER);
         panel.add(rightBtns, BorderLayout.EAST);
 
         return panel;
@@ -314,6 +336,7 @@ public class EaConfigDialog extends JDialog {
             showConfigView();
             populateTable();
         }
+        updateDbButtonsColor();
     }
 
     private void showNoConfigView() {
@@ -465,6 +488,60 @@ public class EaConfigDialog extends JDialog {
         paramManager.saveCustomParameters(expertPath, parameters);
         saved = true;
         dispose();
+    }
+
+    private void updateDbButtonsColor() {
+        if (storeDbBtn == null || getDbBtn == null) return;
+        String eaName = EaParameterManager.extractEaBaseName(expertPath);
+        List<com.backtester.database.EaDbConfig> configs = com.backtester.database.DatabaseManager.getInstance().getEaConfigsList(eaName);
+        if (configs != null && !configs.isEmpty()) {
+            Color green = new Color(60, 140, 80);
+            storeDbBtn.setBackground(green);
+            storeDbBtn.setForeground(Color.WHITE);
+            getDbBtn.setBackground(green);
+            getDbBtn.setForeground(Color.WHITE);
+        } else {
+            storeDbBtn.setBackground(UIManager.getColor("Button.background"));
+            storeDbBtn.setForeground(UIManager.getColor("Button.foreground"));
+            getDbBtn.setBackground(UIManager.getColor("Button.background"));
+            getDbBtn.setForeground(UIManager.getColor("Button.foreground"));
+        }
+    }
+
+    private void storeInDatabase() {
+        if (paramTable != null && paramTable.isEditing()) {
+            paramTable.getCellEditor().stopCellEditing();
+        }
+        
+        List<EaParameter> toSave = parameters;
+        if (toSave == null || toSave.isEmpty()) return;
+
+        String eaName = EaParameterManager.extractEaBaseName(expertPath);
+        boolean success = DbConfigSelectionDialog.showStoreDialog(this, eaName, toSave);
+        if (success) {
+            updateDbButtonsColor();
+            JOptionPane.showMessageDialog(this, "Configuration successfully saved to database.", "Success", JOptionPane.INFORMATION_MESSAGE);
+        }
+    }
+
+    private void getFromDatabase() {
+        String eaName = EaParameterManager.extractEaBaseName(expertPath);
+        com.backtester.database.EaDbConfig selected = DbConfigSelectionDialog.showGetDialog(this, eaName);
+        if (selected != null) {
+            try {
+                Gson gson = new Gson();
+                java.lang.reflect.Type listType = new TypeToken<List<EaParameter>>(){}.getType();
+                List<EaParameter> dbParams = gson.fromJson(selected.getParametersJson(), listType);
+
+                if (dbParams != null && !dbParams.isEmpty()) {
+                    paramManager.saveCustomParameters(expertPath, dbParams);
+                    loadParameters(); // Reload table
+                    JOptionPane.showMessageDialog(this, "Loaded configuration: " + selected.getConfigName(), "Success", JOptionPane.INFORMATION_MESSAGE);
+                }
+            } catch (Exception e) {
+                JOptionPane.showMessageDialog(this, "Failed to load config: " + e.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
+            }
+        }
     }
 
     private void generateDefaultConfig() {

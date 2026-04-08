@@ -29,6 +29,8 @@ public class BacktestResult {
     private double maxDrawdown = 0;          // percentage
     private double maxDrawdownAbsolute = 0;  // absolute value
     private double maxDrawdownPercent = 0;
+    private double balanceDrawdown = 0;          // percentage
+    private double balanceDrawdownAbsolute = 0;  // absolute value
     private double profitFactor = 0;
     private double sharpeRatio = 0;
     private double recoveryFactor = 0;
@@ -96,6 +98,12 @@ public class BacktestResult {
 
     public double getMaxDrawdownPercent() { return maxDrawdownPercent; }
     public void setMaxDrawdownPercent(double v) { this.maxDrawdownPercent = v; }
+
+    public double getBalanceDrawdown() { return balanceDrawdown; }
+    public void setBalanceDrawdown(double balanceDrawdown) { this.balanceDrawdown = balanceDrawdown; }
+
+    public double getBalanceDrawdownAbsolute() { return balanceDrawdownAbsolute; }
+    public void setBalanceDrawdownAbsolute(double v) { this.balanceDrawdownAbsolute = v; }
 
     public double getProfitFactor() { return profitFactor; }
     public void setProfitFactor(double profitFactor) { this.profitFactor = profitFactor; }

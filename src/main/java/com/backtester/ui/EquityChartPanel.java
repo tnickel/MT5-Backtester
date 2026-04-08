@@ -266,17 +266,27 @@ public class EquityChartPanel extends JPanel {
         g2.setFont(new Font("Segoe UI", Font.PLAIN, 10));
         g2.setColor(AXIS_COLOR);
         int xLabels = Math.min(8, dataSize);
+        java.text.SimpleDateFormat sdfDate = new java.text.SimpleDateFormat("MMM dd, yyyy");
         for (int i = 0; i <= xLabels; i++) {
             int dataIdx = (int) ((double) i / xLabels * (dataSize - 1));
             int x = MARGIN_LEFT + (int) ((double) dataIdx / (dataSize - 1) * chartW);
+            
             String label = String.valueOf(dataIdx);
-            g2.drawString(label, x - 8, MARGIN_TOP + chartH + 16);
+            if (dataIdx >= 0 && dataIdx < equityData.size()) {
+                double[] pt = equityData.get(dataIdx);
+                if (pt.length > 3 && pt[3] > 0) {
+                    label = sdfDate.format(new java.util.Date((long) pt[3]));
+                }
+            }
+            g2.drawString(label, x - g2.getFontMetrics().stringWidth(label) / 2, MARGIN_TOP + chartH + 18);
         }
 
         // X axis title
         g2.setColor(AXIS_COLOR);
         g2.setFont(new Font("Segoe UI", Font.PLAIN, 10));
-        g2.drawString("Trade #", MARGIN_LEFT + chartW / 2 - 15, h - 5);
+        boolean hasDates = equityData.size() > 0 && equityData.get(0).length > 3 && equityData.get(0)[3] > 0;
+        String xTitle = hasDates ? "Date / Trade" : "Trade #";
+        g2.drawString(xTitle, MARGIN_LEFT + chartW / 2 - g2.getFontMetrics().stringWidth(xTitle) / 2, h - 5);
 
         // Chart border
         g2.setColor(GRID_COLOR);

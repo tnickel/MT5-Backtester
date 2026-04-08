@@ -40,8 +40,15 @@ public class MainFrame extends JFrame {
         tabbedPane.setFont(new Font("Segoe UI", Font.PLAIN, 14));
         tabbedPane.setBorder(BorderFactory.createEmptyBorder(5, 5, 5, 5));
 
+        OptimizationPanel optimizationPanel = new OptimizationPanel(logPanel);
+        RobustnessPanel robustnessPanel = new RobustnessPanel(logPanel);
+        HistoryPanel historyPanel = new HistoryPanel();
+
         tabbedPane.addTab("  ▶  Backtest  ", createTabIcon("▶"), backtestPanel);
         tabbedPane.addTab("  🔁  Multi-Backtester  ", createTabIcon("🔁"), multiBacktestPanel);
+        tabbedPane.addTab("  🔬  Optimizer  ", createTabIcon("🔬"), optimizationPanel);
+        tabbedPane.addTab("  📉  Robustness  ", createTabIcon("📉"), robustnessPanel);
+        tabbedPane.addTab("  📚  History  ", createTabIcon("📚"), historyPanel);
         tabbedPane.addTab("  ⬇  Dukascopy Data  ", createTabIcon("⬇"), dukascopyPanel);
         tabbedPane.addTab("  ⚙  Settings  ", createTabIcon("⚙"), settingsPanel);
         tabbedPane.addTab("  📋  Log  ", createTabIcon("📋"), logPanel);

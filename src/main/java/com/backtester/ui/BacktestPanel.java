@@ -41,8 +41,10 @@ public class BacktestPanel extends JPanel {
 
     // Action buttons
     private JButton startButton;
+    private JButton startButtonVisual;
     private JButton cancelButton;
     private JProgressBar progressBar;
+    private String newestReportDir = null;
 
     // Results table
     private DefaultTableModel resultsTableModel;
@@ -68,13 +70,16 @@ public class BacktestPanel extends JPanel {
 
         // Split pane
         JSplitPane splitPane = new JSplitPane(JSplitPane.VERTICAL_SPLIT, configPanel, resultsPanel);
-        splitPane.setDividerLocation(380);
-        splitPane.setResizeWeight(0.4);
+        splitPane.setDividerLocation(440);
+        splitPane.setResizeWeight(0.5);
 
         add(splitPane, BorderLayout.CENTER);
 
         // Load existing results
         loadExistingResults();
+
+        // Load saved preferences
+        loadPreferences();
     }
 
     private JPanel createConfigPanel() {
@@ -208,16 +213,25 @@ public class BacktestPanel extends JPanel {
         startButton.setFont(new Font("Segoe UI", Font.BOLD, 14));
         startButton.setBackground(new Color(40, 120, 70));
         startButton.setForeground(Color.WHITE);
-        startButton.setPreferredSize(new Dimension(200, 38));
-        startButton.addActionListener(e -> startBacktest());
+        startButton.setPreferredSize(new Dimension(180, 38));
+        startButton.addActionListener(e -> startBacktest(false));
+
+        startButtonVisual = new JButton("👁 Start Visual (MT5)");
+        startButtonVisual.setFont(new Font("Segoe UI", Font.BOLD, 14));
+        startButtonVisual.setBackground(new Color(55, 90, 145));
+        startButtonVisual.setForeground(Color.WHITE);
+        startButtonVisual.setPreferredSize(new Dimension(200, 38));
+        startButtonVisual.setToolTipText("Start backtest but keep MT5 terminal open");
+        startButtonVisual.addActionListener(e -> startBacktest(true));
 
         cancelButton = new JButton("■  Cancel");
         cancelButton.setFont(new Font("Segoe UI", Font.PLAIN, 14));
-        cancelButton.setPreferredSize(new Dimension(120, 38));
+        cancelButton.setPreferredSize(new Dimension(100, 38));
         cancelButton.setEnabled(false);
         cancelButton.addActionListener(e -> cancelBacktest());
 
         buttonPanel.add(startButton);
+        buttonPanel.add(startButtonVisual);
         buttonPanel.add(cancelButton);
 
         form.add(buttonPanel, gbc);
@@ -265,6 +279,35 @@ public class BacktestPanel extends JPanel {
         // Set column widths
         resultsTable.getColumnModel().getColumn(0).setPreferredWidth(150);
         resultsTable.getColumnModel().getColumn(8).setPreferredWidth(200);
+
+        resultsTable.setDefaultRenderer(Object.class, new javax.swing.table.DefaultTableCellRenderer() {
+            @Override
+            public Component getTableCellRendererComponent(JTable table, Object value, boolean isSelected, boolean hasFocus, int row, int column) {
+                Component c = super.getTableCellRendererComponent(table, value, isSelected, hasFocus, row, column);
+                
+                String dir = (String) table.getModel().getValueAt(table.convertRowIndexToModel(row), 8); // Directory is column 8
+                boolean isNewest = (dir != null && dir.equals(newestReportDir));
+
+                if (isNewest) {
+                    if (isSelected) {
+                        c.setBackground(new Color(60, 120, 80)); // Selected Green
+                        c.setForeground(Color.WHITE);
+                    } else {
+                        c.setBackground(new Color(38, 77, 51)); // Dark Green
+                        c.setForeground(Color.WHITE);
+                    }
+                } else {
+                    if (isSelected) {
+                        c.setBackground(table.getSelectionBackground());
+                        c.setForeground(table.getSelectionForeground());
+                    } else {
+                        c.setBackground(table.getBackground());
+                        c.setForeground(table.getForeground());
+                    }
+                }
+                return c;
+            }
+        });
 
         // Double-click to show report viewer
         resultsTable.addMouseListener(new java.awt.event.MouseAdapter() {
@@ -322,7 +365,7 @@ public class BacktestPanel extends JPanel {
         return panel;
     }
 
-    private void startBacktest() {
+    private void startBacktest(boolean visual) {
         // Validate inputs
         String expert = expertField.getText().trim();
         if (expert.isEmpty()) {
@@ -358,6 +401,7 @@ public class BacktestPanel extends JPanel {
         btConfig.setDeposit((Integer) depositSpinner.getValue());
         btConfig.setCurrency((String) currencyCombo.getSelectedItem());
         btConfig.setLeverage(leverageField.getText().trim());
+        btConfig.setShutdownTerminal(!visual);
 
         // Set EA parameters from config manager
         String setFileName = eaParamManager.prepareForBacktest(expert);
@@ -369,8 +413,12 @@ public class BacktestPanel extends JPanel {
             logPanel.log("INFO", "EA Config: No .set file found - using EA compiled defaults");
         }
 
+        // Save inputs to preferences
+        savePreferences();
+
         // UI state
         startButton.setEnabled(false);
+        startButtonVisual.setEnabled(false);
         cancelButton.setEnabled(true);
         progressBar.setIndeterminate(true);
         progressBar.setString("Running backtest...");
@@ -415,6 +463,7 @@ public class BacktestPanel extends JPanel {
                     logPanel.log("ERROR", "Backtest failed: " + e.getMessage());
                 } finally {
                     startButton.setEnabled(true);
+                    startButtonVisual.setEnabled(true);
                     cancelButton.setEnabled(false);
                     progressBar.setIndeterminate(false);
                     progressBar.setString("Ready");
@@ -437,6 +486,8 @@ public class BacktestPanel extends JPanel {
     }
 
     private void addResultToTable(BacktestResult result) {
+        newestReportDir = result.getOutputDirectory();
+        
         resultsTableModel.insertRow(0, new Object[]{
                 result.getExpert(),
                 result.getSymbol(),
@@ -651,5 +702,61 @@ public class BacktestPanel extends JPanel {
         JLabel label = new JLabel(text);
         label.setFont(new Font("Segoe UI", Font.PLAIN, 13));
         return label;
+    }
+
+    // ==================== Preferences Logic ====================
+
+    private void savePreferences() {
+        config.set("backtest.expert", expertField.getText().trim());
+        if (symbolCombo.getSelectedItem() != null) config.set("backtest.symbol", symbolCombo.getSelectedItem().toString());
+        if (periodCombo.getSelectedItem() != null) config.set("backtest.period", periodCombo.getSelectedItem().toString());
+        config.set("backtest.model", String.valueOf(modelCombo.getSelectedIndex()));
+        
+        if (fromDatePicker.getDate() != null) config.set("backtest.dateFrom", fromDatePicker.getDate().toString());
+        if (toDatePicker.getDate() != null) config.set("backtest.dateTo", toDatePicker.getDate().toString());
+        
+        config.set("backtest.deposit", String.valueOf(depositSpinner.getValue()));
+        if (currencyCombo.getSelectedItem() != null) config.set("backtest.currency", currencyCombo.getSelectedItem().toString());
+        config.set("backtest.leverage", leverageField.getText().trim());
+        
+        config.save();
+    }
+
+    private void loadPreferences() {
+        String exp = config.get("backtest.expert", "");
+        if (!exp.isEmpty()) {
+            expertField.setText(exp);
+            updateConfigStatus();
+        }
+        
+        String sym = config.get("backtest.symbol", "");
+        if (!sym.isEmpty()) symbolCombo.setSelectedItem(sym);
+        
+        String per = config.get("backtest.period", "");
+        if (!per.isEmpty()) periodCombo.setSelectedItem(per);
+        
+        int mod = config.getInt("backtest.model", 1);
+        if (mod >= 0 && mod < modelCombo.getItemCount()) modelCombo.setSelectedIndex(mod);
+        
+        String dFrom = config.get("backtest.dateFrom", "");
+        if (!dFrom.isEmpty()) {
+            try { fromDatePicker.setDate(LocalDate.parse(dFrom)); } catch (Exception ignored) {}
+        }
+        
+        String dTo = config.get("backtest.dateTo", "");
+        if (!dTo.isEmpty()) {
+            try { toDatePicker.setDate(LocalDate.parse(dTo)); } catch (Exception ignored) {}
+        }
+        
+        String dep = config.get("backtest.deposit", "");
+        if (!dep.isEmpty()) {
+            try { depositSpinner.setValue(Integer.parseInt(dep)); } catch (Exception ignored) {}
+        }
+        
+        String cur = config.get("backtest.currency", "");
+        if (!cur.isEmpty()) currencyCombo.setSelectedItem(cur);
+        
+        String lev = config.get("backtest.leverage", "");
+        if (!lev.isEmpty()) leverageField.setText(lev);
     }
 }

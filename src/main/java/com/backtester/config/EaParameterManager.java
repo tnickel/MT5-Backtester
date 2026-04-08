@@ -312,11 +312,11 @@ public class EaParameterManager {
         Path mt5Dir = appConfig.getMt5InstallDir();
         if (mt5Dir == null) return null;
 
-        Path presetsDir = mt5Dir.resolve("MQL5").resolve("Presets");
+        Path presetsDir = mt5Dir.resolve("MQL5").resolve("Profiles").resolve("Tester");
         try {
             Files.createDirectories(presetsDir);
         } catch (IOException e) {
-            log.error("Failed to create Presets directory", e);
+            log.error("Failed to create Tester directory", e);
             return null;
         }
 

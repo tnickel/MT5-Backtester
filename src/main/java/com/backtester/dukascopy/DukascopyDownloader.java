@@ -44,9 +44,16 @@ public class DukascopyDownloader {
         PRICE_POINT_MAP.put("NZDUSD", 100000);
         PRICE_POINT_MAP.put("USDCAD", 100000);
         PRICE_POINT_MAP.put("EURGBP", 100000);
+        PRICE_POINT_MAP.put("AUDCAD", 100000);
+        PRICE_POINT_MAP.put("AUDNZD", 100000);
+        PRICE_POINT_MAP.put("AUDCHF", 100000);
+        PRICE_POINT_MAP.put("CADCHF", 100000);
+        // 3-digit JPY pairs
         PRICE_POINT_MAP.put("EURJPY", 1000);
         PRICE_POINT_MAP.put("GBPJPY", 1000);
         PRICE_POINT_MAP.put("USDJPY", 1000);
+        PRICE_POINT_MAP.put("NZDJPY", 1000);
+        PRICE_POINT_MAP.put("CADJPY", 1000);
         // Metals
         PRICE_POINT_MAP.put("XAUUSD", 1000);
         PRICE_POINT_MAP.put("XAGUSD", 100000);
