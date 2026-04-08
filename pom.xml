@@ -6,7 +6,7 @@
 
     <groupId>com.antigravity</groupId>
     <artifactId>mt5-backtester</artifactId>
-    <version>1.0.0</version>
+    <version>1.0.1</version>
     <packaging>jar</packaging>
 
     <name>MT5 Backtester</name>
@@ -60,6 +60,13 @@
             <groupId>com.google.code.gson</groupId>
             <artifactId>gson</artifactId>
             <version>2.10.1</version>
+        </dependency>
+
+        <!-- SQLite Database Database -->
+        <dependency>
+            <groupId>org.xerial</groupId>
+            <artifactId>sqlite-jdbc</artifactId>
+            <version>3.45.1.0</version>
         </dependency>
 
         <!-- Logging -->

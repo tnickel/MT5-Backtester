@@ -79,8 +79,11 @@ public class ReportViewerDialog extends JDialog {
         profitPanel.setOpaque(false);
 
         double profit = result.getTotalProfit();
-        JLabel profitLabel = new JLabel(String.format("%s%.2f %s",
-                profit >= 0 ? "+" : "", profit, "USD"));
+        double initial = result.getInitialDeposit() > 0 ? result.getInitialDeposit() : 10000;
+        double profitPct = (profit / initial) * 100;
+        
+        JLabel profitLabel = new JLabel(String.format("%s%.2f %s (%s%.2f%%)",
+                profit >= 0 ? "+" : "", profit, "USD", profit >= 0 ? "+" : "", profitPct));
         profitLabel.setFont(new Font("Segoe UI", Font.BOLD, 28));
         profitLabel.setForeground(profit >= 0 ? GREEN : RED);
         profitPanel.add(profitLabel);
@@ -114,14 +117,20 @@ public class ReportViewerDialog extends JDialog {
         cards.setOpaque(false);
 
         double profit = result.getTotalProfit();
-
-        cards.add(createCard("Total Profit", formatMoney(profit),
+        double initial = result.getInitialDeposit() > 0 ? result.getInitialDeposit() : 10000;
+        
+        cards.add(createCard("Total Profit", String.format("%s (%.2f%%)", formatMoney(profit), (profit/initial)*100),
                 profit >= 0 ? GREEN : RED));
-        cards.add(createCard("Total Trades", String.valueOf(result.getTotalTrades()),
+        cards.add(createCard("Total Trades", String.format("%,d", result.getTotalTrades()),
                 ACCENT));
         cards.add(createCard("Win Rate", String.format("%.1f%%", result.getWinRate()),
                 result.getWinRate() >= 50 ? GREEN : GOLD));
-        cards.add(createCard("Max Drawdown", String.format("%.2f%%", result.getMaxDrawdown()),
+                
+        String ddText = result.getBalanceDrawdown() > 0 ? 
+            String.format("%.2f%%(Eq)|%.2f%%(Bal)", result.getMaxDrawdown(), result.getBalanceDrawdown()) : 
+            String.format("%.2f%%", result.getMaxDrawdown());
+            
+        cards.add(createCard("Drawdown", ddText,
                 result.getMaxDrawdown() < 20 ? GREEN : RED));
         cards.add(createCard("Profit Factor", String.format("%.2f", result.getProfitFactor()),
                 result.getProfitFactor() >= 1.5 ? GREEN : result.getProfitFactor() >= 1 ? GOLD : RED));
@@ -184,12 +193,18 @@ public class ReportViewerDialog extends JDialog {
                 {"Recovery Factor", String.format("%.2f", result.getRecoveryFactor())},
         });
 
+        String ddDetailed = result.getBalanceDrawdown() > 0 ?
+            String.format("%.2f%% ($%.2f) / Bal %.2f%% ($%.2f)", 
+                result.getMaxDrawdown(), result.getMaxDrawdownAbsolute(),
+                result.getBalanceDrawdown(), result.getBalanceDrawdownAbsolute()) :
+            String.format("%.2f%% ($%.2f)", result.getMaxDrawdown(), result.getMaxDrawdownAbsolute());
+
         JPanel rightCol = createDetailColumn(new String[][]{
-                {"Total Trades", String.valueOf(result.getTotalTrades())},
-                {"Profit Trades", String.valueOf(result.getProfitTrades())},
-                {"Loss Trades", String.valueOf(result.getLossTrades())},
+                {"Total Trades", String.format("%,d", result.getTotalTrades())},
+                {"Profit Trades", String.format("%,d", result.getProfitTrades())},
+                {"Loss Trades", String.format("%,d", result.getLossTrades())},
                 {"Win Rate", String.format("%.1f%%", result.getWinRate())},
-                {"Max Drawdown", String.format("%.2f%% ($%.2f)", result.getMaxDrawdown(), result.getMaxDrawdownAbsolute())},
+                {"Max Drawdown", ddDetailed},
                 {"Sharpe Ratio", String.format("%.2f", result.getSharpeRatio())},
                 {"Short / Long", result.getShortPositions() + " / " + result.getLongPositions()},
         });

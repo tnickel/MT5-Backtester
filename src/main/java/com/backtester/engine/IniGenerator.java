@@ -61,4 +61,54 @@ public class IniGenerator {
         log.info("Generated tester.ini at: {}", iniPath);
         return iniPath;
     }
+
+    /**
+     * Generates a tester.ini file for an optimization run.
+     *
+     * @param config   the optimization parameters
+     * @param iniPath  where to write the .ini file
+     * @param reportPath absolute or relative path for the report output
+     * @return the path to the generated INI file
+     */
+    public Path generateForOptimization(OptimizationConfig config, Path iniPath, String reportPath) throws IOException {
+        Files.createDirectories(iniPath.getParent());
+
+        try (Writer writer = Files.newBufferedWriter(iniPath, StandardCharsets.UTF_8)) {
+            writer.write("[Tester]\r\n");
+            writer.write("Expert=" + config.getExpert() + "\r\n");
+
+            if (config.getExpertParameters() != null && !config.getExpertParameters().isEmpty()) {
+                writer.write("ExpertParameters=" + config.getExpertParameters() + "\r\n");
+            }
+
+            writer.write("Symbol=" + config.getSymbol() + "\r\n");
+            writer.write("Period=" + config.getPeriod() + "\r\n");
+            writer.write("Model=" + config.getModel() + "\r\n");
+            writer.write("ExecutionMode=" + config.getExecutionMode() + "\r\n");
+            writer.write("FromDate=" + config.getFromDate().format(MT5_DATE_FORMAT) + "\r\n");
+            writer.write("ToDate=" + config.getToDate().format(MT5_DATE_FORMAT) + "\r\n");
+            writer.write("Deposit=" + config.getDeposit() + "\r\n");
+            writer.write("Currency=" + config.getCurrency() + "\r\n");
+            writer.write("Leverage=" + config.getLeverage() + "\r\n");
+            
+            // Optimization specific settings
+            writer.write("Optimization=" + config.getOptimizationMode() + "\r\n");
+            writer.write("OptimizationCriterion=" + config.getOptimizationCriterion() + "\r\n");
+            writer.write("ForwardMode=" + config.getForwardMode() + "\r\n");
+            if (config.getForwardMode() == 4 && config.getForwardDate() != null) {
+                writer.write("ForwardDate=" + config.getForwardDate().format(MT5_DATE_FORMAT) + "\r\n");
+            }
+            
+            writer.write("UseLocal=" + (config.isUseLocal() ? "1" : "0") + "\r\n");
+            writer.write("UseRemote=" + (config.isUseRemote() ? "1" : "0") + "\r\n");
+            writer.write("UseCloud=" + (config.isUseCloud() ? "1" : "0") + "\r\n");
+            
+            writer.write("Report=" + reportPath + "\r\n");
+            writer.write("ReplaceReport=1\r\n");
+            writer.write("ShutdownTerminal=1\r\n");
+        }
+
+        log.info("Generated optimization tester.ini at: {}", iniPath);
+        return iniPath;
+    }
 }
