@@ -69,6 +69,13 @@ public class BacktestRunner {
         }
 
         Path mt5Dir = Paths.get(terminalPath).getParent();
+        Mt5LogTailer tailer = null;
+
+        // Pre-flight: check for stale MT5 processes from previous runs
+        if (!Mt5ProcessGuard.ensureNoStaleProcesses(null, this::logMessage)) {
+            logMessage("Backtest aborted: user declined to kill stale MT5 process.");
+            return null;
+        }
 
         try {
             // 1. Create output directory
@@ -113,12 +120,12 @@ public class BacktestRunner {
                 pb = new ProcessBuilder(
                     terminalPath,
                     "/portable",
-                    "/config:" + mt5TesterIni.toAbsolutePath().toString()
+                    "/config:tester_backtest.ini"
                 );
             } else {
                 pb = new ProcessBuilder(
                     terminalPath,
-                    "/config:" + mt5TesterIni.toAbsolutePath().toString()
+                    "/config:tester_backtest.ini"
                 );
             }
 
@@ -128,8 +135,12 @@ public class BacktestRunner {
 
             logMessage("Starting MT5: " + String.join(" ", pb.command()));
 
-            // 4. Start process
+            // 4. Start process and log tailer
+            tailer = new Mt5LogTailer(mt5Dir, this::logMessage);
+            tailer.start();
+
             currentProcess = pb.start();
+            Mt5ProcessGuard.registerProcess(currentProcess);
 
             // 5. Asynchronous stream consumer (prevents 64KB buffer deadlock)
             Thread outputConsumer = new Thread(() -> {
@@ -255,6 +266,13 @@ public class BacktestRunner {
             logMessage("ERROR: " + e.getMessage());
             log.error("Backtest execution failed", e);
             return null;
+        } finally {
+            if (currentProcess != null) {
+                Mt5ProcessGuard.unregisterProcess(currentProcess);
+            }
+            if (tailer != null) {
+                tailer.stop();
+            }
         }
     }
 

@@ -324,9 +324,13 @@ public class RobustnessPanel extends JPanel {
         JFileChooser chooser = new JFileChooser(Paths.get(config.getMt5TerminalPath()).getParent().resolve("MQL5").resolve("Experts").toFile());
         int res = chooser.showOpenDialog(this);
         if (res == JFileChooser.APPROVE_OPTION) {
-            String name = chooser.getSelectedFile().getName();
-            if (name.toLowerCase().endsWith(".ex5")) name = name.substring(0, name.length() - 4);
-            expertField.setText(name);
+            Path expertsRoot = Paths.get(config.getMt5TerminalPath()).getParent().resolve("MQL5").resolve("Experts");
+            Path selected = chooser.getSelectedFile().toPath();
+            String relative = expertsRoot.relativize(selected).toString();
+            if (relative.toLowerCase().endsWith(".ex5")) {
+                relative = relative.substring(0, relative.length() - 4);
+            }
+            expertField.setText(relative);
             loadParameters();
         }
     }
@@ -496,6 +500,8 @@ public class RobustnessPanel extends JPanel {
 
         startBtn.setEnabled(false);
         cancelBtn.setEnabled(true);
+        progressBar.setIndeterminate(true);
+        progressBar.setMaximum(100);
         progressBar.setString("Running Sweeps...");
 
         currentRunner = new RobustnessRunner(config);
@@ -504,7 +510,10 @@ public class RobustnessPanel extends JPanel {
             SwingUtilities.invokeLater(() -> progressBar.setString(msg));
         });
         currentRunner.setProgressCallback(percent -> {
-            SwingUtilities.invokeLater(() -> progressBar.setValue(percent));
+            SwingUtilities.invokeLater(() -> {
+                if (progressBar.isIndeterminate()) progressBar.setIndeterminate(false);
+                progressBar.setValue(percent);
+            });
         });
         String targetMetric = metricCombo.getSelectedItem().toString();
         int shifts = (Integer) shiftsSpinner.getValue();
@@ -527,6 +536,8 @@ public class RobustnessPanel extends JPanel {
             protected void done() {
                 startBtn.setEnabled(true);
                 cancelBtn.setEnabled(false);
+                progressBar.setIndeterminate(false);
+                progressBar.setValue(100);
                 progressBar.setString("Finished");
                 SwingUtilities.invokeLater(() -> setActiveScanParameter(null));
                 

@@ -146,6 +146,6 @@ public class BacktestConfig {
         "EURUSD", "GBPUSD", "USDJPY", "USDCHF", "AUDUSD",
         "NZDUSD", "USDCAD", "EURGBP", "EURJPY", "GBPJPY",
         "AUDCAD", "AUDNZD", "AUDCHF", "NZDJPY", "CADJPY", "CADCHF",
-        "XAUUSD", "XAGUSD"
+        "XAUUSD", "XAGUSD", "XTIUSD"
     };
 }

@@ -13,8 +13,13 @@ import com.github.lgooddatepicker.components.DatePickerSettings;
 import javax.swing.*;
 import javax.swing.table.DefaultTableModel;
 import javax.swing.table.TableCellRenderer;
+import javax.imageio.ImageIO;
 import java.awt.*;
+import java.awt.event.MouseAdapter;
+import java.awt.event.MouseEvent;
+import java.awt.image.BufferedImage;
 import java.io.File;
+import java.net.URL;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -65,6 +70,8 @@ public class OptimizationPanel extends JPanel {
     private JTable forwardResultTable;
     private DefaultTableModel forwardResultTableModel;
     private JLabel bestResultLabel;
+
+    private BufferedImage sciFiBg;
     private JButton applyBestBtn;
     private JButton openReportBtn;
 
@@ -81,6 +88,15 @@ public class OptimizationPanel extends JPanel {
     public OptimizationPanel(LogPanel logPanel) {
         this.logPanel = logPanel;
         this.config = AppConfig.getInstance();
+
+        try {
+            URL imgUrl = getClass().getResource("/images/quantum_singularity.png");
+            if (imgUrl != null) {
+                sciFiBg = ImageIO.read(imgUrl);
+            }
+        } catch (Exception e) {
+            System.err.println("Could not load sci-fi background: " + e.getMessage());
+        }
 
         setLayout(new BorderLayout(10, 10));
         setBorder(BorderFactory.createEmptyBorder(15, 15, 15, 15));
@@ -323,7 +339,35 @@ public class OptimizationPanel extends JPanel {
             @Override
             public boolean isCellEditable(int row, int column) { return false; }
         };
-        resultTable = new JTable(resultTableModel);
+        resultTable = new JTable(resultTableModel) {
+            @Override
+            protected void paintComponent(Graphics g) {
+                super.paintComponent(g);
+                if (getRowCount() == 0 && sciFiBg != null) {
+                    Graphics2D g2d = (Graphics2D) g.create();
+                    g2d.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);
+                    
+                    // Draw centered and scaled to cover/fit
+                    double scale = Math.max((double)getWidth() / sciFiBg.getWidth(), (double)getHeight() / sciFiBg.getHeight());
+                    int w = (int)(sciFiBg.getWidth() * scale);
+                    int h = (int)(sciFiBg.getHeight() * scale);
+                    int x = (getWidth() - w) / 2;
+                    int y = (getHeight() - h) / 2;
+                    
+                    g2d.drawImage(sciFiBg, x, y, w, h, this);
+                    
+                    // Add overlay text
+                    g2d.setColor(new Color(255, 255, 255, 180));
+                    g2d.setFont(new Font("Segoe UI", Font.BOLD, 24));
+                    String text = "Antigravity Protocol: Waiting for Data";
+                    int textWidth = g2d.getFontMetrics().stringWidth(text);
+                    g2d.drawString(text, (getWidth() - textWidth) / 2, getHeight() / 2);
+                    
+                    g2d.dispose();
+                }
+            }
+        };
+        resultTable.setFillsViewportHeight(true);
         resultTable.setAutoResizeMode(JTable.AUTO_RESIZE_OFF);
         resultTable.setAutoCreateRowSorter(true);
         resultTable.addMouseListener(new java.awt.event.MouseAdapter() {
@@ -342,7 +386,26 @@ public class OptimizationPanel extends JPanel {
             @Override
             public boolean isCellEditable(int row, int column) { return false; }
         };
-        forwardResultTable = new JTable(forwardResultTableModel);
+        forwardResultTable = new JTable(forwardResultTableModel) {
+            @Override
+            protected void paintComponent(Graphics g) {
+                super.paintComponent(g);
+                if (getRowCount() == 0 && sciFiBg != null) {
+                    Graphics2D g2d = (Graphics2D) g.create();
+                    g2d.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);
+                    
+                    double scale = Math.max((double)getWidth() / sciFiBg.getWidth(), (double)getHeight() / sciFiBg.getHeight());
+                    int w = (int)(sciFiBg.getWidth() * scale);
+                    int h = (int)(sciFiBg.getHeight() * scale);
+                    int x = (getWidth() - w) / 2;
+                    int y = (getHeight() - h) / 2;
+                    
+                    g2d.drawImage(sciFiBg, x, y, w, h, this);
+                    g2d.dispose();
+                }
+            }
+        };
+        forwardResultTable.setFillsViewportHeight(true);
         forwardResultTable.setAutoResizeMode(JTable.AUTO_RESIZE_OFF);
         forwardResultTable.setAutoCreateRowSorter(true);
         forwardResultTable.addMouseListener(new java.awt.event.MouseAdapter() {
@@ -407,11 +470,13 @@ public class OptimizationPanel extends JPanel {
         JFileChooser chooser = new JFileChooser(Paths.get(config.getMt5TerminalPath()).getParent().resolve("MQL5").resolve("Experts").toFile());
         int res = chooser.showOpenDialog(this);
         if (res == JFileChooser.APPROVE_OPTION) {
-            String name = chooser.getSelectedFile().getName();
-            if (name.toLowerCase().endsWith(".ex5")) {
-                name = name.substring(0, name.length() - 4);
+            Path expertsRoot = Paths.get(config.getMt5TerminalPath()).getParent().resolve("MQL5").resolve("Experts");
+            Path selected = chooser.getSelectedFile().toPath();
+            String relative = expertsRoot.relativize(selected).toString();
+            if (relative.toLowerCase().endsWith(".ex5")) {
+                relative = relative.substring(0, relative.length() - 4);
             }
-            expertField.setText(name);
+            expertField.setText(relative);
             loadParameters();
             savePreferences();
         }

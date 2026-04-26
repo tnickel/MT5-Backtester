@@ -24,7 +24,7 @@ public class DukascopyDownloader {
 
     private static final Logger log = LoggerFactory.getLogger(DukascopyDownloader.class);
     private static final String BASE_URL = "https://datafeed.dukascopy.com/datafeed";
-    private static final int MAX_PARALLEL_DOWNLOADS = 4;
+    private static final int MAX_PARALLEL_DOWNLOADS = 10;
     private static final int MAX_RETRIES = 3;
 
     private final HttpClient httpClient;
@@ -32,6 +32,7 @@ public class DukascopyDownloader {
     private Consumer<String> logCallback;
     private Consumer<Double> progressCallback;
     private volatile boolean cancelled = false;
+    private final java.util.concurrent.atomic.AtomicInteger actualErrors = new java.util.concurrent.atomic.AtomicInteger(0);
 
     /** Price point multipliers for different instruments */
     private static final Map<String, Integer> PRICE_POINT_MAP = new HashMap<>();
@@ -54,9 +55,10 @@ public class DukascopyDownloader {
         PRICE_POINT_MAP.put("USDJPY", 1000);
         PRICE_POINT_MAP.put("NZDJPY", 1000);
         PRICE_POINT_MAP.put("CADJPY", 1000);
-        // Metals
+        // Metals & Commodities
         PRICE_POINT_MAP.put("XAUUSD", 1000);
         PRICE_POINT_MAP.put("XAGUSD", 100000);
+        PRICE_POINT_MAP.put("XTIUSD", 1000);
     }
 
     public DukascopyDownloader(Path dataDirectory) {
@@ -77,6 +79,10 @@ public class DukascopyDownloader {
 
     public void cancel() {
         this.cancelled = true;
+    }
+
+    public int getActualErrors() {
+        return actualErrors.get();
     }
 
     /**
@@ -180,9 +186,13 @@ public class DukascopyDownloader {
      * Note: Months are 0-indexed in Dukascopy URLs!
      */
     private String buildUrl(String symbol, LocalDate date, int hour) {
+        String dukaSymbol = symbol.toUpperCase();
+        if (dukaSymbol.equals("XTIUSD")) {
+            dukaSymbol = "LIGHTCMDUSD";
+        }
         return String.format("%s/%s/%d/%02d/%02d/%02dh_ticks.bi5",
                 BASE_URL,
-                symbol.toUpperCase(),
+                dukaSymbol,
                 date.getYear(),
                 date.getMonthValue() - 1,  // 0-indexed month!
                 date.getDayOfMonth(),
@@ -228,16 +238,21 @@ public class DukascopyDownloader {
                         log.debug("Downloaded: {}", task.localPath.getFileName());
                         return task.localPath;
                     } else {
-                        // Empty response = no data for this hour (e.g. holiday)
+                        // Empty response = no data for this hour (e.g. holiday). Write a marker file so we don't redownload it.
                         log.debug("No data for: {}", task.url);
-                        return null;
+                        Files.write(task.localPath, new byte[0]);
+                        return task.localPath;
                     }
                 } else if (response.statusCode() == 404) {
-                    // No data available for this hour
+                    // No data available for this hour. Write a marker file so we don't redownload it.
                     log.debug("No data (404): {}", task.url);
-                    return null;
+                    Files.write(task.localPath, new byte[0]);
+                    return task.localPath;
                 } else {
                     log.warn("HTTP {} for {} (attempt {})", response.statusCode(), task.url, attempt);
+                    if (attempt == MAX_RETRIES) {
+                        actualErrors.incrementAndGet();
+                    }
                 }
 
             } catch (Exception e) {
@@ -248,6 +263,8 @@ public class DukascopyDownloader {
                         Thread.currentThread().interrupt();
                         return null;
                     }
+                } else {
+                    actualErrors.incrementAndGet();
                 }
             }
         }

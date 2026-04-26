@@ -111,9 +111,15 @@ public class SettingsPanel extends JPanel {
 
     private void updateMt5Status(JLabel label) {
         String path = mt5PathField.getText().trim();
-        if (Files.exists(Paths.get(path))) {
-            label.setText("✓ Terminal found");
-            label.setForeground(new Color(100, 200, 120));
+        Path p = Paths.get(path);
+        if (Files.exists(p)) {
+            if (!p.getFileName().toString().toLowerCase().equals("terminal64.exe")) {
+                label.setText("✗ Invalid executable: must be terminal64.exe");
+                label.setForeground(new Color(240, 100, 100));
+            } else {
+                label.setText("✓ Terminal found");
+                label.setForeground(new Color(100, 200, 120));
+            }
         } else {
             label.setText("✗ Terminal not found at specified path");
             label.setForeground(new Color(240, 100, 100));
@@ -209,6 +215,15 @@ public class SettingsPanel extends JPanel {
         saveBtn.setForeground(Color.WHITE);
         saveBtn.setPreferredSize(new Dimension(180, 38));
         saveBtn.addActionListener(e -> {
+            String path = mt5PathField.getText().trim();
+            java.nio.file.Path p = java.nio.file.Paths.get(path);
+            if (!java.nio.file.Files.exists(p) || !p.getFileName().toString().toLowerCase().equals("terminal64.exe")) {
+                JOptionPane.showMessageDialog(this,
+                        "Invalid MetaTrader 5 Terminal Path. The file MUST exist and be named 'terminal64.exe'.",
+                        "Validation Error", JOptionPane.ERROR_MESSAGE);
+                return;
+            }
+        
             saveSettings();
             JOptionPane.showMessageDialog(this,
                     "Settings saved successfully!",
