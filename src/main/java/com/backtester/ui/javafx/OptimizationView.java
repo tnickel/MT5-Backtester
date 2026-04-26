@@ -44,7 +44,10 @@ public class OptimizationView {
     private Button cancelBtn;
     private ProgressBar progressBar;
     private Label progressLabel;
-    
+    private TableView<com.backtester.report.OptimizationResult.Pass> resultTable;
+    private TableView<com.backtester.report.OptimizationResult.Pass> forwardTable;
+    private OptimizationConfig optConfig;
+
     public OptimizationView(LogView logView) {
         this.logView = logView;
         root = new BorderPane();
@@ -250,11 +253,14 @@ public class OptimizationView {
         TabPane resultTabs = new TabPane();
         resultTabs.getStyleClass().add("tab-pane");
         
-        Tab mainTab = new Tab("Main Optimization", createQuantumBackground());
+        resultTable = createResultTable();
+        forwardTable = createResultTable();
+        
+        Tab mainTab = new Tab("Main Optimization", resultTable);
         mainTab.getStyleClass().add("tab");
         mainTab.setClosable(false);
         
-        Tab forwardTab = new Tab("Forward Results");
+        Tab forwardTab = new Tab("Forward Results", forwardTable);
         forwardTab.getStyleClass().add("tab");
         forwardTab.setClosable(false);
         
@@ -295,6 +301,51 @@ public class OptimizationView {
 
         box.getChildren().addAll(title, resultTabs, controlBox);
         return box;
+    }
+
+    private TableView<com.backtester.report.OptimizationResult.Pass> createResultTable() {
+        TableView<com.backtester.report.OptimizationResult.Pass> table = new TableView<>();
+        table.setStyle("-fx-background-color: transparent;");
+        
+        TableColumn<com.backtester.report.OptimizationResult.Pass, Integer> passCol = new TableColumn<>("Pass");
+        passCol.setCellValueFactory(new PropertyValueFactory<>("passNumber"));
+        passCol.setPrefWidth(60);
+        
+        TableColumn<com.backtester.report.OptimizationResult.Pass, Double> profitCol = new TableColumn<>("Profit");
+        profitCol.setCellValueFactory(new PropertyValueFactory<>("profit"));
+        profitCol.setPrefWidth(100);
+        
+        TableColumn<com.backtester.report.OptimizationResult.Pass, Integer> tradesCol = new TableColumn<>("Trades");
+        tradesCol.setCellValueFactory(new PropertyValueFactory<>("totalTrades"));
+        tradesCol.setPrefWidth(70);
+        
+        TableColumn<com.backtester.report.OptimizationResult.Pass, Double> pfCol = new TableColumn<>("Profit Factor");
+        pfCol.setCellValueFactory(new PropertyValueFactory<>("profitFactor"));
+        pfCol.setPrefWidth(100);
+        
+        TableColumn<com.backtester.report.OptimizationResult.Pass, Double> payoffCol = new TableColumn<>("Expected Payoff");
+        payoffCol.setCellValueFactory(new PropertyValueFactory<>("expectedPayoff"));
+        payoffCol.setPrefWidth(120);
+        
+        TableColumn<com.backtester.report.OptimizationResult.Pass, Double> ddCol = new TableColumn<>("Drawdown %");
+        ddCol.setCellValueFactory(new PropertyValueFactory<>("drawdownPercent"));
+        ddCol.setPrefWidth(100);
+        
+        TableColumn<com.backtester.report.OptimizationResult.Pass, Double> recoveryCol = new TableColumn<>("Recovery Factor");
+        recoveryCol.setCellValueFactory(new PropertyValueFactory<>("recoveryFactor"));
+        recoveryCol.setPrefWidth(120);
+        
+        TableColumn<com.backtester.report.OptimizationResult.Pass, Double> sharpeCol = new TableColumn<>("Sharpe Ratio");
+        sharpeCol.setCellValueFactory(new PropertyValueFactory<>("sharpeRatio"));
+        sharpeCol.setPrefWidth(100);
+        
+        table.getColumns().addAll(passCol, profitCol, tradesCol, pfCol, payoffCol, ddCol, recoveryCol, sharpeCol);
+        
+        Label placeholder = new Label("No results yet. Run an optimization.");
+        placeholder.setStyle("-fx-text-fill: #7e889a;");
+        table.setPlaceholder(placeholder);
+        
+        return table;
     }
 
     private StackPane createQuantumBackground() {
@@ -416,7 +467,7 @@ public class OptimizationView {
             eaParamManager.saveCustomParameters(expertField.getText().trim(), new java.util.ArrayList<>(paramTable.getItems()));
         }
 
-        OptimizationConfig optConfig = new OptimizationConfig();
+        this.optConfig = new OptimizationConfig();
         optConfig.setExpert(expertField.getText().trim());
         try {
             String preset = eaParamManager.prepareForBacktest(expertField.getText().trim());
@@ -450,7 +501,7 @@ public class OptimizationView {
         
         setUIState(true);
         progressBar.setProgress(ProgressBar.INDETERMINATE_PROGRESS);
-        progressLabel.setText("Preparing...");
+        progressLabel.setText("Running...");
         logView.log("INFO", "Starting optimization for " + optConfig.getExpert());
 
         com.backtester.config.AppConfig config = com.backtester.config.AppConfig.getInstance();
@@ -465,14 +516,8 @@ public class OptimizationView {
         currentRunner.setTotalPasses(totalPasses);
         
         currentRunner.setLogCallback(msg -> logView.log("OPT", msg));
-        currentRunner.setProgressCallback((current, total) -> {
-            Platform.runLater(() -> {
-                if (total > 0) {
-                    progressBar.setProgress((double) current / total);
-                    progressLabel.setText(current + " / " + total + " Passes");
-                }
-            });
-        });
+        // Simple indeterminate progress, no label updates
+        currentRunner.setProgressCallback((current, total) -> {});
 
         currentTask = new Task<Void>() {
             @Override
@@ -482,6 +527,15 @@ public class OptimizationView {
                 return null;
             }
         };
+
+        currentTask.setOnFailed(e -> {
+            Throwable ex = currentTask.getException();
+            logView.log("ERROR", "Task failed: " + (ex != null ? ex.getMessage() : "Unknown Error"));
+            if (ex != null) ex.printStackTrace();
+            setUIState(false);
+            progressBar.setProgress(0);
+            progressLabel.setText("Error");
+        });
 
         Thread t = new Thread(currentTask);
         t.setDaemon(true);
@@ -502,20 +556,48 @@ public class OptimizationView {
     }
 
     private void handleOptimizationResult(com.backtester.report.OptimizationResult result) {
-        setUIState(false);
-        progressBar.setProgress(1.0);
-        progressLabel.setText("Finished");
-        if (result.isSuccess()) {
-            if (result.getPasses().isEmpty()) {
-                logView.log("WARN", "Optimization finished, but no passes were produced.");
+        try {
+            setUIState(false);
+            progressBar.setProgress(1.0);
+            progressLabel.setText("Finished");
+            if (result.isSuccess()) {
+                if (result.getPasses().isEmpty()) {
+                    logView.log("WARN", "Optimization finished, but no passes were produced.");
+                } else {
+                    logView.log("INFO", "Optimization finished successfully. Found " + result.getPasses().size() + " passes.");
+                    
+                    // Populate Tables
+                    resultTable.setItems(FXCollections.observableArrayList(result.getPasses()));
+                    if (result.hasForwardResults()) {
+                        forwardTable.setItems(FXCollections.observableArrayList(result.getForwardPasses()));
+                    } else {
+                        forwardTable.getItems().clear();
+                    }
+
+                    // Save to DB
+                    try {
+                        com.google.gson.JsonObject metrics = new com.google.gson.JsonObject();
+                        metrics.addProperty("passes", result.getPasses().size());
+                        metrics.addProperty("forwardPasses", result.getForwardPasses().size());
+                        com.backtester.database.DatabaseManager.getInstance().saveRun(
+                            "OPTIMIZATION", 
+                            optConfig.getExpert(), 
+                            System.currentTimeMillis(), 
+                            metrics.toString(), 
+                            result.getOutputDirectory()
+                        );
+                    } catch (Exception ex) {
+                        logView.log("ERROR", "Failed to save optimization to DB: " + ex.getMessage());
+                    }
+                }
+            } else if (result.getMessage() != null && result.getMessage().contains("cancelled")) {
+                logView.log("WARN", "Optimization cancelled by user.");
             } else {
-                logView.log("INFO", "Optimization finished successfully. Found " + result.getPasses().size() + " passes.");
-                // TODO: Populate Result Tables
+                logView.log("ERROR", "Optimization failed: " + result.getMessage());
             }
-        } else if (result.getMessage() != null && result.getMessage().contains("cancelled")) {
-            logView.log("WARN", "Optimization cancelled by user.");
-        } else {
-            logView.log("ERROR", "Optimization failed: " + result.getMessage());
+        } catch (Exception t) {
+            t.printStackTrace();
+            logView.log("ERROR", "UI Update crashed: " + t.getMessage());
         }
     }
 

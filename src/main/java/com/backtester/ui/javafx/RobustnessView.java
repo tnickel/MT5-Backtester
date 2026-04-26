@@ -126,16 +126,32 @@ public class RobustnessView {
         shiftDaysSpinner = new Spinner<>(1, 365, 7, 1);
         grid.add(shiftDaysSpinner, 3, 3);
 
-        // Row 4: Metric & Model
-        grid.add(new Label("Metric:"), 0, 4);
+        // Row 4: Account settings
+        grid.add(new Label("Deposit:"), 0, 4);
+        depositField = new TextField("10000");
+        depositField.getStyleClass().add("text-input");
+        grid.add(depositField, 1, 4);
+
+        grid.add(new Label("Currency/Lev:"), 2, 4);
+        currencyField = new TextField("USD");
+        currencyField.getStyleClass().add("text-input");
+        currencyField.setPrefWidth(60);
+        leverageField = new TextField("1:100");
+        leverageField.getStyleClass().add("text-input");
+        leverageField.setPrefWidth(60);
+        HBox curLevBox = new HBox(5, currencyField, leverageField);
+        grid.add(curLevBox, 3, 4);
+
+        // Row 5: Metric & Model
+        grid.add(new Label("Metric:"), 0, 5);
         metricCombo = new ComboBox<>(FXCollections.observableArrayList(OptimizationConfig.OPTIMIZATION_CRITERIA));
         metricCombo.getStyleClass().add("combo-box");
-        grid.add(metricCombo, 1, 4);
+        grid.add(metricCombo, 1, 5);
 
-        grid.add(new Label("Tick Model:"), 2, 4);
+        grid.add(new Label("Tick Model:"), 2, 5);
         modelCombo = new ComboBox<>(FXCollections.observableArrayList(BacktestConfig.MODEL_NAMES));
         modelCombo.getStyleClass().add("combo-box");
-        grid.add(modelCombo, 3, 4);
+        grid.add(modelCombo, 3, 5);
 
         box.getChildren().addAll(title, grid);
         return box;
@@ -221,10 +237,12 @@ public class RobustnessView {
         startBtn = new Button("▶ Start Robustness Scan");
         startBtn.getStyleClass().addAll("button", "button-start");
         startBtn.setStyle("-fx-background-color: linear-gradient(to bottom, #782878, #3c143c);");
+        startBtn.setOnAction(e -> startScan());
 
         cancelBtn = new Button("⬛ Cancel");
         cancelBtn.getStyleClass().addAll("button", "button-cancel");
         cancelBtn.setDisable(true);
+        cancelBtn.setOnAction(e -> cancelScan());
 
         progress = new ProgressBar(0);
         progress.setPrefWidth(300);
@@ -300,8 +318,41 @@ public class RobustnessView {
         String per = config.get("robustness.period", "H1");
         periodCombo.setValue(per);
         
-        String mod = config.get("robustness.model", "Every tick");
-        modelCombo.setValue(mod);
+        // Handle both string and legacy integer index from old swing config
+        String modStr = config.get("robustness.model", "Every tick");
+        try {
+            int modIdx = Integer.parseInt(modStr);
+            if (modIdx >= 0 && modIdx < modelCombo.getItems().size()) {
+                modelCombo.getSelectionModel().select(modIdx);
+            }
+        } catch (NumberFormatException e) {
+            modelCombo.setValue(modStr);
+        }
+        
+        String metricStr = config.get("robustness.metric", "Profit");
+        try {
+            int metricIdx = Integer.parseInt(metricStr);
+            if (metricIdx >= 0 && metricIdx < metricCombo.getItems().size()) {
+                metricCombo.getSelectionModel().select(metricIdx);
+            }
+        } catch (NumberFormatException e) {
+            metricCombo.setValue(metricStr);
+        }
+
+        try {
+            String dFrom = config.get("robustness.dateFrom", "");
+            if (!dFrom.isEmpty()) fromDatePicker.setValue(LocalDate.parse(dFrom));
+            
+            String dTo = config.get("robustness.dateTo", "");
+            if (!dTo.isEmpty()) toDatePicker.setValue(LocalDate.parse(dTo));
+        } catch (Exception ignored) {}
+
+        depositField.setText(config.get("robustness.deposit", "10000"));
+        currencyField.setText(config.get("robustness.currency", "USD"));
+        leverageField.setText(config.get("robustness.leverage", "1:100"));
+        
+        shiftsSpinner.getValueFactory().setValue(config.getInt("robustness.shifts", 10));
+        shiftDaysSpinner.getValueFactory().setValue(config.getInt("robustness.shiftdays", 7));
     }
 
     private void savePreferences() {
@@ -309,6 +360,14 @@ public class RobustnessView {
         if (symbolCombo.getValue() != null) config.set("robustness.symbol", symbolCombo.getValue());
         if (periodCombo.getValue() != null) config.set("robustness.period", periodCombo.getValue());
         if (modelCombo.getValue() != null) config.set("robustness.model", modelCombo.getValue());
+        if (metricCombo.getValue() != null) config.set("robustness.metric", metricCombo.getValue());
+        if (fromDatePicker.getValue() != null) config.set("robustness.dateFrom", fromDatePicker.getValue().toString());
+        if (toDatePicker.getValue() != null) config.set("robustness.dateTo", toDatePicker.getValue().toString());
+        config.set("robustness.deposit", depositField.getText().trim());
+        config.set("robustness.currency", currencyField.getText().trim());
+        config.set("robustness.leverage", leverageField.getText().trim());
+        config.set("robustness.shifts", String.valueOf(shiftsSpinner.getValue()));
+        config.set("robustness.shiftdays", String.valueOf(shiftDaysSpinner.getValue()));
         config.save();
     }
 
@@ -452,6 +511,125 @@ public class RobustnessView {
             eaParamManager.writeSetFile(file.toPath(), new java.util.ArrayList<>(paramTable.getItems()), eaName);
             logView.log("INFO", "Saved parameters to " + file.getName());
         }
+    }
+
+    private void startScan() {
+        try {
+            savePreferences();
+            
+            String expert = expertField.getText().trim();
+            if (expert.isEmpty()) {
+                logView.log("WARN", "Please select an Expert Advisor.");
+                return;
+            }
+
+            OptimizationConfig optConfig = new OptimizationConfig();
+            optConfig.setExpert(expert);
+            optConfig.setSymbol(symbolCombo.getValue() != null ? symbolCombo.getValue() : "EURUSD");
+            optConfig.setPeriod(periodCombo.getValue() != null ? periodCombo.getValue() : "H1");
+            optConfig.setModel(modelCombo.getSelectionModel().getSelectedIndex() >= 0 ? modelCombo.getSelectionModel().getSelectedIndex() : 1);
+            if (fromDatePicker.getValue() != null) optConfig.setFromDate(fromDatePicker.getValue());
+            if (toDatePicker.getValue() != null) optConfig.setToDate(toDatePicker.getValue());
+            
+            try { optConfig.setDeposit(Integer.parseInt(depositField.getText().trim())); } 
+            catch (Exception e) { optConfig.setDeposit(10000); }
+            optConfig.setCurrency(currencyField.getText().trim());
+            optConfig.setLeverage(leverageField.getText().trim());
+            optConfig.setUseLocal(true);
+
+            java.util.List<EaParameter> params = new java.util.ArrayList<>(paramTable.getItems());
+            if (params.isEmpty()) {
+                logView.log("WARN", "No parameters to sweep.");
+                return;
+            }
+
+            setUIState(true);
+            progress.setProgress(-1); // Indeterminate
+
+            currentRunner = new RobustnessRunner(config);
+            currentRunner.setLogCallback(msg -> logView.log("ROBUST", msg));
+            currentRunner.setProgressCallback(percent -> {
+                Platform.runLater(() -> progress.setProgress(percent / 100.0));
+            });
+
+            String targetMetric = metricCombo.getValue() != null ? metricCombo.getValue() : "Profit";
+            int shifts = shiftsSpinner.getValue() != null ? shiftsSpinner.getValue() : 10;
+            int shiftDays = shiftDaysSpinner.getValue() != null ? shiftDaysSpinner.getValue() : 90;
+
+            currentTask = new Task<Void>() {
+                @Override
+                protected Void call() throws Exception {
+                    com.backtester.report.RobustnessResult res = currentRunner.runRobustnessScan(optConfig, params, shifts, shiftDays);
+                    Platform.runLater(() -> handleScanResult(res, optConfig, targetMetric, params, shifts, shiftDays));
+                    return null;
+                }
+            };
+
+            currentTask.setOnFailed(e -> {
+                Throwable ex = currentTask.getException();
+                logView.log("ERROR", "Robustness Scan failed: " + (ex != null ? ex.getMessage() : "Unknown Error"));
+                if (ex != null) ex.printStackTrace();
+                setUIState(false);
+                progress.setProgress(0);
+            });
+
+            Thread t = new Thread(currentTask);
+            t.setDaemon(true);
+            t.start();
+        } catch (Exception ex) {
+            logView.log("ERROR", "Error in startScan: " + ex.getMessage());
+            ex.printStackTrace();
+        }
+    }
+
+    private void handleScanResult(com.backtester.report.RobustnessResult res, OptimizationConfig optConfig, String targetMetric, java.util.List<EaParameter> params, int shifts, int shiftDays) {
+        setUIState(false);
+        progress.setProgress(1.0);
+        
+        if (res != null && res.isSuccess()) {
+            logView.log("INFO", "Robustness scan finished successfully.");
+            try {
+                com.backtester.report.RobustnessHtmlGenerator.generateReport(res, optConfig, targetMetric, targetMetric, params);
+                java.nio.file.Path reportPath = java.nio.file.Paths.get(res.getOutputDirectory(), "robustness_report.html");
+                
+                com.google.gson.JsonObject metrics = new com.google.gson.JsonObject();
+                metrics.addProperty("targetMetric", targetMetric);
+                metrics.addProperty("shifts", shifts);
+                metrics.addProperty("shiftDays", shiftDays);
+                
+                com.backtester.database.DatabaseManager.getInstance().saveRun(
+                    "ROBUSTNESS", 
+                    optConfig.getExpert(), 
+                    System.currentTimeMillis(), 
+                    metrics.toString(), 
+                    reportPath.toAbsolutePath().toString()
+                );
+                
+                java.awt.Desktop.getDesktop().open(reportPath.toFile());
+            } catch (Exception ex) {
+                logView.log("ERROR", "Failed to save robustness to DB: " + ex.getMessage());
+            }
+        } else if (res != null) {
+            logView.log("ERROR", "Robustness scan failed: " + res.getMessage());
+        }
+    }
+
+    private void cancelScan() {
+        if (currentRunner != null) currentRunner.cancel();
+        if (currentTask != null) currentTask.cancel(true);
+        setUIState(false);
+        progress.setProgress(0.0);
+        logView.log("WARN", "Robustness scan cancelled.");
+    }
+
+    private void setUIState(boolean running) {
+        startBtn.setDisable(running);
+        cancelBtn.setDisable(!running);
+        expertField.setDisable(running);
+        symbolCombo.setDisable(running);
+        paramTable.setDisable(running);
+        shiftsSpinner.setDisable(running);
+        shiftDaysSpinner.setDisable(running);
     }
 
     public BorderPane getView() {
