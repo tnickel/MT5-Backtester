@@ -214,9 +214,16 @@ public class DukascopyPanel extends JPanel {
         importButton.setForeground(Color.WHITE);
         importButton.addActionListener(e -> importToMt5());
 
+        JButton exportCsvButton = new JButton("\uD83D\uDCCA Export CSV");
+        exportCsvButton.setFont(new Font("Segoe UI", Font.BOLD, 13));
+        exportCsvButton.setBackground(new Color(90, 90, 120));
+        exportCsvButton.setForeground(Color.WHITE);
+        exportCsvButton.addActionListener(e -> exportSelectedToCsv());
+
         buttonPanel.add(scanBtn);
         buttonPanel.add(convertButton);
         buttonPanel.add(importButton);
+        buttonPanel.add(exportCsvButton);
 
         importProgress = new JProgressBar(0, 100);
         importProgress.setStringPainted(true);
@@ -296,13 +303,35 @@ public class DukascopyPanel extends JPanel {
                 cancelDownloadButton.setEnabled(false);
                 downloadProgress.setValue(100);
                 downloadProgress.setString("Download complete");
+                
+                int errors = 0;
+                if (currentDownloader != null) {
+                	errors = currentDownloader.getActualErrors();
+                }
 
                 try {
                     get();
-                    logPanel.log("INFO", "All downloads completed!");
+                    if (!isCancelled()) {
+                        if (errors > 0) {
+                            JOptionPane.showMessageDialog(DukascopyPanel.this, 
+                                "Download abgeschlossen.\n\n" + errors + " Dateien konnten wegen Überlastung des Dukascopy-Servers\n" +
+                                "(HTTP 503 Fehler) nicht geladen werden.\n\n" +
+                                "Das Programm hat diese Stunden zum Schutz vor einem Absturz übersprungen.",
+                                "Download mit kleinen Lücken", JOptionPane.WARNING_MESSAGE);
+                            logPanel.log("WARN", "Download completed with " + errors + " missing hours due to server errors.");
+                        } else {
+                            JOptionPane.showMessageDialog(DukascopyPanel.this, 
+                                "Der Download aller gewählten Währungspaare\nwurde fehlerfrei und vollständig abgeschlossen!", 
+                                "Download Erfolgreich", JOptionPane.INFORMATION_MESSAGE);
+                            logPanel.log("INFO", "All downloads completed perfectly!");
+                        }
+                    }
                 } catch (Exception e) {
                     if (!isCancelled()) {
                         logPanel.log("ERROR", "Download error: " + e.getMessage());
+                        JOptionPane.showMessageDialog(DukascopyPanel.this, 
+                                "Beim Download ist ein Fehler aufgetreten:\n" + e.getMessage(), 
+                                "Download Fehler", JOptionPane.ERROR_MESSAGE);
                     }
                 }
 
@@ -449,12 +478,10 @@ public class DukascopyPanel extends JPanel {
             protected void done() {
                 convertButton.setEnabled(true);
                 importProgress.setIndeterminate(false);
-                importProgress.setValue(100);
                 importProgress.setString("Conversion complete");
-
                 try {
                     get();
-                    logPanel.log("INFO", "CSV conversion completed!");
+                    logPanel.log("INFO", "All selected symbols converted and saved.");
                 } catch (Exception e) {
                     logPanel.log("ERROR", "Conversion error: " + e.getMessage());
                 }
@@ -462,6 +489,42 @@ public class DukascopyPanel extends JPanel {
         };
 
         worker.execute();
+    }
+
+    private void exportSelectedToCsv() {
+        int[] selectedRows = dataTable.getSelectedRows();
+        if (selectedRows.length == 0) {
+            JOptionPane.showMessageDialog(this, "Please select at least one row from the table.", "No Selection", JOptionPane.WARNING_MESSAGE);
+            return;
+        }
+
+        JFileChooser chooser = new JFileChooser();
+        chooser.setFileSelectionMode(JFileChooser.DIRECTORIES_ONLY);
+        chooser.setDialogTitle("Select Export Directory for CSV Files");
+        if (chooser.showSaveDialog(this) == JFileChooser.APPROVE_OPTION) {
+            Path targetDir = chooser.getSelectedFile().toPath();
+            int exportedCount = 0;
+            for (int r : selectedRows) {
+                String symbol = (String) dataTableModel.getValueAt(r, 0);
+                String csvPathStr = (String) dataTableModel.getValueAt(r, 4);
+                if (csvPathStr != null && !csvPathStr.equals("—")) {
+                    try {
+                        Path sourcePath = Paths.get(csvPathStr);
+                        Path targetPath = targetDir.resolve(sourcePath.getFileName());
+                        Files.copy(sourcePath, targetPath, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                        logPanel.log("INFO", "Exported CSV to: " + targetPath.toString());
+                        exportedCount++;
+                    } catch (Exception e) {
+                        logPanel.log("ERROR", "Failed to export " + symbol + ": " + e.getMessage());
+                    }
+                } else {
+                    logPanel.log("WARN", "No CSV available for " + symbol + ". Please Convert it first.");
+                }
+            }
+            if (exportedCount > 0) {
+                JOptionPane.showMessageDialog(this, exportedCount + " CSV file(s) successfully exported.", "Export Complete", JOptionPane.INFORMATION_MESSAGE);
+            }
+        }
     }
 
     private void importToMt5() {

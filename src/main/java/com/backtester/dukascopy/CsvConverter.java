@@ -188,6 +188,7 @@ public class CsvConverter {
     public static int getDigits(String symbol) {
         String s = symbol.toUpperCase();
         if (s.contains("JPY")) return 3;
+        if (s.contains("XTI")) return 3;
         if (s.startsWith("XAU")) return 2;
         if (s.startsWith("XAG")) return 5;
         return 5; // Default for most forex pairs

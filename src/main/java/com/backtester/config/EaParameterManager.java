@@ -363,6 +363,33 @@ public class EaParameterManager {
         return (int) params.stream().filter(EaParameter::isModified).count();
     }
 
+    /**
+     * Calculates the total mathematically possible number of passes 
+     * based on the active optimization parameters.
+     */
+    public long calculateTotalPasses(List<EaParameter> params) {
+        if (params == null || params.isEmpty()) return 1;
+        long total = 1;
+        for (EaParameter p : params) {
+            if (p.isOptimizeEnabled() && !p.isStringType()) {
+                try {
+                    double start = Double.parseDouble(p.getOptimizeStart());
+                    double step = Double.parseDouble(p.getOptimizeStep());
+                    double stop = Double.parseDouble(p.getOptimizeEnd());
+                    if (step > 0 && stop >= start) {
+                        long passes = (long) Math.floor((stop - start) / step) + 1;
+                        if (passes > 0) {
+                            total *= passes;
+                        }
+                    }
+                } catch (Exception e) {
+                    // Ignore parse errors, treat as 1 pass for this parameter
+                }
+            }
+        }
+        return total;
+    }
+
     // ==================== .set File I/O ====================
 
     /**

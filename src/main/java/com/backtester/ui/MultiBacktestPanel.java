@@ -77,11 +77,19 @@ public class MultiBacktestPanel extends JPanel {
         setBorder(BorderFactory.createEmptyBorder(15, 15, 15, 15));
 
         JPanel configPanel = createConfigPanel();
+        configPanel.setMinimumSize(new Dimension(800, 480));
+        configPanel.setPreferredSize(new Dimension(800, 500));
         JPanel resultsPanel = createResultsPanel();
 
         JSplitPane splitPane = new JSplitPane(JSplitPane.VERTICAL_SPLIT, configPanel, resultsPanel);
-        splitPane.setDividerLocation(360);
-        splitPane.setResizeWeight(0.2);
+        splitPane.setResizeWeight(0.5);
+
+        // Set divider location AFTER the component is displayed (pack() overrides early calls)
+        splitPane.addHierarchyListener(e -> {
+            if ((e.getChangeFlags() & java.awt.event.HierarchyEvent.SHOWING_CHANGED) != 0 && splitPane.isShowing()) {
+                SwingUtilities.invokeLater(() -> splitPane.setDividerLocation(500));
+            }
+        });
 
         add(splitPane, BorderLayout.CENTER);
     }
@@ -143,9 +151,20 @@ public class MultiBacktestPanel extends JPanel {
 
         JPanel depP = new JPanel(new BorderLayout(5, 5));
         depP.add(createLabel("Deposit:"), BorderLayout.NORTH);
-        depositSpinner = new JSpinner(new SpinnerNumberModel(config.getDefaultDeposit(), 100, 10000000, 1000));
+        depositSpinner = new JSpinner(new SpinnerNumberModel(config.getInt("multi.deposit", config.getDefaultDeposit()), 100, 10000000, 1000));
         depP.add(depositSpinner, BorderLayout.CENTER);
         commonPanel.add(depP);
+
+        // Load saved state
+        modelCombo.setSelectedIndex(config.getInt("multi.tickmodel", 0));
+        String fromStr = config.get("multi.from", "");
+        if (!fromStr.isEmpty()) {
+            try { fromDatePicker.setDate(LocalDate.parse(fromStr)); } catch (Exception ignored) {}
+        }
+        String toStr = config.get("multi.to", "");
+        if (!toStr.isEmpty()) {
+            try { toDatePicker.setDate(LocalDate.parse(toStr)); } catch (Exception ignored) {}
+        }
 
         gbc.gridx = 0; gbc.gridy = 1;
         form.add(commonPanel, gbc);
@@ -155,10 +174,11 @@ public class MultiBacktestPanel extends JPanel {
         JPanel buttonPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 0));
         
         startButton = new JButton("▶ Start Batch");
-        startButton.setFont(new Font("Segoe UI", Font.BOLD, 14));
-        startButton.setBackground(new Color(200, 100, 40));
+        startButton.setFont(new Font("Segoe UI", Font.BOLD, 16));
+        startButton.setBackground(new Color(40, 167, 69)); // Bright, prominent green
         startButton.setForeground(Color.WHITE);
-        startButton.setPreferredSize(new Dimension(160, 38));
+        startButton.setFocusPainted(false);
+        startButton.setPreferredSize(new Dimension(180, 42));
         startButton.addActionListener(this::startMultiTest);
 
         cancelButton = new JButton("■ Cancel");
@@ -191,6 +211,16 @@ public class MultiBacktestPanel extends JPanel {
         p.add(createLabel("Selected Expert Advisors (Robots)"), BorderLayout.NORTH);
         
         expertsModel = new DefaultListModel<>();
+        
+        String savedExperts = config.get("multi.experts", "");
+        if (!savedExperts.isEmpty()) {
+            for (String ex : savedExperts.split(",")) {
+                if (!ex.trim().isEmpty()) {
+                    expertsModel.addElement(ex.trim());
+                }
+            }
+        }
+        
         expertsList = new JList<>(expertsModel);
         expertsList.setFont(new Font("Segoe UI", Font.PLAIN, 13));
         p.add(new JScrollPane(expertsList), BorderLayout.CENTER);
@@ -227,13 +257,25 @@ public class MultiBacktestPanel extends JPanel {
         JPanel p = new JPanel(new BorderLayout(5, 5));
         p.add(createLabel("Select Symbols"), BorderLayout.NORTH);
         
+        String savedSymbols = config.get("multi.symbols", "EURUSD");
+        List<String> selSymbols = java.util.Arrays.asList(savedSymbols.split(","));
+        
         JPanel checkPanel = new JPanel(new GridLayout(0, 2, 5, 2));
         for (String sym : BacktestConfig.SYMBOLS) {
             JCheckBox cb = new JCheckBox(sym);
-            if (sym.equals("EURUSD")) cb.setSelected(true);
+            if (selSymbols.contains(sym)) cb.setSelected(true);
             symbolChecks.add(cb);
             checkPanel.add(cb);
         }
+        
+        for (String sel : selSymbols) {
+            if (!java.util.Arrays.asList(BacktestConfig.SYMBOLS).contains(sel) && !sel.trim().isEmpty()) {
+                JCheckBox cb = new JCheckBox(sel.trim(), true);
+                symbolChecks.add(cb);
+                checkPanel.add(cb);
+            }
+        }
+        
         p.add(new JScrollPane(checkPanel), BorderLayout.CENTER);
 
         JPanel customP = new JPanel(new BorderLayout(5, 0));
@@ -261,10 +303,13 @@ public class MultiBacktestPanel extends JPanel {
         JPanel p = new JPanel(new BorderLayout(5, 5));
         p.add(createLabel("Select Timeframes"), BorderLayout.NORTH);
         
+        String savedTf = config.get("multi.timeframes", "H1");
+        List<String> selTf = java.util.Arrays.asList(savedTf.split(","));
+        
         JPanel checkPanel = new JPanel(new GridLayout(0, 2, 5, 2));
         for (String tf : BacktestConfig.TIMEFRAMES) {
             JCheckBox cb = new JCheckBox(tf);
-            if (tf.equals("H1")) cb.setSelected(true);
+            if (selTf.contains(tf)) cb.setSelected(true);
             periodChecks.add(cb);
             checkPanel.add(cb);
         }
@@ -519,6 +564,16 @@ public class MultiBacktestPanel extends JPanel {
             return;
         }
 
+        // Save settings to config
+        config.set("multi.experts", String.join(",", expList));
+        config.set("multi.symbols", String.join(",", symList));
+        config.set("multi.timeframes", String.join(",", perList));
+        config.set("multi.tickmodel", String.valueOf(modelCombo.getSelectedIndex()));
+        if (fromDatePicker.getDate() != null) config.set("multi.from", fromDatePicker.getDate().toString());
+        if (toDatePicker.getDate() != null) config.set("multi.to", toDatePicker.getDate().toString());
+        config.set("multi.deposit", depositSpinner.getValue().toString());
+        config.save();
+
         MultiBacktestConfig conf = new MultiBacktestConfig();
         conf.setExperts(expList);
         conf.setSymbols(symList);
@@ -558,9 +613,9 @@ public class MultiBacktestPanel extends JPanel {
 
         currentRunner = new MultiBacktestRunner(conf, 
             msg -> {}, 
-            pct -> {
-                progressBar.setValue(pct);
-                progressBar.setString("Progress " + pct + "%");
+            (cur, tot) -> {
+                progressBar.setValue((int)(((double) cur / tot) * 100));
+                progressBar.setString("Running " + cur + " / " + tot);
             },
             result -> {
                 count[0]++;
@@ -598,6 +653,30 @@ public class MultiBacktestPanel extends JPanel {
                     batchList.repaint();
                     
                     if (newBatch.reportPath != null) {
+                        try {
+                            com.google.gson.JsonObject metrics = new com.google.gson.JsonObject();
+                            metrics.addProperty("total_tasks", total);
+                            metrics.addProperty("completed_tasks", newBatch.results.size());
+                            
+                            java.util.Set<String> expertsSet = new java.util.HashSet<>();
+                            for (com.backtester.report.BacktestResult r : newBatch.results) {
+                                expertsSet.add(r.getExpert());
+                            }
+                            String expertsStr = String.join(", ", expertsSet);
+                            if (expertsStr.isEmpty()) expertsStr = "Multi-Batch";
+                            
+                            com.backtester.database.DatabaseManager.getInstance().saveRun(
+                                "MULTI",
+                                expertsStr,
+                                System.currentTimeMillis(),
+                                metrics.toString(),
+                                newBatch.reportPath.toAbsolutePath().toString()
+                            );
+                            logPanel.log("INFO", "Multi-Report saved to Database.");
+                        } catch (Exception ex) {
+                            logPanel.log("ERROR", "Failed to save Multi-Report to DB: " + ex.getMessage());
+                        }
+
                         try { Desktop.getDesktop().browse(newBatch.reportPath.toUri()); } 
                         catch (Exception ex) { ex.printStackTrace(); }
                     }

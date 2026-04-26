@@ -23,7 +23,7 @@ public class MultiBacktestRunner extends SwingWorker<List<BacktestResult>, Strin
 
     private final MultiBacktestConfig batchConfig;
     private final Consumer<String> logCallback;
-    private final Consumer<Integer> progressCallback;
+    private final java.util.function.BiConsumer<Integer, Integer> progressCallback;
     private final Consumer<BacktestResult> singleResultCallback;
 
     private BacktestRunner currentSingleRunner;
@@ -32,7 +32,7 @@ public class MultiBacktestRunner extends SwingWorker<List<BacktestResult>, Strin
 
     public MultiBacktestRunner(MultiBacktestConfig batchConfig,
                                Consumer<String> logCallback,
-                               Consumer<Integer> progressCallback,
+                               java.util.function.BiConsumer<Integer, Integer> progressCallback,
                                Consumer<BacktestResult> singleResultCallback) {
         this.batchConfig = batchConfig;
         this.logCallback = logCallback;
@@ -61,8 +61,7 @@ public class MultiBacktestRunner extends SwingWorker<List<BacktestResult>, Strin
             logMessage("=============================================");
 
             if (progressCallback != null) {
-                int percent = (int) (((double) i / total) * 100);
-                progressCallback.accept(percent);
+                progressCallback.accept(i + 1, total);
             }
 
             currentSingleRunner = new BacktestRunner();
@@ -101,7 +100,7 @@ public class MultiBacktestRunner extends SwingWorker<List<BacktestResult>, Strin
         }
 
         if (progressCallback != null) {
-            progressCallback.accept(100);
+            progressCallback.accept(total, total);
         }
 
         // Generate the combined HTML report

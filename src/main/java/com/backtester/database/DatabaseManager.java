@@ -181,4 +181,25 @@ public class DatabaseManager {
             log.error("Failed to delete EA config ID: " + id, e);
         }
     }
+
+    public void deleteRun(int id) {
+        String sql = "DELETE FROM HISTORY_RUNS WHERE id = ?";
+        try (Connection conn = connect(); PreparedStatement pstmt = conn.prepareStatement(sql)) {
+            pstmt.setInt(1, id);
+            pstmt.executeUpdate();
+            log.info("Deleted run ID {}", id);
+        } catch (SQLException e) {
+            log.error("Failed to delete run ID: " + id, e);
+        }
+    }
+
+    public void deleteAllRuns() {
+        String sql = "DELETE FROM HISTORY_RUNS";
+        try (Connection conn = connect(); Statement stmt = conn.createStatement()) {
+            int count = stmt.executeUpdate(sql);
+            log.info("Deleted all runs ({} total)", count);
+        } catch (SQLException e) {
+            log.error("Failed to delete all runs", e);
+        }
+    }
 }

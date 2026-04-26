@@ -6,7 +6,7 @@
 
     <groupId>com.antigravity</groupId>
     <artifactId>mt5-backtester</artifactId>
-    <version>1.0.1</version>
+    <version>1.2.6</version>
     <packaging>jar</packaging>
 
     <name>MT5 Backtester</name>
@@ -22,6 +22,27 @@
     </properties>
 
     <dependencies>
+        <!-- JavaFX -->
+        <dependency>
+            <groupId>org.openjfx</groupId>
+            <artifactId>javafx-controls</artifactId>
+            <version>17.0.10</version>
+        </dependency>
+        <dependency>
+            <groupId>org.openjfx</groupId>
+            <artifactId>javafx-fxml</artifactId>
+            <version>17.0.10</version>
+        </dependency>
+        <dependency>
+            <groupId>org.openjfx</groupId>
+            <artifactId>javafx-web</artifactId>
+            <version>17.0.10</version>
+        </dependency>
+        <dependency>
+            <groupId>org.openjfx</groupId>
+            <artifactId>javafx-graphics</artifactId>
+            <version>17.0.10</version>
+        </dependency>
         <!-- Modern Swing Look & Feel -->
         <dependency>
             <groupId>com.formdev</groupId>
@@ -94,6 +115,13 @@
             <artifactId>junit</artifactId>
             <version>4.13.2</version>
             <scope>test</scope>
+        </dependency>
+
+        <!-- Markdown Parser for Help Tab -->
+        <dependency>
+            <groupId>org.commonmark</groupId>
+            <artifactId>commonmark</artifactId>
+            <version>0.21.0</version>
         </dependency>
     </dependencies>
 

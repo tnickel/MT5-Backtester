@@ -30,6 +30,8 @@ public class OptimizationRunner {
     private Process currentProcess;
     private boolean cancelled = false;
     private Consumer<String> logCallback;
+    private java.util.function.BiConsumer<Integer, Integer> progressCallback;
+    private long totalPasses = 1;
 
     public OptimizationRunner(AppConfig config) {
         this.config = config;
@@ -39,6 +41,14 @@ public class OptimizationRunner {
 
     public void setLogCallback(Consumer<String> logCallback) {
         this.logCallback = logCallback;
+    }
+
+    public void setProgressCallback(java.util.function.BiConsumer<Integer, Integer> progressCallback) {
+        this.progressCallback = progressCallback;
+    }
+
+    public void setTotalPasses(long totalPasses) {
+        this.totalPasses = totalPasses > 0 ? totalPasses : 1;
     }
 
     private void logMessage(String msg) {
@@ -54,6 +64,15 @@ public class OptimizationRunner {
         result.setExpert(optConfig.getExpert());
         result.setSymbol(optConfig.getSymbol());
         result.setPeriod(optConfig.getPeriod());
+
+        Mt5LogTailer tailer = null;
+
+        // Pre-flight: check for stale MT5 processes from previous runs
+        if (!Mt5ProcessGuard.ensureNoStaleProcesses(null, this::logMessage)) {
+            logMessage("Optimization aborted: user declined to kill stale MT5 process.");
+            result.setMessage("Aborted: stale MT5 process");
+            return result;
+        }
 
         try {
             // 1. Setup paths
@@ -84,13 +103,23 @@ public class OptimizationRunner {
             // 5. Build and start process
             ProcessBuilder pb;
             if (config.isPortableMode()) {
-                pb = new ProcessBuilder(terminalPath, "/portable", "/config:" + mt5TesterIni.toAbsolutePath().toString());
+                pb = new ProcessBuilder(terminalPath, "/portable", "/config:tester_optimization.ini");
             } else {
-                pb = new ProcessBuilder(terminalPath, "/config:" + mt5TesterIni.toAbsolutePath().toString());
+                pb = new ProcessBuilder(terminalPath, "/config:tester_optimization.ini");
             }
+            pb.directory(mt5Dir.toFile());
+
+            tailer = new Mt5LogTailer(mt5Dir, this::logMessage);
+            tailer.setProgressCallback((current, ignored) -> {
+                if (progressCallback != null) {
+                    progressCallback.accept(current, (int) totalPasses);
+                }
+            });
+            tailer.start();
 
             logMessage("Starting MT5 optimization...");
             currentProcess = pb.start();
+            Mt5ProcessGuard.registerProcess(currentProcess);
 
             // Wait for completion
             int exitCode = currentProcess.waitFor();
@@ -146,8 +175,14 @@ public class OptimizationRunner {
             log.error("Error running optimization", e);
             result.setMessage("Error: " + e.getMessage());
         } finally {
-            if (currentProcess != null && currentProcess.isAlive()) {
-                currentProcess.destroyForcibly();
+            if (currentProcess != null) {
+                Mt5ProcessGuard.unregisterProcess(currentProcess);
+                if (currentProcess.isAlive()) {
+                    currentProcess.destroyForcibly();
+                }
+            }
+            if (tailer != null) {
+                tailer.stop();
             }
         }
 

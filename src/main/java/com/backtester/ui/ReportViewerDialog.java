@@ -41,8 +41,33 @@ public class ReportViewerDialog extends JDialog {
         setLocationRelativeTo(parent);
         setBackground(BG_DARK);
 
-        JPanel mainPanel = new JPanel(new BorderLayout(0, 0));
+        JPanel mainPanel = new JPanel(new BorderLayout(0, 0)) {
+            private java.awt.Image bgImage;
+            {
+                try {
+                    bgImage = javax.imageio.ImageIO.read(getClass().getResource("/images/brushed_metal.png"));
+                } catch (Exception e) {}
+            }
+            @Override
+            protected void paintComponent(Graphics g) {
+                super.paintComponent(g);
+                if (bgImage != null) {
+                    int w = getWidth();
+                    int h = getHeight();
+                    int tw = bgImage.getWidth(null);
+                    int th = bgImage.getHeight(null);
+                    for (int x = 0; x < w; x += tw) {
+                        for (int y = 0; y < h; y += th) {
+                            g.drawImage(bgImage, x, y, null);
+                        }
+                    }
+                    g.setColor(new Color(22, 25, 33, 180));
+                    g.fillRect(0, 0, w, h);
+                }
+            }
+        };
         mainPanel.setBackground(BG_DARK);
+        mainPanel.setOpaque(false);
 
         mainPanel.add(createHeader(), BorderLayout.NORTH);
         mainPanel.add(createBody(), BorderLayout.CENTER);
@@ -53,7 +78,8 @@ public class ReportViewerDialog extends JDialog {
 
     private JPanel createHeader() {
         JPanel header = new JPanel(new BorderLayout(15, 0));
-        header.setBackground(new Color(28, 32, 42));
+        header.setBackground(new Color(28, 32, 42, 150));
+        header.setOpaque(true);
         header.setBorder(new EmptyBorder(18, 25, 18, 25));
 
         JPanel titlePanel = new JPanel();
@@ -96,7 +122,7 @@ public class ReportViewerDialog extends JDialog {
 
     private JPanel createBody() {
         JPanel body = new JPanel(new BorderLayout(0, 12));
-        body.setBackground(BG_DARK);
+        body.setOpaque(false);
         body.setBorder(new EmptyBorder(12, 20, 12, 20));
 
         body.add(createMetricCards(), BorderLayout.NORTH);
@@ -106,7 +132,8 @@ public class ReportViewerDialog extends JDialog {
         split.setDividerLocation(350);
         split.setResizeWeight(0.6);
         split.setBorder(null);
-        split.setBackground(BG_DARK);
+        split.setOpaque(false);
+        split.setDividerSize(4);
 
         body.add(split, BorderLayout.CENTER);
         return body;
@@ -143,7 +170,8 @@ public class ReportViewerDialog extends JDialog {
     private JPanel createCard(String label, String value, Color valueColor) {
         JPanel card = new JPanel();
         card.setLayout(new BoxLayout(card, BoxLayout.Y_AXIS));
-        card.setBackground(BG_CARD);
+        card.setBackground(new Color(32, 36, 48, 200));
+        card.setOpaque(true);
         card.setBorder(BorderFactory.createCompoundBorder(
                 BorderFactory.createLineBorder(new Color(50, 55, 68), 1),
                 new EmptyBorder(12, 14, 12, 14)));
@@ -167,7 +195,7 @@ public class ReportViewerDialog extends JDialog {
 
     private JPanel createChartPanel() {
         JPanel panel = new JPanel(new BorderLayout());
-        panel.setBackground(BG_DARK);
+        panel.setOpaque(false);
         panel.setBorder(new EmptyBorder(8, 0, 0, 0));
 
         EquityChartPanel chart = new EquityChartPanel();
@@ -180,7 +208,7 @@ public class ReportViewerDialog extends JDialog {
 
     private JPanel createDetailsPanel() {
         JPanel panel = new JPanel(new BorderLayout(10, 0));
-        panel.setBackground(BG_DARK);
+        panel.setOpaque(false);
         panel.setBorder(new EmptyBorder(8, 0, 0, 0));
 
         JPanel leftCol = createDetailColumn(new String[][]{
@@ -227,7 +255,8 @@ public class ReportViewerDialog extends JDialog {
 
     private JPanel createDetailColumn(String[][] rows) {
         JPanel col = new JPanel(new GridLayout(rows.length, 1, 0, 2));
-        col.setBackground(BG_CARD);
+        col.setBackground(new Color(32, 36, 48, 200));
+        col.setOpaque(true);
         col.setBorder(BorderFactory.createCompoundBorder(
                 BorderFactory.createLineBorder(new Color(50, 55, 68), 1),
                 new EmptyBorder(8, 12, 8, 12)));
@@ -261,7 +290,8 @@ public class ReportViewerDialog extends JDialog {
 
     private JPanel createFooter() {
         JPanel footer = new JPanel(new BorderLayout());
-        footer.setBackground(new Color(28, 32, 42));
+        footer.setBackground(new Color(28, 32, 42, 150));
+        footer.setOpaque(true);
         footer.setBorder(new EmptyBorder(10, 20, 10, 20));
 
         JPanel buttons = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 0));
@@ -276,6 +306,11 @@ public class ReportViewerDialog extends JDialog {
         openReportBtn.setFont(new Font("Segoe UI", Font.PLAIN, 12));
         openReportBtn.addActionListener(e -> openReport("report.htm"));
         buttons.add(openReportBtn);
+
+        JButton exportCsvBtn = new JButton("\uD83D\uDCCA Export Trades (CSV)");
+        exportCsvBtn.setFont(new Font("Segoe UI", Font.PLAIN, 12));
+        exportCsvBtn.addActionListener(e -> exportTradesToCsv());
+        buttons.add(exportCsvBtn);
 
         JButton closeBtn = new JButton("Close");
         closeBtn.setFont(new Font("Segoe UI", Font.BOLD, 13));
@@ -343,6 +378,101 @@ public class ReportViewerDialog extends JDialog {
         }
     }
 
+    private void exportTradesToCsv() {
+        if (outputDir == null) return;
+        Path reportPath = Paths.get(outputDir).resolve("report.htm");
+        if (!Files.exists(reportPath)) {
+            reportPath = Paths.get(outputDir).resolve("report.xml");
+            if (!Files.exists(reportPath)) {
+                JOptionPane.showMessageDialog(this, "Original report file not found, cannot extract trades.", "Error", JOptionPane.ERROR_MESSAGE);
+                return;
+            }
+        }
+
+        JFileChooser chooser = new JFileChooser(outputDir);
+        chooser.setDialogTitle("Export Trades as CSV");
+        chooser.setSelectedFile(new File(result.getExpert() + "_Trades.csv"));
+        if (chooser.showSaveDialog(this) == JFileChooser.APPROVE_OPTION) {
+            File outFile = chooser.getSelectedFile();
+            try {
+                // Determine encoding and read file
+                byte[] bytes = Files.readAllBytes(reportPath);
+                String html;
+                if (bytes.length >= 2 && (bytes[0] & 0xFF) == 0xFF && (bytes[1] & 0xFF) == 0xFE) {
+                    html = new String(bytes, java.nio.charset.StandardCharsets.UTF_16LE);
+                } else if (bytes.length >= 2 && (bytes[0] & 0xFF) == 0xFE && (bytes[1] & 0xFF) == 0xFF) {
+                    html = new String(bytes, java.nio.charset.StandardCharsets.UTF_16BE);
+                } else {
+                    int zeroCount = 0;
+                    for (int i = 1; i < Math.min(bytes.length, 100); i += 2) {
+                        if (bytes[i] == 0) zeroCount++;
+                    }
+                    if (zeroCount > 30) {
+                        html = new String(bytes, java.nio.charset.StandardCharsets.UTF_16LE);
+                    } else {
+                        html = new String(bytes, java.nio.charset.StandardCharsets.UTF_8);
+                    }
+                }
+
+                // Locate the Trades/Deals section
+                int tradesStart = html.indexOf(">Trades<");
+                if (tradesStart < 0) tradesStart = html.indexOf(">Deals<");
+                if (tradesStart < 0) tradesStart = html.indexOf(">Orders<");
+                if (tradesStart < 0) tradesStart = html.indexOf(">Geschäfte<");
+
+                if (tradesStart < 0) {
+                    JOptionPane.showMessageDialog(this, "Could not find Trades/Deals table in the report HTML.", "Warning", JOptionPane.WARNING_MESSAGE);
+                    return;
+                }
+
+                String section = html.substring(tradesStart);
+                int tableEnd = section.indexOf("</table>");
+                if (tableEnd > 0) {
+                    section = section.substring(0, tableEnd);
+                }
+
+                java.util.regex.Matcher trMatcher = java.util.regex.Pattern.compile("<tr[^>]*>(.*?)</tr>", java.util.regex.Pattern.CASE_INSENSITIVE | java.util.regex.Pattern.DOTALL).matcher(section);
+                
+                try (java.io.BufferedWriter bw = Files.newBufferedWriter(outFile.toPath(), java.nio.charset.StandardCharsets.UTF_8)) {
+                    // Optional BOM for Excel UTF-8
+                    bw.write("\uFEFF");
+                    
+                    int extractedRecords = 0;
+                    while (trMatcher.find()) {
+                        String rowInner = trMatcher.group(1);
+                        java.util.List<String> cols = new java.util.ArrayList<>();
+                        
+                        java.util.regex.Matcher tdMatcher = java.util.regex.Pattern.compile("<t[dh][^>]*>(.*?)</t[dh]>", java.util.regex.Pattern.CASE_INSENSITIVE | java.util.regex.Pattern.DOTALL).matcher(rowInner);
+                        while (tdMatcher.find()) {
+                            String cell = tdMatcher.group(1).replaceAll("<[^>]*>", "").trim();
+                            // Decode basic HTML entities that MT5 might use
+                            cell = cell.replace("&nbsp;", " ").replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">");
+                            // Escape quotes
+                            cell = cell.replace("\"", "\"\"");
+                            // Quote to handle commas inside text (like numbers e.g. 1,000.00)
+                            cols.add("\"" + cell + "\"");
+                        }
+                        
+                        if (!cols.isEmpty()) {
+                            bw.write(String.join(",", cols));
+                            bw.newLine();
+                            extractedRecords++;
+                        }
+                    }
+                    
+                    if (extractedRecords > 0) {
+                        JOptionPane.showMessageDialog(this, "Exported " + extractedRecords + " rows to:\n" + outFile.getAbsolutePath(), "Export Successful", JOptionPane.INFORMATION_MESSAGE);
+                    } else {
+                        JOptionPane.showMessageDialog(this, "Found the table but failed to extract any data rows.", "Warning", JOptionPane.WARNING_MESSAGE);
+                    }
+                }
+            } catch (Exception ex) {
+                ex.printStackTrace();
+                JOptionPane.showMessageDialog(this, "Failed to export CSV: " + ex.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
+            }
+        }
+    }
+
     private String formatMoney(double value) {
         if (value == 0) return "$0.00";
         String sign = value >= 0 ? "+" : "";
@@ -355,6 +485,10 @@ public class ReportViewerDialog extends JDialog {
      * and falls back to summary.txt for metadata.
      */
     public static void showForDirectory(Window parent, String directory) {
+        try {
+            UIManager.setLookAndFeel(new com.formdev.flatlaf.FlatDarkLaf());
+        } catch (Exception e) {}
+        
         Path dir = Paths.get(directory);
         BacktestResult result = new BacktestResult();
         result.setOutputDirectory(directory);
