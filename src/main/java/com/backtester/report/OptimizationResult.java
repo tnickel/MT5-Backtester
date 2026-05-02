@@ -273,7 +273,7 @@ public class OptimizationResult {
         double nBtPf     = norm(bt.getProfitFactor(), btPfMin, btPfMax);
         double nFwPf     = fw != null ? norm(fw.getProfitFactor(), fwPfMin, fwPfMax) : 0.0;
         double nBtDd     = 1.0 - norm(bt.getDrawdownPercent(), btDdMin, btDdMax);
-        double nFwDd     = fw != null ? (1.0 - norm(fw.getDrawdownPercent(), fwDdMin, fwDdMax)) : 0.5;
+        double nFwDd     = fw != null ? (1.0 - norm(fw.getDrawdownPercent(), fwDdMin, fwDdMax)) : 0.0;
 
         double raw = (w.wBtProfit    * nBtProfit
                     + w.wFwProfit    * nFwProfit

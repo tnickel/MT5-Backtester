@@ -1071,6 +1071,22 @@ public class OptimizationView {
             eaParamManager.saveCustomParameters(expertField.getText().trim(), new java.util.ArrayList<>(paramTable.getItems()));
         }
 
+        // Safety-Check for 1-Parameter Forward Test
+        boolean isForwardEnabled = forwardModeCombo.getSelectionModel().getSelectedIndex() > 0;
+        long optimizedParamsCount = paramTable.getItems().stream().filter(com.backtester.config.EaParameter::isOptimizeEnabled).count();
+        if (isForwardEnabled && optimizedParamsCount == 1) {
+            javafx.scene.control.Alert alert = new javafx.scene.control.Alert(javafx.scene.control.Alert.AlertType.WARNING, 
+                "Achtung: Für genetische Forward-Tests in MetaTrader 5 empfiehlt es sich, mindestens 2 Parameter zu aktivieren.\n\n" +
+                "Mit nur 1 Parameter springt der genetische Algorithmus von MT5 oft nicht an (zu wenig Kombinationen), " +
+                "was dazu führen kann, dass der Forward-Test ignoriert wird oder fehlschlägt.\n\n" +
+                "Möchtest du trotzdem fortfahren?", 
+                javafx.scene.control.ButtonType.YES, javafx.scene.control.ButtonType.NO);
+            alert.setHeaderText("Mögliches MT5 Forward-Test Problem");
+            if (alert.showAndWait().orElse(javafx.scene.control.ButtonType.NO) != javafx.scene.control.ButtonType.YES) {
+                return;
+            }
+        }
+
         this.optConfig = new OptimizationConfig();
         optConfig.setShutdownTerminal(closeTerminal);
         optConfig.setExpert(expertField.getText().trim());
