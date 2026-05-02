@@ -105,7 +105,7 @@ public class IniGenerator {
             
             writer.write("Report=" + reportPath + "\r\n");
             writer.write("ReplaceReport=1\r\n");
-            writer.write("ShutdownTerminal=1\r\n");
+            writer.write("ShutdownTerminal=" + (config.isShutdownTerminal() ? "1" : "0") + "\r\n");
         }
 
         log.info("Generated optimization tester.ini at: {}", iniPath);

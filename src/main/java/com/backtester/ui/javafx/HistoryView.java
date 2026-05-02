@@ -13,7 +13,9 @@ import javafx.application.Platform;
 import java.awt.Desktop;
 import java.io.File;
 import java.text.SimpleDateFormat;
+import java.time.Instant;
 import java.time.LocalDate;
+import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.Date;
 import java.util.List;
@@ -28,6 +30,7 @@ public class HistoryView {
     private final DatabaseManager dbManager;
     private final Gson gson = new GsonBuilder().setPrettyPrinting().create();
     private final SimpleDateFormat df = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
+    private final LocalDate today = LocalDate.now();
 
     public HistoryView() {
         this.dbManager = DatabaseManager.getInstance();
@@ -45,7 +48,7 @@ public class HistoryView {
         Label treeTitle = new Label("Saved Runs");
         treeTitle.getStyleClass().add("sci-fi-panel-title");
 
-        TreeItem<RunNodeData> rootItem = new TreeItem<>(new RunNodeData("History", null));
+        TreeItem<RunNodeData> rootItem = new TreeItem<>(new RunNodeData("History", null, false));
         rootItem.setExpanded(true);
         treeView = new TreeView<>(rootItem);
         treeView.setStyle("-fx-background-color: transparent;");
@@ -60,6 +63,25 @@ public class HistoryView {
         treeView.setOnKeyPressed(e -> {
             if (e.getCode() == javafx.scene.input.KeyCode.DELETE) {
                 deleteSelectedRuns();
+            }
+        });
+
+        // Custom TreeCell to highlight today's runs
+        treeView.setCellFactory(tv -> new TreeCell<RunNodeData>() {
+            @Override
+            protected void updateItem(RunNodeData item, boolean empty) {
+                super.updateItem(item, empty);
+                if (empty || item == null) {
+                    setText(null);
+                    setStyle("");
+                } else {
+                    setText(item.label);
+                    if (item.isToday) {
+                        setStyle("-fx-background-color: rgba(0, 229, 255, 0.12); -fx-text-fill: #00e5ff; -fx-font-weight: bold;");
+                    } else {
+                        setStyle("");
+                    }
+                }
             }
         });
 
@@ -112,7 +134,7 @@ public class HistoryView {
         Platform.runLater(this::reloadTree);
     }
     
-    private void reloadTree() {
+    public void reloadTree() {
         TreeItem<RunNodeData> rootItem = treeView.getRoot();
         rootItem.getChildren().clear();
 
@@ -124,11 +146,11 @@ public class HistoryView {
                          Collectors.groupingBy(HistoryRun::getExpertName)));
 
         for (Map.Entry<String, Map<String, List<HistoryRun>>> typeEntry : grouped.entrySet()) {
-            TreeItem<RunNodeData> typeNode = new TreeItem<>(new RunNodeData(typeEntry.getKey(), null));
+            TreeItem<RunNodeData> typeNode = new TreeItem<>(new RunNodeData(typeEntry.getKey(), null, false));
             typeNode.setExpanded(true);
             
             for (Map.Entry<String, List<HistoryRun>> expertEntry : typeEntry.getValue().entrySet()) {
-                TreeItem<RunNodeData> expertNode = new TreeItem<>(new RunNodeData(expertEntry.getKey(), null));
+                TreeItem<RunNodeData> expertNode = new TreeItem<>(new RunNodeData(expertEntry.getKey(), null, false));
                 expertNode.setExpanded(true);
                 
                 for (HistoryRun run : expertEntry.getValue()) {
@@ -148,7 +170,13 @@ public class HistoryView {
                         }
                     } catch (Exception ignored) {}
 
-                    TreeItem<RunNodeData> runNode = new TreeItem<>(new RunNodeData(label, run));
+                    // Check if this run is from today
+                    LocalDate runDate = Instant.ofEpochMilli(run.getTimestamp())
+                            .atZone(ZoneId.systemDefault())
+                            .toLocalDate();
+                    boolean isToday = runDate.equals(today);
+
+                    TreeItem<RunNodeData> runNode = new TreeItem<>(new RunNodeData(label, run, isToday));
                     expertNode.getChildren().add(runNode);
                 }
                 typeNode.getChildren().add(expertNode);
@@ -242,10 +270,12 @@ public class HistoryView {
     private static class RunNodeData {
         String label;
         HistoryRun run;
+        boolean isToday;
 
-        RunNodeData(String label, HistoryRun run) {
+        RunNodeData(String label, HistoryRun run, boolean isToday) {
             this.label = label;
             this.run = run;
+            this.isToday = isToday;
         }
 
         @Override

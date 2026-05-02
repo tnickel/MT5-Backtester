@@ -88,6 +88,11 @@ public class OptimizationConfig {
      */
     private boolean useCloud = false;
 
+    /**
+     * Whether to shut down the MetaTrader 5 terminal after optimization.
+     */
+    private boolean shutdownTerminal = true;
+
     // --- Getters & Setters ---
 
     public String getExpert() { return expert; }
@@ -143,6 +148,9 @@ public class OptimizationConfig {
 
     public boolean isUseCloud() { return useCloud; }
     public void setUseCloud(boolean useCloud) { this.useCloud = useCloud; }
+
+    public boolean isShutdownTerminal() { return shutdownTerminal; }
+    public void setShutdownTerminal(boolean shutdownTerminal) { this.shutdownTerminal = shutdownTerminal; }
 
     public boolean isForwardEnabled() { return forwardMode > 0; }
 

@@ -101,7 +101,10 @@ public class BacktestView {
 
         // Row 1: Symbol & Period
         grid.add(new Label("Symbol:"), 0, 1);
-        symbolCombo = new ComboBox<>(FXCollections.observableArrayList("EURUSD", "GBPUSD", "USDJPY", "XAUUSD", "GER40"));
+        symbolCombo = new ComboBox<>(FXCollections.observableArrayList(
+            "EURUSD", "GBPUSD", "USDJPY", "USDCHF", "AUDUSD", "NZDUSD", "USDCAD",
+            "EURGBP", "EURJPY", "GBPJPY", "AUDCAD", "AUDNZD", "AUDCHF",
+            "NZDJPY", "CADJPY", "CADCHF", "XAUUSD", "XAGUSD", "XTIUSD"));
         symbolCombo.getStyleClass().add("combo-box");
         symbolCombo.setValue("EURUSD");
         grid.add(symbolCombo, 1, 1);

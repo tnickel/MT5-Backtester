@@ -63,7 +63,15 @@ public class MainView {
         tabPane.getTabs().add(new Tab("Robustness", robustnessView.getView()));
         
         HistoryView historyView = new HistoryView();
-        tabPane.getTabs().add(new Tab("Database", historyView.getView()));
+        Tab databaseTab = new Tab("Database", historyView.getView());
+        tabPane.getTabs().add(databaseTab);
+        
+        // Auto-refresh Database tab when selected
+        tabPane.getSelectionModel().selectedItemProperty().addListener((obs, oldTab, newTab) -> {
+            if (newTab == databaseTab) {
+                historyView.reloadTree();
+            }
+        });
         
         DukascopyView dukascopyView = new DukascopyView(logView);
         tabPane.getTabs().add(new Tab("Dukascopy Data", dukascopyView.getView()));
