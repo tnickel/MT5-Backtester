@@ -400,12 +400,16 @@ public class OptimizationView {
         applyFilterBtn.getStyleClass().add("button");
         applyFilterBtn.setOnAction(e -> applyCombinedFilter());
 
+        Button delPassBtn = new Button("🗑 Löschen");
+        delPassBtn.getStyleClass().addAll("button", "button-cancel");
+        delPassBtn.setOnAction(e -> deleteSelectedCombinedPasses());
+
         combinedCountLabel = new Label("");
         combinedCountLabel.setStyle("-fx-text-fill: #7e889a; -fx-font-size: 11px;");
 
         topBar.getChildren().addAll(
             filterEnabledCheck, filterSettingsBtn, weightSettingsBtn, styledLabel("Sortierung:"), combinedSortCombo,
-            onlyMatchedCheck, applyFilterBtn, combinedCountLabel
+            onlyMatchedCheck, applyFilterBtn, delPassBtn, combinedCountLabel
         );
 
         // Spinner werden lazy initialisiert (defaults) und im Dialog angezeigt
@@ -429,6 +433,7 @@ public class OptimizationView {
         TableView<CombinedPass> t = new TableView<>();
         t.setStyle("-fx-background-color: transparent;");
         t.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY);
+        t.getSelectionModel().setSelectionMode(SelectionMode.MULTIPLE);
 
         // Score (highlight column)
         TableColumn<CombinedPass, String> scoreCol = new TableColumn<>("Score");
@@ -556,6 +561,39 @@ public class OptimizationView {
     }
 
     /** Applies current filter settings and re-populates the combined table. */
+    private void deleteSelectedCombinedPasses() {
+        if (combinedTable == null || combinedTable.getItems().isEmpty()) return;
+        
+        List<CombinedPass> selected = new java.util.ArrayList<>(combinedTable.getSelectionModel().getSelectedItems());
+        if (selected.isEmpty()) {
+            javafx.scene.control.Alert alert = new javafx.scene.control.Alert(javafx.scene.control.Alert.AlertType.INFORMATION, 
+                "Bitte markiere zuerst die Zeilen in der Tabelle, die du löschen möchtest.\n(Nutze Strg/Shift für Mehrfachauswahl)");
+            alert.show();
+            return;
+        }
+        
+        javafx.scene.control.Alert confirm = new javafx.scene.control.Alert(javafx.scene.control.Alert.AlertType.CONFIRMATION, 
+            "Bist du sicher, dass du die " + selected.size() + " ausgewählten Optimierungsergebnisse löschen möchtest?\n\nSie werden aus dieser Tabelle und aus dem Speicher entfernt.", 
+            javafx.scene.control.ButtonType.YES, javafx.scene.control.ButtonType.NO);
+        confirm.setHeaderText("Ergebnisse löschen");
+        
+        if (confirm.showAndWait().orElse(javafx.scene.control.ButtonType.NO) == javafx.scene.control.ButtonType.YES) {
+            // Remove from the underlying model so they don't reappear on refresh
+            if (lastOptResult != null) {
+                for (CombinedPass cp : selected) {
+                    if (cp.getBacktestPass() != null) {
+                        lastOptResult.getPasses().remove(cp.getBacktestPass());
+                    }
+                    if (cp.getForwardPass() != null) {
+                        lastOptResult.getForwardPasses().remove(cp.getForwardPass());
+                    }
+                }
+            }
+            // Now refresh the table by applying the filter again
+            applyCombinedFilter();
+        }
+    }
+
     private void applyCombinedFilter() {
         if (lastOptResult == null || lastOptResult.getPasses().isEmpty()) {
             logView.log("WARN", "Noch keine Optimierungsdaten vorhanden.");
