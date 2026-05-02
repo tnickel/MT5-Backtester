@@ -31,6 +31,7 @@ public class HistoryView {
     private final Gson gson = new GsonBuilder().setPrettyPrinting().create();
     private final SimpleDateFormat df = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
     private final LocalDate today = LocalDate.now();
+    private final Label countLabel;
 
     public HistoryView() {
         this.dbManager = DatabaseManager.getInstance();
@@ -47,6 +48,9 @@ public class HistoryView {
         
         Label treeTitle = new Label("Saved Runs");
         treeTitle.getStyleClass().add("sci-fi-panel-title");
+        countLabel = new Label("Total: 0");
+        countLabel.setStyle("-fx-text-fill: #00e5ff; -fx-font-weight: bold; -fx-padding: 2 0 0 0;");
+        HBox titleBox = new HBox(10, treeTitle, countLabel);
 
         TreeItem<RunNodeData> rootItem = new TreeItem<>(new RunNodeData("History", null, false));
         rootItem.setExpanded(true);
@@ -106,7 +110,7 @@ public class HistoryView {
 
         btnBox.getChildren().addAll(refreshBtn, delSelBtn, delAllBtn);
 
-        leftBox.getChildren().addAll(treeTitle, treeView, btnBox);
+        leftBox.getChildren().addAll(titleBox, treeView, btnBox);
 
         // Right Side: Details
         VBox rightBox = new VBox(10);
@@ -139,6 +143,8 @@ public class HistoryView {
         rootItem.getChildren().clear();
 
         List<HistoryRun> runs = dbManager.getAllRuns();
+        
+        Platform.runLater(() -> countLabel.setText("Total: " + runs.size()));
         
         // Group by type -> expert
         Map<String, Map<String, List<HistoryRun>>> grouped = runs.stream()
