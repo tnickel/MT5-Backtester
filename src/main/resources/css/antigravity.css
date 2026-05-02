@@ -350,3 +350,18 @@
     -fx-border-color: transparent #3e4555 #3e4555 #3e4555;
     -fx-border-radius: 0 0 4 4;
 }
+
+/* Custom SplitPane Divider (Metallic Look) */
+.transparent-split-pane > .split-pane-divider {
+    -fx-background-color: linear-gradient(to bottom, #1a1e28, #4a5266, #1a1e28);
+    -fx-border-color: #0b0d13;
+    -fx-border-width: 1 0 1 0;
+    -fx-pref-height: 12px; /* Dicker für leichteres Anklicken */
+    -fx-padding: 3; /* Vergrößert die "Hit-Box" der Maus */
+}
+.transparent-split-pane > .split-pane-divider:hover {
+    -fx-background-color: linear-gradient(to bottom, #2b303d, #6b758c, #2b303d);
+}
+.transparent-split-pane > .split-pane-divider:pressed {
+    -fx-background-color: #00e5ff;
+}
