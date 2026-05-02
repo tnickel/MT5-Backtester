@@ -56,6 +56,8 @@ public class OptimizationView {
     private TableView<com.backtester.report.OptimizationResult.Pass> resultTable;
     private TableView<com.backtester.report.OptimizationResult.Pass> forwardTable;
     private TableView<CombinedPass> combinedTable;
+    private TableView<com.backtester.report.SensitivityResult> sensitivityTable;
+    private com.backtester.engine.SensitivityRunner currentSensitivityRunner;
     private OptimizationConfig optConfig;
     private OptimizationResult lastOptResult;
 
@@ -305,11 +307,15 @@ public class OptimizationView {
         forwardTab.getStyleClass().add("tab");
         forwardTab.setClosable(false);
 
-        Tab combinedTab = new Tab("⭐ Combined Analysis", createCombinedPane());
+        Tab combinedTab = new Tab("🏆 Combined Analysis", createCombinedPane());
         combinedTab.getStyleClass().add("tab");
         combinedTab.setClosable(false);
         
-        resultTabs.getTabs().addAll(mainTab, forwardTab, combinedTab);
+        Tab sensitivityTab = new Tab("⚖ Sensitivity Analysis", createSensitivityPane());
+        sensitivityTab.getStyleClass().add("tab");
+        sensitivityTab.setClosable(false);
+        
+        resultTabs.getTabs().addAll(mainTab, forwardTab, combinedTab, sensitivityTab);
         VBox.setVgrow(resultTabs, Priority.ALWAYS);
 
         HBox controlBox = new HBox(15);
@@ -558,6 +564,396 @@ public class OptimizationView {
         });
 
         return t;
+    }
+
+    private VBox createSensitivityPane() {
+        VBox pane = new VBox(10);
+        pane.setPadding(new Insets(10));
+
+        HBox topBar = new HBox(12);
+        topBar.setAlignment(Pos.CENTER_LEFT);
+        topBar.getStyleClass().add("sci-fi-panel");
+        topBar.setPadding(new Insets(10));
+
+        Button startSenBtn = new Button("▶ Start Sensitivity Analysis");
+        startSenBtn.getStyleClass().addAll("button", "button-start");
+        startSenBtn.setOnAction(e -> startSensitivityAnalysis());
+
+        Button cancelSenBtn = new Button("⏹ Cancel");
+        cancelSenBtn.getStyleClass().addAll("button", "button-cancel");
+        cancelSenBtn.setOnAction(e -> {
+            if (currentSensitivityRunner != null) currentSensitivityRunner.cancel();
+        });
+
+        topBar.getChildren().addAll(startSenBtn, cancelSenBtn);
+
+        sensitivityTable = createSensitivityTable();
+        VBox.setVgrow(sensitivityTable, Priority.ALWAYS);
+
+        pane.getChildren().addAll(topBar, sensitivityTable);
+        VBox.setVgrow(pane, Priority.ALWAYS);
+        return pane;
+    }
+
+    @SuppressWarnings("unchecked")
+    private TableView<com.backtester.report.SensitivityResult> createSensitivityTable() {
+        TableView<com.backtester.report.SensitivityResult> t = new TableView<>();
+        t.setStyle("-fx-background-color: transparent;");
+        t.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY);
+
+        TableColumn<com.backtester.report.SensitivityResult, Integer> passCol = new TableColumn<>("Pass");
+        passCol.setCellValueFactory(c -> new javafx.beans.property.SimpleIntegerProperty(c.getValue().getOriginalPass().getPassNumber()).asObject());
+        
+        TableColumn<com.backtester.report.SensitivityResult, String> profitCol = new TableColumn<>("Base Net Profit");
+        profitCol.setCellValueFactory(c -> new SimpleStringProperty(String.format("%.2f", c.getValue().getOriginalPass().getBtProfit())));
+
+        TableColumn<com.backtester.report.SensitivityResult, String> cvCol = new TableColumn<>("Robustness CV");
+        cvCol.setCellValueFactory(c -> new SimpleStringProperty(String.format("%.2f %%", c.getValue().getOverallCV())));
+        cvCol.setComparator((s1, s2) -> {
+            double v1 = Double.parseDouble(s1.replace(" %", "").replace(",", "."));
+            double v2 = Double.parseDouble(s2.replace(" %", "").replace(",", "."));
+            return Double.compare(v1, v2);
+        });
+
+        TableColumn<com.backtester.report.SensitivityResult, String> statusCol = new TableColumn<>("Status");
+        statusCol.setCellValueFactory(c -> new SimpleStringProperty(c.getValue().getStatus()));
+
+        t.getColumns().addAll(passCol, profitCol, cvCol, statusCol);
+
+        t.setRowFactory(tv -> {
+            TableRow<com.backtester.report.SensitivityResult> row = new TableRow<>();
+            row.setOnMouseClicked(event -> {
+                if (event.getClickCount() == 2 && (!row.isEmpty())) {
+                    com.backtester.report.SensitivityResult rowData = row.getItem();
+                    showSensitivityDetails(rowData);
+                }
+            });
+            return row;
+        });
+
+        return t;
+    }
+
+    private void showSensitivityDetails(com.backtester.report.SensitivityResult result) {
+        javafx.stage.Stage stage = new javafx.stage.Stage();
+        stage.setTitle("Sensitivity Details - Pass " + result.getOriginalPass().getPassNumber());
+        
+        VBox box = new VBox(15);
+        box.setPadding(new Insets(20));
+        box.getStyleClass().add("root");
+        box.setStyle("-fx-background-color: #0b0d13;"); // Ensure dark background
+        
+        Label title = new Label("Strategy Details: Pass " + result.getOriginalPass().getPassNumber());
+        title.setFont(Font.font("Segoe UI", FontWeight.BOLD, 18));
+        title.setTextFill(Color.web("#00e5ff"));
+
+        Label scoreLabel = new Label(String.format("Base Profit: %.2f  |  Overall CV: %.2f %%", 
+                result.getOriginalPass().getBtProfit(), result.getOverallCV()));
+        scoreLabel.setTextFill(Color.web("#00e676"));
+        
+        // Parameter CV Breakdown Table
+        Label cvLabel = new Label("Parameter Robustness (CV Breakdown):");
+        cvLabel.setTextFill(Color.WHITE);
+        cvLabel.setFont(Font.font("Segoe UI", FontWeight.BOLD, 14));
+        
+        TableView<java.util.Map.Entry<String, Double>> cvTable = new TableView<>();
+        TableColumn<java.util.Map.Entry<String, Double>, String> paramCol = new TableColumn<>("Parameter");
+        paramCol.setCellValueFactory(c -> new SimpleStringProperty(c.getValue().getKey()));
+        TableColumn<java.util.Map.Entry<String, Double>, VBox> valCol = new TableColumn<>("CV (%)");
+        valCol.setCellValueFactory(c -> {
+            String pName = c.getValue().getKey();
+            double cv = c.getValue().getValue();
+            java.util.List<com.backtester.report.SensitivityResult.DataPoint> curveData = result.getParameterCurves().get(pName);
+            
+            VBox calcBox = new VBox(5);
+            calcBox.setAlignment(Pos.CENTER_LEFT);
+            calcBox.setPadding(new Insets(0, 0, 0, 10));
+            
+            Label cvValueLabel = new Label(String.format("%.2f %%", cv));
+            cvValueLabel.setFont(Font.font("Segoe UI", FontWeight.BOLD, 14));
+            cvValueLabel.setTextFill(Color.web("#00e5ff"));
+            
+            Button infoBtn = new Button("ℹ");
+            infoBtn.setStyle("-fx-background-color: transparent; -fx-text-fill: #00e5ff; -fx-cursor: hand; -fx-border-color: #00e5ff; -fx-border-radius: 15px; -fx-font-weight: bold; -fx-padding: 0 5 0 5;");
+            
+            javafx.scene.layout.HBox topBox = new javafx.scene.layout.HBox(10, cvValueLabel, infoBtn);
+            topBox.setAlignment(Pos.CENTER_LEFT);
+            
+            if (curveData != null && !curveData.isEmpty()) {
+                double sum = curveData.stream().mapToDouble(d -> d.profit).sum();
+                double mean = sum / curveData.size();
+                double varianceSum = 0;
+                for (com.backtester.report.SensitivityResult.DataPoint dp : curveData) {
+                    varianceSum += Math.pow(dp.profit - mean, 2);
+                }
+                double stdDev = Math.sqrt(varianceSum / curveData.size());
+                
+                infoBtn.setOnAction(e -> {
+                    javafx.scene.control.Alert alert = new javafx.scene.control.Alert(javafx.scene.control.Alert.AlertType.INFORMATION);
+                    alert.setTitle("Erklärung: Parameter Robustness");
+                    alert.setHeaderText("Was bedeutet der CV-Wert für " + pName + "?");
+                    
+                    String explanation = String.format(java.util.Locale.US,
+                        "Der CV-Wert (Coefficient of Variation) zeigt an, wie stark der Profit schwankt, wenn sich der Parameter '%s' leicht ändert.\n\n" +
+                        "Ein kleiner CV-Wert bedeutet, dass die Strategie sehr stabil (robust) ist.\n" +
+                        "Ein hoher Wert zeigt an, dass schon winzige Änderungen am Parameter den Profit massiv einbrechen lassen können – die Strategie ist hier anfällig und überoptimiert!\n\n" +
+                        "--- BERECHNUNG ---\n\n" +
+                        "1. Durchschnittlicher Profit (|Mean|):\n" +
+                        "In unseren Tests lag der Profit für diesen Parameter im Schnitt bei %.2f USD.\n\n" +
+                        "2. Schwankung (Standardabweichung / StdDev):\n" +
+                        "Der Profit schwankte im Schnitt um %.2f USD.\n\n" +
+                        "3. Die Formel (CV):\n" +
+                        "Wir teilen die Schwankung durch den durchschnittlichen Profit und rechnen mal 100, um einen Prozentwert zu bekommen:\n" +
+                        "CV = (%.2f / %.2f) * 100 = %.2f %%\n\n" +
+                        "--- BEISPIEL FÜR LAIEN ---\n\n" +
+                        "Stell dir vor, die Strategie erwirtschaftet %.2f USD. Die durchschnittliche Abweichung davon beträgt %.2f USD.\n" +
+                        "Diese Abweichung macht genau %.2f %% deines Profits aus.\n\n" +
+                        "Faustregel:\n" +
+                        "• Unter 20%%: Sehr robust. Der Parameter ist stabil.\n" +
+                        "• 20%% - 50%%: Akzeptabel. Es gibt Schwankungen, aber im Rahmen.\n" +
+                        "• Über 50%%: Gefährlich! Die Strategie ist hier eine 'Klippe' und extrem riskant.",
+                        pName, Math.abs(mean), stdDev, stdDev, Math.abs(mean), cv, Math.abs(mean), stdDev, cv
+                    );
+                    
+                    Label expLabel = new Label(explanation);
+                    expLabel.setWrapText(true);
+                    expLabel.setStyle("-fx-text-fill: white; -fx-font-size: 13px;");
+                    
+                    alert.getDialogPane().setContent(expLabel);
+                    alert.getDialogPane().setPrefWidth(550);
+                    alert.getDialogPane().setMinHeight(javafx.scene.layout.Region.USE_PREF_SIZE);
+                    
+                    try {
+                        if (cvTable.getScene() != null && !cvTable.getScene().getStylesheets().isEmpty()) {
+                            alert.getDialogPane().getStylesheets().addAll(cvTable.getScene().getStylesheets());
+                        }
+                    } catch(Exception ignored) {}
+                    alert.getDialogPane().setStyle("-fx-base: #11141d; -fx-background-color: #11141d; -fx-text-fill: white;");
+                    
+                    alert.showAndWait();
+                });
+                
+                Label formulaLabel = new Label("CV = (StdDev / |Mean|) * 100");
+                formulaLabel.setFont(Font.font("Segoe UI", 10));
+                formulaLabel.setTextFill(Color.web("#8093a5"));
+                
+                Label calcLabel = new Label(String.format(java.util.Locale.US, "= (%.2f / %.2f) * 100", stdDev, Math.abs(mean)));
+                calcLabel.setFont(Font.font("Segoe UI", 10));
+                calcLabel.setTextFill(Color.web("#8093a5"));
+                
+                calcBox.getChildren().addAll(topBox, formulaLabel, calcLabel);
+            } else {
+                calcBox.getChildren().add(topBox);
+            }
+            return new javafx.beans.property.SimpleObjectProperty<>(calcBox);
+        });
+        valCol.setPrefWidth(200);
+
+        TableColumn<java.util.Map.Entry<String, Double>, VBox> chartCol = new TableColumn<>("Curve");
+        chartCol.setCellValueFactory(c -> {
+            String pName = c.getValue().getKey();
+            java.util.List<com.backtester.report.SensitivityResult.DataPoint> curveData = result.getParameterCurves().get(pName);
+            if (curveData == null || curveData.isEmpty()) return new javafx.beans.property.SimpleObjectProperty<>(null);
+            
+            String baseValueStr = result.getOriginalPass().getBacktestPass().getParameterValues().get(pName);
+            double baseValue = 0;
+            try { if (baseValueStr != null) baseValue = Double.parseDouble(baseValueStr); } catch (Exception ignored) {}
+            final double finalBaseValue = baseValue;
+            
+            double minX = curveData.get(0).paramValue;
+            double maxX = curveData.get(curveData.size() - 1).paramValue;
+            double xPadding = (maxX - minX) * 0.05;
+            if (xPadding == 0) xPadding = 1;
+            
+            javafx.scene.chart.NumberAxis xAxis = new javafx.scene.chart.NumberAxis();
+            xAxis.setTickLabelsVisible(true); xAxis.setOpacity(1); xAxis.setTickMarkVisible(true); xAxis.setMinorTickVisible(false);
+            xAxis.setTickLabelFill(Color.WHITE);
+            xAxis.setAutoRanging(false);
+            xAxis.setLowerBound(minX - xPadding);
+            xAxis.setUpperBound(maxX + xPadding);
+            
+            javafx.scene.chart.NumberAxis yAxis = new javafx.scene.chart.NumberAxis();
+            yAxis.setTickLabelsVisible(false); yAxis.setOpacity(0); yAxis.setTickMarkVisible(false); yAxis.setMinorTickVisible(false);
+            
+            double minY = curveData.stream().mapToDouble(d -> d.profit).min().orElse(0);
+            double maxY = curveData.stream().mapToDouble(d -> d.profit).max().orElse(1);
+            double yPadding = (maxY - minY) * 0.1;
+            if (yPadding == 0) yPadding = 1;
+            yAxis.setAutoRanging(false);
+            yAxis.setLowerBound(minY - yPadding);
+            yAxis.setUpperBound(maxY + yPadding);
+
+            javafx.scene.chart.LineChart<Number, Number> chart = new javafx.scene.chart.LineChart<>(xAxis, yAxis);
+            chart.setCreateSymbols(true);
+            chart.setLegendVisible(false);
+            chart.setAnimated(false);
+            chart.setPrefHeight(100);
+            chart.setMinHeight(100);
+            chart.setMaxHeight(100);
+            chart.setPrefWidth(300);
+            chart.setHorizontalGridLinesVisible(false);
+            chart.setVerticalGridLinesVisible(false);
+            
+            javafx.scene.chart.XYChart.Series<Number, Number> series = new javafx.scene.chart.XYChart.Series<>();
+            com.backtester.report.SensitivityResult.DataPoint closestToBase = null;
+            double minDiff = Double.MAX_VALUE;
+            
+            for (com.backtester.report.SensitivityResult.DataPoint dp : curveData) {
+                series.getData().add(new javafx.scene.chart.XYChart.Data<>(dp.paramValue, dp.profit));
+                double diff = Math.abs(dp.paramValue - finalBaseValue);
+                if (diff < minDiff) {
+                    minDiff = diff;
+                    closestToBase = dp;
+                }
+            }
+            chart.getData().add(series);
+            
+            final com.backtester.report.SensitivityResult.DataPoint finalClosest = closestToBase;
+            
+            // Minimal styling for dark theme
+            chart.lookup(".chart-plot-background").setStyle("-fx-background-color: transparent;");
+            chart.setStyle("-fx-padding: 0; -fx-background-color: transparent;");
+            
+            javafx.application.Platform.runLater(() -> {
+                if (series.getNode() != null) {
+                    series.getNode().setStyle("-fx-stroke: #00e5ff; -fx-stroke-width: 4px;");
+                }
+                for (javafx.scene.chart.XYChart.Data<Number, Number> data : series.getData()) {
+                    if (data.getNode() != null) {
+                        boolean isBase = finalClosest != null && data.getXValue().doubleValue() == finalClosest.paramValue;
+                        if (isBase) {
+                            data.getNode().setStyle("-fx-background-color: #ff3d00, white; -fx-background-insets: 0, 2; -fx-background-radius: 8px; -fx-padding: 6px;");
+                        } else {
+                            data.getNode().setStyle("-fx-background-color: #00e5ff, #0b0d13; -fx-background-insets: 0, 2; -fx-background-radius: 4px; -fx-padding: 3px;");
+                        }
+                    }
+                }
+            });
+            
+            double stepVal = curveData.size() > 1 ? (maxX - minX) / (curveData.size() - 1) : 0;
+            String infoTxt = String.format(java.util.Locale.US, "Start: %.4f | Step: %.4f | End: %.4f", minX, stepVal, maxX)
+                                   .replaceAll("0+ \\|", " |").replaceAll("\\. \\|", " |");
+            Label infoLabel = new Label(infoTxt);
+            infoLabel.setTextFill(Color.web("#8093a5"));
+            infoLabel.setFont(Font.font("Segoe UI", 11));
+            
+            VBox chartBox = new VBox(5, chart, infoLabel);
+            chartBox.setAlignment(Pos.CENTER);
+            
+            return new javafx.beans.property.SimpleObjectProperty<>(chartBox);
+        });
+        
+        chartCol.setCellFactory(col -> new TableCell<java.util.Map.Entry<String, Double>, VBox>() {
+            @Override
+            protected void updateItem(VBox item, boolean empty) {
+                super.updateItem(item, empty);
+                if (empty || item == null) {
+                    setGraphic(null);
+                } else {
+                    setGraphic(item);
+                    setAlignment(Pos.CENTER);
+                }
+            }
+        });
+
+        cvTable.getColumns().addAll(paramCol, valCol, chartCol);
+        cvTable.getItems().addAll(result.getParameterCVs().entrySet());
+        cvTable.setPrefHeight(300);
+        cvTable.setFixedCellSize(130); // Make rows tall enough for the big charts
+        cvTable.setSelectionModel(null); // Disable selection to prevent text from disappearing
+        cvTable.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY);
+        
+        // All Strategy Parameters Table (from Original Pass)
+        Label paramLabel = new Label("Optimized Strategy Settings:");
+        paramLabel.setTextFill(Color.WHITE);
+        paramLabel.setFont(Font.font("Segoe UI", FontWeight.BOLD, 14));
+        
+        TableView<java.util.Map.Entry<String, String>> settingsTable = new TableView<>();
+        TableColumn<java.util.Map.Entry<String, String>, String> sParamCol = new TableColumn<>("Parameter");
+        sParamCol.setCellValueFactory(c -> new SimpleStringProperty(c.getValue().getKey()));
+        TableColumn<java.util.Map.Entry<String, String>, String> sValCol = new TableColumn<>("Value");
+        sValCol.setCellValueFactory(c -> new SimpleStringProperty(c.getValue().getValue()));
+        settingsTable.getColumns().addAll(sParamCol, sValCol);
+        settingsTable.getItems().addAll(result.getOriginalPass().getBacktestPass().getParameterValues().entrySet());
+        settingsTable.setPrefHeight(250);
+        settingsTable.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY);
+        
+        box.getChildren().addAll(title, scoreLabel, cvLabel, cvTable, paramLabel, settingsTable);
+        
+        javafx.scene.Scene scene = new javafx.scene.Scene(box, 1000, 750);
+        if (root.getScene() != null && !root.getScene().getStylesheets().isEmpty()) {
+            scene.getStylesheets().addAll(root.getScene().getStylesheets());
+        }
+        stage.setScene(scene);
+        stage.show();
+    }
+
+    private void startSensitivityAnalysis() {
+        List<CombinedPass> selected = combinedTable.getSelectionModel().getSelectedItems();
+        if (selected == null || selected.isEmpty()) {
+            new Alert(Alert.AlertType.WARNING, "Bitte markiere zuerst mindestens einen Pass in der Combined Analysis Tabelle (Strg/Shift für mehrere).").show();
+            return;
+        }
+
+        List<com.backtester.report.SensitivityResult> targets = new java.util.ArrayList<>();
+        for (CombinedPass cp : selected) {
+            targets.add(new com.backtester.report.SensitivityResult(cp));
+        }
+
+        sensitivityTable.getItems().setAll(targets);
+
+        OptimizationConfig baseConfig = this.optConfig;
+        if (baseConfig == null) {
+            new Alert(Alert.AlertType.ERROR, "Keine Basis-Konfiguration gefunden. Bitte führe zuerst eine Optimierung durch!").show();
+            return;
+        }
+
+        currentSensitivityRunner = new com.backtester.engine.SensitivityRunner(com.backtester.config.AppConfig.getInstance());
+        currentSensitivityRunner.setLogCallback(msg -> Platform.runLater(() -> logView.log("INFO", msg)));
+        currentSensitivityRunner.setProgressCallback(pct -> Platform.runLater(() -> {
+            progressBar.setProgress(pct / 100.0);
+            progressLabel.setText("Sensitivity Scan: " + pct + "%");
+        }));
+        currentSensitivityRunner.setResultUpdateCallback(res -> Platform.runLater(() -> sensitivityTable.refresh()));
+
+        List<EaParameter> allParams = eaParamManager.getEffectiveParameters(baseConfig.getExpert());
+
+        currentTask = new Task<Void>() {
+            @Override
+            protected Void call() throws Exception {
+                Platform.runLater(() -> {
+                    startBtn.setDisable(true);
+                    startKeepOpenBtn.setDisable(true);
+                    cancelBtn.setDisable(false);
+                });
+                currentSensitivityRunner.runSensitivityScan(targets, baseConfig, allParams);
+                return null;
+            }
+            @Override
+            protected void succeeded() {
+                Platform.runLater(() -> {
+                    startBtn.setDisable(false);
+                    startKeepOpenBtn.setDisable(false);
+                    cancelBtn.setDisable(true);
+                    progressBar.setProgress(1.0);
+                    progressLabel.setText("Sensitivity Analysis completed.");
+                    new Alert(Alert.AlertType.INFORMATION, "Sensitivity Analysis completed!").show();
+                });
+            }
+            @Override
+            protected void failed() {
+                Platform.runLater(() -> {
+                    startBtn.setDisable(false);
+                    startKeepOpenBtn.setDisable(false);
+                    cancelBtn.setDisable(true);
+                    logView.log("ERROR", "Sensitivity Task failed: " + getException().getMessage());
+                });
+            }
+        };
+
+        Thread t = new Thread(currentTask);
+        t.setDaemon(true);
+        t.start();
     }
 
     /** Applies current filter settings and re-populates the combined table. */

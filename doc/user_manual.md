@@ -97,7 +97,13 @@ Ein exzellenter Trader weiß, dass ein System immer optimiert werden kann. Der O
   - *End*: Welcher Grenzwert nicht überschritten werden soll (z.B. End 30).
   - Um für einen Parameter nach Variationen iterieren zu lassen, ist der Haken vorne in seiner Table-Zeile strikte Voraussetzung!
 - **AutoConfig Button (Der Zauberstab)**: Spart immens Zeit. Statt unzählige Raster mit Logik vollzuschreiben, klickt man hier. Die Implementierung errechnet auf reiner Heuristik von Ihren Grundparametern her perfekte logarithmische Distanzen für Steps, Startpunkte unter, sowie Endziele über dem Basiswert und setzt in der Sekunde automatisiert die Auswahlschalter um!
-
+- **Combined Analysis Tab (Verwaltung & Robustheits-Tiefentest)**: Dieser Unterbereich ist Ihre zentrale Sammelstelle für die absoluten Top-Ergebnisse aus verschiedenen Optimierungsläufen.
+  - **Ergebnisse verwalten**: Sie können unerwünschte Optimierungen per Klick (oder mehrere gleichzeitig mit der Shift-Taste) markieren und über einen Button dauerhaft löschen (inkl. Sicherheitsabfrage).
+  - **Sensitivity Analysis (Stresstest)**: Wählen Sie ein Top-Ergebnis in der Liste aus und klicken Sie auf `Sensitivity Analysis`. Die Software startet einen **isolierten Stresstest (Slow Complete Algorithm)**: Jeder Parameter der Strategie wird um ±10% variiert, um zu sehen, ob das System einbricht, wenn sich der Markt nur minimal ändert.
+  - **Die Kennlinien-Diagnose**: Machen Sie nach dem Test einen **Doppelklick** auf das Ergebnis, um das Analyse-Popup zu öffnen:
+    - **CV% Breakdown**: Sie sehen für jeden Parameter sofort den *Coefficient of Variation* (Schwankungskoeffizient).
+    - **Optische Graphen**: Die blauen Kennlinien zeigen Ihnen visuell, ob Sie sich auf einem sicheren Plateau oder am Rand einer Klippe befinden. Der rote Punkt markiert Ihren genutzten Basiswert, zusammen mit Start-, Step- und End-Koordinaten.
+    - **Transparenz für Laien (Info-Button)**: Ein Klick auf das leuchtende `ℹ`-Symbol öffnet eine verständliche Erklärung. Hier wird Ihnen anhand Ihrer echten Testergebnisse mathematisch bewiesen, warum ein Parameter riskant oder sicher ist (inklusive Daumenregeln wie "< 20% = sicher", "> 50% = gefährlich").
 ---
 
 ### 6. Bereich: Robustness Scanner (Kennlinienfahrt)

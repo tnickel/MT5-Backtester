@@ -30,7 +30,15 @@ Full integration with the MT5 built-in genetic and complete algorithm optimizer.
 - **Double-Click to Backtest**: Double-click any optimization pass to instantly run a single backtest with those exact parameters and view the Report Viewer.
 - **Apply Best Parameters**: One-click to write the best-performing pass parameters back into the EA configuration.
 - **AutoConfig Button**: Automatically calculates reasonable Start/Step/End optimization ranges for all numeric parameters based on heuristic analysis of default values.
-
+- **Combined Analysis Tab**: A unified view to manage and inspect top-performing strategies across multiple optimizations.
+  - **Result Management**: Delete individual passes or bulk-delete multiple passes (Shift-click) with a safety confirmation dialog.
+  - **Robustness Test (Sensitivity Drill-Down)**: Run a deep-dive sensitivity analysis on any optimized pass. The system sweeps each optimized parameter from -10% to +10% using the Slow Complete algorithm to verify stability against market noise.
+  - **Diagnostic UI**: Double-clicking a sensitivity result opens an advanced diagnostic popup containing:
+    - Overall CV% (Coefficient of Variation) and Base Profit.
+    - Parameter CV Breakdown: A detailed table listing the CV% for each parameter.
+    - Interactive Line Charts (Kennlinien): Sparkline charts visualizing parameter variations vs. profit, with the base value explicitly highlighted in red and precise Start/Step/End axis labels.
+    - Calculation Transparency: An Info-Button (`ℹ`) displays a detailed, layman-friendly mathematical explanation of the CV calculation for that specific parameter row.
+    - Full list of the original optimized strategy settings.
 ### 2.4. Robustness Scanner (Parameter Sensitivity / "Kennlinienfahrt")
 A unique module for advanced strategy validation through systematic parameter sweeps.
 - **Individual Parameter Sweep**: Each selected parameter is optimized in isolation via the Slow Complete Algorithm while all other parameters remain fixed.
