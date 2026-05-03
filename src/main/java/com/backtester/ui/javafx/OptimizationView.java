@@ -51,11 +51,15 @@ public class OptimizationView {
     private Button startBtn;
     private Button startKeepOpenBtn;
     private Button cancelBtn;
+    private Button startSenBtn;
+    private Button cancelSenBtn;
     private ProgressBar progressBar;
     private Label progressLabel;
     private TableView<com.backtester.report.OptimizationResult.Pass> resultTable;
     private TableView<com.backtester.report.OptimizationResult.Pass> forwardTable;
     private TableView<CombinedPass> combinedTable;
+    private TableView<CombinedPass> selectedTable;
+    private Tab selectedTab;
     private TableView<com.backtester.report.SensitivityResult> sensitivityTable;
     private com.backtester.engine.SensitivityRunner currentSensitivityRunner;
     private OptimizationConfig optConfig;
@@ -311,11 +315,15 @@ public class OptimizationView {
         combinedTab.getStyleClass().add("tab");
         combinedTab.setClosable(false);
         
+        selectedTab = new Tab("⭐ Selected", createSelectedPane());
+        selectedTab.getStyleClass().add("tab");
+        selectedTab.setClosable(false);
+        
         Tab sensitivityTab = new Tab("⚖ Sensitivity Analysis", createSensitivityPane());
         sensitivityTab.getStyleClass().add("tab");
         sensitivityTab.setClosable(false);
         
-        resultTabs.getTabs().addAll(mainTab, forwardTab, combinedTab, sensitivityTab);
+        resultTabs.getTabs().addAll(mainTab, forwardTab, combinedTab, selectedTab, sensitivityTab);
         VBox.setVgrow(resultTabs, Priority.ALWAYS);
 
         HBox controlBox = new HBox(15);
@@ -335,6 +343,20 @@ public class OptimizationView {
         cancelBtn.setDisable(true);
         cancelBtn.setOnAction(e -> cancelOptimization());
 
+        startSenBtn = new Button("▶ Start Sensitivity Analysis");
+        startSenBtn.getStyleClass().addAll("button", "button-start");
+        startSenBtn.setOnAction(e -> startSensitivityAnalysis());
+        startSenBtn.setVisible(false);
+        startSenBtn.setManaged(false);
+
+        cancelSenBtn = new Button("⏹ Cancel");
+        cancelSenBtn.getStyleClass().addAll("button", "button-cancel");
+        cancelSenBtn.setOnAction(e -> {
+            if (currentSensitivityRunner != null) currentSensitivityRunner.cancel();
+        });
+        cancelSenBtn.setVisible(false);
+        cancelSenBtn.setManaged(false);
+
         progressBar = new ProgressBar(0.0);
         progressBar.setMaxWidth(Double.MAX_VALUE);
         progressBar.setMinHeight(30);
@@ -353,7 +375,27 @@ public class OptimizationView {
         Button applyBtn = new Button("Apply Best Parameters");
         Button openXmlBtn = new Button("Open XML");
         
-        controlBox.getChildren().addAll(startBtn, startKeepOpenBtn, cancelBtn, progressBar, progressLabel, spacer, applyBtn, openXmlBtn);
+        controlBox.getChildren().addAll(startBtn, startKeepOpenBtn, cancelBtn, startSenBtn, cancelSenBtn, progressBar, progressLabel, spacer, applyBtn, openXmlBtn);
+
+        resultTabs.getSelectionModel().selectedItemProperty().addListener((obs, oldTab, newTab) -> {
+            boolean isSensitivity = (newTab == sensitivityTab);
+            boolean hideMainButtons = (newTab == sensitivityTab || newTab == combinedTab || newTab == selectedTab);
+            startBtn.setVisible(!hideMainButtons);
+            startBtn.setManaged(!hideMainButtons);
+            startKeepOpenBtn.setVisible(!hideMainButtons);
+            startKeepOpenBtn.setManaged(!hideMainButtons);
+            cancelBtn.setVisible(!hideMainButtons);
+            cancelBtn.setManaged(!hideMainButtons);
+            applyBtn.setVisible(!hideMainButtons);
+            applyBtn.setManaged(!hideMainButtons);
+            openXmlBtn.setVisible(!hideMainButtons);
+            openXmlBtn.setManaged(!hideMainButtons);
+            
+            startSenBtn.setVisible(isSensitivity);
+            startSenBtn.setManaged(isSensitivity);
+            cancelSenBtn.setVisible(isSensitivity);
+            cancelSenBtn.setManaged(isSensitivity);
+        });
 
         box.getChildren().addAll(title, resultTabs, controlBox);
         return box;
@@ -410,12 +452,25 @@ public class OptimizationView {
         delPassBtn.getStyleClass().addAll("button", "button-cancel");
         delPassBtn.setOnAction(e -> deleteSelectedCombinedPasses());
 
+        Button selectStrategiesBtn = new Button("⭐ Select Strategies");
+        selectStrategiesBtn.getStyleClass().add("button");
+        selectStrategiesBtn.setOnAction(e -> {
+            java.util.List<CombinedPass> selected = combinedTable.getSelectionModel().getSelectedItems();
+            if (selected == null || selected.isEmpty()) return;
+            for (CombinedPass p : selected) {
+                if (!selectedTable.getItems().contains(p)) {
+                    selectedTable.getItems().add(p);
+                }
+            }
+            new Alert(Alert.AlertType.INFORMATION, "Strategien erfolgreich zum 'Selected' Tab hinzugefügt!").show();
+        });
+
         combinedCountLabel = new Label("");
         combinedCountLabel.setStyle("-fx-text-fill: #7e889a; -fx-font-size: 11px;");
 
         topBar.getChildren().addAll(
             filterEnabledCheck, filterSettingsBtn, weightSettingsBtn, styledLabel("Sortierung:"), combinedSortCombo,
-            onlyMatchedCheck, applyFilterBtn, delPassBtn, combinedCountLabel
+            onlyMatchedCheck, applyFilterBtn, selectStrategiesBtn, delPassBtn, combinedCountLabel
         );
 
         // Spinner werden lazy initialisiert (defaults) und im Dialog angezeigt
@@ -566,7 +621,7 @@ public class OptimizationView {
         return t;
     }
 
-    private VBox createSensitivityPane() {
+    private VBox createSelectedPane() {
         VBox pane = new VBox(10);
         pane.setPadding(new Insets(10));
 
@@ -575,22 +630,33 @@ public class OptimizationView {
         topBar.getStyleClass().add("sci-fi-panel");
         topBar.setPadding(new Insets(10));
 
-        Button startSenBtn = new Button("▶ Start Sensitivity Analysis");
-        startSenBtn.getStyleClass().addAll("button", "button-start");
-        startSenBtn.setOnAction(e -> startSensitivityAnalysis());
-
-        Button cancelSenBtn = new Button("⏹ Cancel");
-        cancelSenBtn.getStyleClass().addAll("button", "button-cancel");
-        cancelSenBtn.setOnAction(e -> {
-            if (currentSensitivityRunner != null) currentSensitivityRunner.cancel();
+        Button removeBtn = new Button("🗑 Remove Selected");
+        removeBtn.getStyleClass().addAll("button", "button-cancel");
+        removeBtn.setOnAction(e -> {
+            java.util.List<CombinedPass> selection = new java.util.ArrayList<>(selectedTable.getSelectionModel().getSelectedItems());
+            selectedTable.getItems().removeAll(selection);
         });
 
-        topBar.getChildren().addAll(startSenBtn, cancelSenBtn);
+        Button clearAllBtn = new Button("⏹ Clear All");
+        clearAllBtn.getStyleClass().addAll("button", "button-cancel");
+        clearAllBtn.setOnAction(e -> selectedTable.getItems().clear());
+
+        topBar.getChildren().addAll(removeBtn, clearAllBtn);
+
+        selectedTable = createCombinedTable();
+        VBox.setVgrow(selectedTable, Priority.ALWAYS);
+        pane.getChildren().addAll(topBar, selectedTable);
+        return pane;
+    }
+
+    private VBox createSensitivityPane() {
+        VBox pane = new VBox(10);
+        pane.setPadding(new Insets(10));
 
         sensitivityTable = createSensitivityTable();
         VBox.setVgrow(sensitivityTable, Priority.ALWAYS);
 
-        pane.getChildren().addAll(topBar, sensitivityTable);
+        pane.getChildren().addAll(sensitivityTable);
         VBox.setVgrow(pane, Priority.ALWAYS);
         return pane;
     }
@@ -889,7 +955,7 @@ public class OptimizationView {
     }
 
     private void startSensitivityAnalysis() {
-        List<CombinedPass> selected = combinedTable.getSelectionModel().getSelectedItems();
+        List<CombinedPass> selected = selectedTable.getItems();
         if (selected == null || selected.isEmpty()) {
             new Alert(Alert.AlertType.WARNING, "Bitte markiere zuerst mindestens einen Pass in der Combined Analysis Tabelle (Strg/Shift für mehrere).").show();
             return;
