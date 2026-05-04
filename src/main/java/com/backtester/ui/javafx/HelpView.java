@@ -8,9 +8,10 @@ import org.commonmark.node.Node;
 import org.commonmark.parser.Parser;
 import org.commonmark.renderer.html.HtmlRenderer;
 
+import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.Paths;
 
 public class HelpView {
 
@@ -30,11 +31,18 @@ public class HelpView {
         try {
             Path docPath = AppConfig.getInstance().getBasePath().resolve("doc").resolve("user_manual.md");
             String markdownContent;
-            
+
             if (Files.exists(docPath)) {
                 markdownContent = Files.readString(docPath);
             } else {
-                markdownContent = "## 📖 User Manual Not Found\n\nCould not locate the `doc/user_manual.md` file.\n\nSearched at:\n- `" + docPath.toAbsolutePath() + "`";
+                try (InputStream in = HelpView.class.getResourceAsStream("/doc/user_manual.md")) {
+                    if (in != null) {
+                        markdownContent = new String(in.readAllBytes(), StandardCharsets.UTF_8);
+                    } else {
+                        markdownContent = "## User manual not found\n\nCould not load `doc/user_manual.md` from the working directory or from the application bundle.\n\nSearched at:\n- `"
+                                + docPath.toAbsolutePath() + "`";
+                    }
+                }
             }
 
             Parser parser = Parser.builder().build();
