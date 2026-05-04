@@ -18,12 +18,14 @@ import javafx.stage.FileChooser;
 
 import java.io.File;
 import java.time.LocalDate;
+import java.util.Optional;
 
 public class RobustnessView {
 
     private final BorderPane root;
     private final LogView logView;
     private final AppConfig config;
+    private final OptimizationView optimizationView;
 
     // Config fields
     private TextField expertField;
@@ -39,6 +41,10 @@ public class RobustnessView {
     private Spinner<Integer> shiftsSpinner;
     private Spinner<Integer> shiftDaysSpinner;
 
+    // Selection mode radio buttons
+    private RadioButton singleEaRadio;
+    private RadioButton selectedTabRadio;
+
     // Parameter Table
     private TableView<EaParameter> paramTable;
     private final EaParameterManager eaParamManager = new EaParameterManager();
@@ -50,14 +56,15 @@ public class RobustnessView {
     private Button cancelBtn;
     private ProgressBar progress;
 
-    public RobustnessView(LogView logView) {
+    public RobustnessView(LogView logView, OptimizationView optimizationView) {
         this.logView = logView;
+        this.optimizationView = optimizationView;
         this.config = AppConfig.getInstance();
 
         root = new BorderPane();
         root.setPadding(new Insets(15));
 
-        // Top: Split between Config and Params
+        // Top Split: Config vs Parameters
         HBox topBox = new HBox(15);
         VBox configBox = createConfigBox();
         VBox paramBox = createParamBox();
@@ -65,11 +72,21 @@ public class RobustnessView {
         HBox.setHgrow(configBox, Priority.ALWAYS);
         HBox.setHgrow(paramBox, Priority.ALWAYS);
         topBox.getChildren().addAll(configBox, paramBox);
+        topBox.setMinHeight(0);
+
+        // Bottom Split: Results
+        VBox resultsBox = createResultsBox();
+
+        SplitPane mainLayout = new SplitPane(topBox, resultsBox);
+        mainLayout.setOrientation(javafx.geometry.Orientation.VERTICAL);
+        mainLayout.setDividerPositions(0.45);
+        mainLayout.setStyle("-fx-background-color: transparent; -fx-padding: 0;");
+        mainLayout.getStyleClass().add("transparent-split-pane");
 
         // Bottom: Controls
         HBox controlBox = createControlBox();
 
-        root.setCenter(topBox);
+        root.setCenter(mainLayout);
         root.setBottom(controlBox);
 
         loadPreferences();
@@ -81,6 +98,19 @@ public class RobustnessView {
 
         Label title = new Label("Scan Settings");
         title.getStyleClass().add("sci-fi-panel-title");
+
+        ToggleGroup modeGroup = new ToggleGroup();
+        singleEaRadio = new RadioButton("Single Expert Advisor");
+        singleEaRadio.setToggleGroup(modeGroup);
+        singleEaRadio.setSelected(true);
+        singleEaRadio.setStyle("-fx-text-fill: white;");
+        
+        selectedTabRadio = new RadioButton("Use all strategies in Selected tab");
+        selectedTabRadio.setToggleGroup(modeGroup);
+        selectedTabRadio.setStyle("-fx-text-fill: white;");
+        
+        VBox modeBox = new VBox(8, singleEaRadio, selectedTabRadio);
+        modeBox.setPadding(new Insets(5, 0, 15, 0));
 
         GridPane grid = new GridPane();
         grid.setHgap(10);
@@ -96,6 +126,11 @@ public class RobustnessView {
         HBox eaBox = new HBox(5, expertField, browseBtn);
         HBox.setHgrow(expertField, Priority.ALWAYS);
         grid.add(eaBox, 1, 0, 3, 1);
+
+        modeGroup.selectedToggleProperty().addListener((obs, oldV, newV) -> {
+            boolean useSelected = selectedTabRadio.isSelected();
+            eaBox.setDisable(useSelected);
+        });
 
         // Row 1: Symbol & Period
         grid.add(new Label("Symbol:"), 0, 1);
@@ -156,9 +191,12 @@ public class RobustnessView {
         modelCombo.getStyleClass().add("combo-box");
         grid.add(modelCombo, 3, 5);
 
-        box.getChildren().addAll(title, grid);
+        box.getChildren().addAll(title, modeBox, grid);
         return box;
     }
+
+    private TableView<com.backtester.report.OptimizationResult.CombinedPass> selectedTable;
+    private ListView<String> resultsList;
 
     private VBox createParamBox() {
         VBox box = new VBox(10);
@@ -228,6 +266,59 @@ public class RobustnessView {
         btnBox.getChildren().addAll(autoConfigBtn, loadBtn, saveBtn);
 
         box.getChildren().addAll(title, paramTable, btnBox);
+        return box;
+    }
+
+    private VBox createResultsBox() {
+        VBox box = new VBox(10);
+        box.getStyleClass().add("sci-fi-panel");
+
+        Label title = new Label("Robustness Results");
+        title.getStyleClass().add("sci-fi-panel-title");
+
+        TabPane tabPane = new TabPane();
+        tabPane.setStyle("-fx-background-color: transparent;");
+
+        // --- Tab 1: Selected Strategies ---
+        Tab selectedTab = new Tab("Selected Strategies");
+        selectedTab.setClosable(false);
+        VBox selBox = new VBox(10);
+        selBox.setPadding(new Insets(10));
+        
+        selectedTable = new TableView<>();
+        if (optimizationView != null) {
+            selectedTable.setItems(optimizationView.getSelectedStrategies());
+        }
+        
+        TableColumn<com.backtester.report.OptimizationResult.CombinedPass, String> nameCol2 = new TableColumn<>("Name");
+        nameCol2.setCellValueFactory(new PropertyValueFactory<>("name"));
+        nameCol2.setPrefWidth(100);
+        
+        TableColumn<com.backtester.report.OptimizationResult.CombinedPass, String> scoreCol = new TableColumn<>("Score");
+        scoreCol.setCellValueFactory(c -> new javafx.beans.property.SimpleStringProperty(String.format("%.1f", c.getValue().getScore())));
+        
+        TableColumn<com.backtester.report.OptimizationResult.CombinedPass, String> profitCol = new TableColumn<>("BT Profit");
+        profitCol.setCellValueFactory(c -> new javafx.beans.property.SimpleStringProperty(String.format("%.2f", c.getValue().getBtProfit())));
+        
+        selectedTable.getColumns().addAll(nameCol2, scoreCol, profitCol);
+        VBox.setVgrow(selectedTable, Priority.ALWAYS);
+        selBox.getChildren().add(selectedTable);
+        selectedTab.setContent(selBox);
+
+        // --- Tab 2: Results Summary ---
+        Tab resultsTab = new Tab("Results");
+        resultsTab.setClosable(false);
+        VBox resBox = new VBox(10);
+        resBox.setPadding(new Insets(10));
+        resultsList = new ListView<>();
+        VBox.setVgrow(resultsList, Priority.ALWAYS);
+        resBox.getChildren().add(resultsList);
+        resultsTab.setContent(resBox);
+
+        tabPane.getTabs().addAll(selectedTab, resultsTab);
+        
+        box.getChildren().addAll(title, tabPane);
+        VBox.setVgrow(tabPane, Priority.ALWAYS);
         return box;
     }
 
@@ -521,6 +612,14 @@ public class RobustnessView {
             savePreferences();
             
             String expert = expertField.getText().trim();
+            if (selectedTabRadio.isSelected() && optimizationView != null) {
+                expert = optimizationView.getExpertName();
+                // Also update the local field so the user sees it (even if disabled)
+                if (!expert.isEmpty()) {
+                    expertField.setText(expert);
+                }
+            }
+            
             if (expert.isEmpty()) {
                 logView.log("WARN", "Please select an Expert Advisor.");
                 return;
@@ -546,14 +645,32 @@ public class RobustnessView {
                 return;
             }
 
+            java.util.List<com.backtester.report.OptimizationResult.CombinedPass> stratsToRun = new java.util.ArrayList<>();
+            if (selectedTabRadio.isSelected()) {
+                if (optimizationView != null && !optimizationView.getSelectedStrategies().isEmpty()) {
+                    stratsToRun.addAll(optimizationView.getSelectedStrategies());
+                } else {
+                    logView.log("WARN", "No strategies selected in 'Selected' tab.");
+                    return;
+                }
+                
+                if (stratsToRun.size() > 10) {
+                    Alert alert = new Alert(Alert.AlertType.CONFIRMATION);
+                    alert.setTitle("Warning: Many Strategies");
+                    alert.setHeaderText("Opening HTML reports for " + stratsToRun.size() + " strategies.");
+                    alert.setContentText("Möchtest du wirklich mehr als 10 Browser-Fenster aufhaben?");
+                    Optional<ButtonType> res = alert.showAndWait();
+                    if (!res.isPresent() || res.get() != ButtonType.OK) {
+                        return;
+                    }
+                }
+            } else {
+                stratsToRun.add(null); // Single EA marker
+            }
+
             setUIState(true);
             progress.setProgress(-1); // Indeterminate
-
-            currentRunner = new RobustnessRunner(config);
-            currentRunner.setLogCallback(msg -> logView.log("ROBUST", msg));
-            currentRunner.setProgressCallback(percent -> {
-                Platform.runLater(() -> progress.setProgress(percent / 100.0));
-            });
+            resultsList.getItems().clear();
 
             String targetMetric = metricCombo.getValue() != null ? metricCombo.getValue() : "Profit";
             int shifts = shiftsSpinner.getValue() != null ? shiftsSpinner.getValue() : 10;
@@ -562,8 +679,54 @@ public class RobustnessView {
             currentTask = new Task<Void>() {
                 @Override
                 protected Void call() throws Exception {
-                    com.backtester.report.RobustnessResult res = currentRunner.runRobustnessScan(optConfig, params, shifts, shiftDays);
-                    Platform.runLater(() -> handleScanResult(res, optConfig, targetMetric, params, shifts, shiftDays));
+                    for (int i = 0; i < stratsToRun.size(); i++) {
+                        if (isCancelled()) break;
+                        
+                        com.backtester.report.OptimizationResult.CombinedPass strat = stratsToRun.get(i);
+                        String runName = strat != null ? strat.getName() : "SingleEA";
+                        Platform.runLater(() -> logView.log("ROBUST", "Starting scan for: " + runName));
+                        
+                        // Prepare parameters for this specific strategy
+                        java.util.List<EaParameter> runParams = new java.util.ArrayList<>();
+                        for (EaParameter p : params) {
+                            EaParameter copy = new EaParameter();
+                            copy.setName(p.getName());
+                            copy.setValue(p.getValue());
+                            copy.setOptimizeStart(p.getOptimizeStart());
+                            copy.setOptimizeStep(p.getOptimizeStep());
+                            copy.setOptimizeEnd(p.getOptimizeEnd());
+                            copy.setOptimizeEnabled(p.isOptimizeEnabled());
+                            runParams.add(copy);
+                        }
+                        
+                        // Modify runParams if strat != null
+                        if (strat != null && strat.getBacktestPass() != null) {
+                            for (EaParameter p : runParams) {
+                                String stratVal = strat.getBacktestPass().getParameter(p.getName());
+                                if (stratVal != null && !stratVal.isEmpty()) {
+                                    p.setValue(stratVal);
+                                }
+                            }
+                        } else if (strat != null) {
+                            Platform.runLater(() -> logView.log("WARN", "Skipping strategy " + strat.getName() + " due to missing backtest parameters."));
+                            continue;
+                        }
+
+                        currentRunner = new RobustnessRunner(config);
+                        currentRunner.setLogCallback(msg -> logView.log("ROBUST", msg));
+                        currentRunner.setProgressCallback(percent -> {
+                            Platform.runLater(() -> progress.setProgress(percent / 100.0));
+                        });
+                        
+                        com.backtester.report.RobustnessResult res = currentRunner.runRobustnessScan(optConfig, runParams, shifts, shiftDays);
+                        Platform.runLater(() -> handleSingleScanResult(res, optConfig, targetMetric, runParams, shifts, shiftDays, runName));
+                    }
+                    
+                    Platform.runLater(() -> {
+                        setUIState(false);
+                        progress.setProgress(1.0);
+                        logView.log("INFO", "All robustness scans completed.");
+                    });
                     return null;
                 }
             };
@@ -585,35 +748,43 @@ public class RobustnessView {
         }
     }
 
-    private void handleScanResult(com.backtester.report.RobustnessResult res, OptimizationConfig optConfig, String targetMetric, java.util.List<EaParameter> params, int shifts, int shiftDays) {
-        setUIState(false);
-        progress.setProgress(1.0);
-        
+    private void handleSingleScanResult(com.backtester.report.RobustnessResult res, OptimizationConfig optConfig, String targetMetric, java.util.List<EaParameter> params, int shifts, int shiftDays, String runName) {
         if (res != null && res.isSuccess()) {
-            logView.log("INFO", "Robustness scan finished successfully.");
+            resultsList.getItems().add("SUCCESS: " + runName + " - " + res.getMessage());
             try {
-                com.backtester.report.RobustnessHtmlGenerator.generateReport(res, optConfig, targetMetric, targetMetric, params);
-                java.nio.file.Path reportPath = java.nio.file.Paths.get(res.getOutputDirectory(), "robustness_report.html");
+                String reportTitle = targetMetric + " (Strategy " + runName + ")";
+                com.backtester.report.RobustnessHtmlGenerator.generateReport(res, optConfig, targetMetric, reportTitle, params);
+                
+                // Rename the generated report to include the strategy name so they don't overwrite if in the same dir
+                java.nio.file.Path oldPath = java.nio.file.Paths.get(res.getOutputDirectory(), "robustness_report.html");
+                java.nio.file.Path newPath = java.nio.file.Paths.get(res.getOutputDirectory(), "robustness_report_" + runName.replace("+", "_") + ".html");
+                if (java.nio.file.Files.exists(oldPath)) {
+                    java.nio.file.Files.move(oldPath, newPath, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                } else {
+                    newPath = oldPath; // Fallback
+                }
                 
                 com.google.gson.JsonObject metrics = new com.google.gson.JsonObject();
                 metrics.addProperty("targetMetric", targetMetric);
                 metrics.addProperty("shifts", shifts);
                 metrics.addProperty("shiftDays", shiftDays);
+                metrics.addProperty("strategyName", runName);
                 
                 com.backtester.database.DatabaseManager.getInstance().saveRun(
                     "ROBUSTNESS", 
                     optConfig.getExpert(), 
                     System.currentTimeMillis(), 
                     metrics.toString(), 
-                    reportPath.toAbsolutePath().toString()
+                    newPath.toAbsolutePath().toString()
                 );
                 
-                java.awt.Desktop.getDesktop().open(reportPath.toFile());
+                java.awt.Desktop.getDesktop().open(newPath.toFile());
             } catch (Exception ex) {
-                logView.log("ERROR", "Failed to save robustness to DB: " + ex.getMessage());
+                logView.log("ERROR", "Failed to save robustness to DB for " + runName + ": " + ex.getMessage());
             }
         } else if (res != null) {
-            logView.log("ERROR", "Robustness scan failed: " + res.getMessage());
+            resultsList.getItems().add("FAILED: " + runName + " - " + res.getMessage());
+            logView.log("ERROR", "Robustness scan failed for " + runName + ": " + res.getMessage());
         }
     }
 

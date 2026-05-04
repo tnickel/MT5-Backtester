@@ -59,7 +59,7 @@ public class MainView {
         tabPane.getTabs().add(optimizerTab);
         tabPane.getSelectionModel().select(optimizerTab);
         
-        RobustnessView robustnessView = new RobustnessView(logView);
+        RobustnessView robustnessView = new RobustnessView(logView, optimizationView);
         tabPane.getTabs().add(new Tab("Robustness", robustnessView.getView()));
         
         HistoryView historyView = new HistoryView();

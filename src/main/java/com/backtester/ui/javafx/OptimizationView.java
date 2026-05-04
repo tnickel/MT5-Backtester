@@ -535,6 +535,10 @@ public class OptimizationView {
         });
         consistCol.setPrefWidth(75);
 
+        TableColumn<CombinedPass, String> nameCol = new TableColumn<>("Name");
+        nameCol.setCellValueFactory(new PropertyValueFactory<>("name"));
+        nameCol.setPrefWidth(60);
+
         TableColumn<CombinedPass, Number> passCol = new TableColumn<>("Pass");
         passCol.setCellValueFactory(new PropertyValueFactory<>("passNumber"));
         passCol.setPrefWidth(50);
@@ -597,7 +601,7 @@ public class OptimizationView {
 
         fwGroup.getColumns().addAll(fwProfit, fwTrades, fwPf, fwDd);
 
-        t.getColumns().addAll(scoreCol, consistCol, passCol, btGroup, fwGroup);
+        t.getColumns().addAll(scoreCol, consistCol, nameCol, passCol, btGroup, fwGroup);
 
         Label placeholder = new Label("Noch keine Daten.\nStarte eine Optimierung mit Forward Test, dann hier Filter anwenden.");
         placeholder.setStyle("-fx-text-fill: #7e889a;");
@@ -649,6 +653,14 @@ public class OptimizationView {
         return pane;
     }
 
+    public javafx.collections.ObservableList<CombinedPass> getSelectedStrategies() {
+        return selectedTable.getItems();
+    }
+    
+    public String getExpertName() {
+        return expertField.getText().trim();
+    }
+
     private VBox createSensitivityPane() {
         VBox pane = new VBox(10);
         pane.setPadding(new Insets(10));
@@ -670,6 +682,9 @@ public class OptimizationView {
         TableColumn<com.backtester.report.SensitivityResult, Integer> passCol = new TableColumn<>("Pass");
         passCol.setCellValueFactory(c -> new javafx.beans.property.SimpleIntegerProperty(c.getValue().getOriginalPass().getPassNumber()).asObject());
         
+        TableColumn<com.backtester.report.SensitivityResult, String> nameCol = new TableColumn<>("Name");
+        nameCol.setCellValueFactory(c -> new SimpleStringProperty(c.getValue().getOriginalPass().getName()));
+        
         TableColumn<com.backtester.report.SensitivityResult, String> profitCol = new TableColumn<>("Base Net Profit");
         profitCol.setCellValueFactory(c -> new SimpleStringProperty(String.format("%.2f", c.getValue().getOriginalPass().getBtProfit())));
 
@@ -684,7 +699,7 @@ public class OptimizationView {
         TableColumn<com.backtester.report.SensitivityResult, String> statusCol = new TableColumn<>("Status");
         statusCol.setCellValueFactory(c -> new SimpleStringProperty(c.getValue().getStatus()));
 
-        t.getColumns().addAll(passCol, profitCol, cvCol, statusCol);
+        t.getColumns().addAll(passCol, nameCol, profitCol, cvCol, statusCol);
 
         t.setRowFactory(tv -> {
             TableRow<com.backtester.report.SensitivityResult> row = new TableRow<>();
@@ -1415,6 +1430,10 @@ public class OptimizationView {
         passCol.setCellValueFactory(new PropertyValueFactory<>("passNumber"));
         passCol.setPrefWidth(60);
         
+        TableColumn<com.backtester.report.OptimizationResult.Pass, String> nameCol = new TableColumn<>("Name");
+        nameCol.setCellValueFactory(new PropertyValueFactory<>("name"));
+        nameCol.setPrefWidth(60);
+        
         TableColumn<com.backtester.report.OptimizationResult.Pass, Double> profitCol = new TableColumn<>("Profit");
         profitCol.setCellValueFactory(new PropertyValueFactory<>("profit"));
         profitCol.setPrefWidth(100);
@@ -1443,7 +1462,7 @@ public class OptimizationView {
         sharpeCol.setCellValueFactory(new PropertyValueFactory<>("sharpeRatio"));
         sharpeCol.setPrefWidth(100);
         
-        table.getColumns().addAll(passCol, profitCol, tradesCol, pfCol, payoffCol, ddCol, recoveryCol, sharpeCol);
+        table.getColumns().addAll(passCol, nameCol, profitCol, tradesCol, pfCol, payoffCol, ddCol, recoveryCol, sharpeCol);
         
         Label placeholder = new Label("No results yet. Run an optimization.");
         placeholder.setStyle("-fx-text-fill: #7e889a;");

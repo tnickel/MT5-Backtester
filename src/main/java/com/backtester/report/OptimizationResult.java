@@ -26,6 +26,8 @@ public class OptimizationResult {
 
         public int getPassNumber() { return passNumber; }
         public void setPassNumber(int passNumber) { this.passNumber = passNumber; }
+        
+        public String getName() { return String.valueOf(passNumber); }
 
         public double getProfit() { return profit; }
         public void setProfit(double profit) { this.profit = profit; }
@@ -88,6 +90,13 @@ public class OptimizationResult {
         public Pass   getForwardPass()  { return forwardPass; }
         public double getScore()        { return score; }
         public double getConsistency()  { return consistency; }
+
+        public String getName() {
+            if (forwardPass != null) {
+                return passNumber + "+" + forwardPass.getPassNumber();
+            }
+            return String.valueOf(passNumber);
+        }
 
         // Convenience getters used by the table columns
         public double getBtProfit()       { return backtestPass.getProfit(); }
