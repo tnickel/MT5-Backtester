@@ -71,6 +71,7 @@ public class MultiBacktestView {
         // Splitter
         SplitPane splitPane = new SplitPane();
         splitPane.setOrientation(javafx.geometry.Orientation.VERTICAL);
+        splitPane.getStyleClass().add("transparent-split-pane");
         splitPane.setStyle("-fx-background-color: transparent; -fx-box-border: transparent;");
 
         // Top: Config
@@ -281,6 +282,7 @@ public class MultiBacktestView {
         title.getStyleClass().add("sci-fi-panel-title");
 
         SplitPane splitPane = new SplitPane();
+        splitPane.getStyleClass().add("transparent-split-pane");
         splitPane.setStyle("-fx-background-color: transparent;");
         VBox.setVgrow(splitPane, Priority.ALWAYS);
 

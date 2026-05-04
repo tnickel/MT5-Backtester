@@ -61,6 +61,7 @@ public class BacktestView {
         // Splitter
         SplitPane splitPane = new SplitPane();
         splitPane.setOrientation(javafx.geometry.Orientation.VERTICAL);
+        splitPane.getStyleClass().add("transparent-split-pane");
         splitPane.setStyle("-fx-background-color: transparent; -fx-box-border: transparent;");
 
         // Top: Config
