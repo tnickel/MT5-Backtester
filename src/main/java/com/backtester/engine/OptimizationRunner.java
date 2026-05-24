@@ -64,6 +64,8 @@ public class OptimizationRunner {
         result.setExpert(optConfig.getExpert());
         result.setSymbol(optConfig.getSymbol());
         result.setPeriod(optConfig.getPeriod());
+        if (optConfig.getFromDate() != null) result.setFromDate(optConfig.getFromDate().toString());
+        if (optConfig.getToDate() != null) result.setToDate(optConfig.getToDate().toString());
 
         Mt5LogTailer tailer = null;
 
@@ -122,8 +124,36 @@ public class OptimizationRunner {
             Mt5ProcessGuard.registerProcess(currentProcess);
 
             // Wait for completion
-            int exitCode = currentProcess.waitFor();
-            logMessage("MT5 process exited with code " + exitCode);
+            Path reportXml = mt5Dir.resolve(REPORT_FILENAME + ".xml");
+            if (optConfig.isShutdownTerminal()) {
+                int exitCode = currentProcess.waitFor();
+                logMessage("MT5 process exited with code " + exitCode);
+            } else {
+                logMessage("Waiting for optimization to finish (MT5 will remain open)...");
+                boolean finished = false;
+                while (!finished && !cancelled && currentProcess.isAlive()) {
+                    Thread.sleep(2000);
+                    if (Files.exists(reportXml)) {
+                        // Let MT5 finish writing to the file completely
+                        Thread.sleep(2000);
+                        
+                        // If forward mode is enabled, wait for forward XML as well
+                        if (optConfig.getForwardMode() > 0) {
+                            Path forwardXml = mt5Dir.resolve(REPORT_FILENAME + ".forward.xml");
+                            if (Files.exists(forwardXml)) {
+                                finished = true;
+                                logMessage("Optimization and Forward Test finished (detected report files).");
+                            }
+                        } else {
+                            finished = true;
+                            logMessage("Optimization finished (detected report file).");
+                        }
+                    }
+                }
+                if (!finished && !cancelled && !currentProcess.isAlive()) {
+                    logMessage("MT5 process exited unexpectedly before writing report.");
+                }
+            }
 
             if (cancelled) {
                 result.setMessage("Optimization was cancelled.");
@@ -132,7 +162,7 @@ public class OptimizationRunner {
 
             // 5. Find and parse report
             // MT5 optimization reports are typically .xml files
-            Path reportXml = mt5Dir.resolve(REPORT_FILENAME + ".xml");
+            reportXml = mt5Dir.resolve(REPORT_FILENAME + ".xml");
             if (Files.exists(reportXml)) {
                 Path destXml = outputDir.resolve("optimization_report.xml");
                 Files.copy(reportXml, destXml, StandardCopyOption.REPLACE_EXISTING);
@@ -178,7 +208,11 @@ public class OptimizationRunner {
             if (currentProcess != null) {
                 Mt5ProcessGuard.unregisterProcess(currentProcess);
                 if (currentProcess.isAlive()) {
-                    currentProcess.destroyForcibly();
+                    if (optConfig.isShutdownTerminal() || cancelled) {
+                        currentProcess.destroyForcibly();
+                    } else {
+                        logMessage("MT5 process remains open in background.");
+                    }
                 }
             }
             if (tailer != null) {

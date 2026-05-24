@@ -3,15 +3,36 @@ package com.backtester.report;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import javafx.beans.property.SimpleStringProperty;
+import javafx.beans.property.StringProperty;
 
 /**
  * Holds the sensitivity/robustness analysis result for a single optimized strategy (Pass).
+ *
+ * <p>Robustness is measured separately on the original backtest window (in-sample)
+ * and the forward window (out-of-sample). The "BT" fields cover the backtest part,
+ * the "Fw" fields cover the forward part.
  */
 public class SensitivityResult {
     private final OptimizationResult.CombinedPass originalPass;
-    private final Map<String, Double> parameterCVs = new LinkedHashMap<>();
+
+    // NOTE: these maps are NOT final on purpose. Gson populates fields via
+    // reflection and bypasses field initializers, so legacy JSON entries
+    // (saved before the BT/FW split) deserialize with parameterCVsFw == null.
+    // The accessors below lazy-initialise to keep the rest of the code simple.
+
+    // --- Backtest period (in-sample) ---
+    private Map<String, Double> parameterCVs = new LinkedHashMap<>();
+    private Map<String, List<DataPoint>> parameterCurves = new LinkedHashMap<>();
     private double overallCV = 0.0;
+
+    // --- Forward period (out-of-sample) ---
+    private Map<String, Double> parameterCVsFw = new LinkedHashMap<>();
+    private Map<String, List<DataPoint>> parameterCurvesFw = new LinkedHashMap<>();
+    private double overallCVFw = 0.0;
+
     private String status = "Pending";
+    private final StringProperty kiResult = new SimpleStringProperty("");
 
     public SensitivityResult(OptimizationResult.CombinedPass originalPass) {
         this.originalPass = originalPass;
@@ -21,33 +42,98 @@ public class SensitivityResult {
         return originalPass;
     }
 
+    // ====================================================================
+    // Backtest (in-sample) accessors
+    // ====================================================================
+
     public Map<String, Double> getParameterCVs() {
+        if (parameterCVs == null) parameterCVs = new LinkedHashMap<>();
         return parameterCVs;
     }
 
     public void addParameterCV(String paramName, double cv) {
-        parameterCVs.put(paramName, cv);
-        recalculateOverallCV();
+        getParameterCVs().put(paramName, cv);
+        overallCV = computeWorstCase(parameterCVs);
     }
 
-    private void recalculateOverallCV() {
-        if (parameterCVs.isEmpty()) {
-            overallCV = 0.0;
-            return;
-        }
-        double sum = 0.0;
-        for (double cv : parameterCVs.values()) {
-            sum += cv;
-        }
-        overallCV = sum / parameterCVs.size();
+    public Map<String, List<DataPoint>> getParameterCurves() {
+        if (parameterCurves == null) parameterCurves = new LinkedHashMap<>();
+        return parameterCurves;
+    }
+
+    public void addParameterCurve(String paramName, List<DataPoint> curve) {
+        getParameterCurves().put(paramName, curve);
     }
 
     public double getOverallCV() {
         return overallCV;
     }
 
+    // ====================================================================
+    // Forward (out-of-sample) accessors
+    // ====================================================================
+
+    public Map<String, Double> getParameterCVsFw() {
+        if (parameterCVsFw == null) parameterCVsFw = new LinkedHashMap<>();
+        return parameterCVsFw;
+    }
+
+    public void addParameterCVFw(String paramName, double cv) {
+        getParameterCVsFw().put(paramName, cv);
+        overallCVFw = computeWorstCase(parameterCVsFw);
+    }
+
+    public Map<String, List<DataPoint>> getParameterCurvesFw() {
+        if (parameterCurvesFw == null) parameterCurvesFw = new LinkedHashMap<>();
+        return parameterCurvesFw;
+    }
+
+    public void addParameterCurveFw(String paramName, List<DataPoint> curve) {
+        getParameterCurvesFw().put(paramName, curve);
+    }
+
+    public double getOverallCVFw() {
+        return overallCVFw;
+    }
+
+    public boolean hasForwardCV() {
+        return parameterCVsFw != null && !parameterCVsFw.isEmpty();
+    }
+
+    // ====================================================================
+
     public String getStatus() {
         return status;
+    }
+
+    public void setStatus(String status) {
+        this.status = status;
+    }
+
+    public String getKiResult() {
+        return kiResult.get();
+    }
+
+    public void setKiResult(String value) {
+        this.kiResult.set(value);
+    }
+
+    public StringProperty kiResultProperty() {
+        return kiResult;
+    }
+
+    /**
+     * Returns the worst-case (max) CV across all parameters. A strategy is
+     * only as robust as its weakest parameter, so taking the max prevents a
+     * single fragile parameter from being smoothed out by stable ones.
+     */
+    private static double computeWorstCase(Map<String, Double> cvMap) {
+        if (cvMap == null || cvMap.isEmpty()) return 0.0;
+        double max = 0.0;
+        for (double cv : cvMap.values()) {
+            if (cv > max) max = cv;
+        }
+        return max;
     }
 
     public static class DataPoint {
@@ -57,19 +143,5 @@ public class SensitivityResult {
             this.paramValue = paramValue;
             this.profit = profit;
         }
-    }
-
-    private final Map<String, List<DataPoint>> parameterCurves = new LinkedHashMap<>();
-
-    public void addParameterCurve(String paramName, List<DataPoint> curve) {
-        parameterCurves.put(paramName, curve);
-    }
-
-    public Map<String, List<DataPoint>> getParameterCurves() {
-        return parameterCurves;
-    }
-
-    public void setStatus(String status) {
-        this.status = status;
     }
 }

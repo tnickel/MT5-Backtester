@@ -32,6 +32,7 @@ public class HistoryView {
     private final SimpleDateFormat df = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
     private final LocalDate today = LocalDate.now();
     private final Label countLabel;
+    private Tab tab;
 
     public HistoryView() {
         this.dbManager = DatabaseManager.getInstance();
@@ -50,7 +51,24 @@ public class HistoryView {
         treeTitle.getStyleClass().add("sci-fi-panel-title");
         countLabel = new Label("Total: 0");
         countLabel.setStyle("-fx-text-fill: #00e5ff; -fx-font-weight: bold; -fx-padding: 2 0 0 0;");
-        HBox titleBox = new HBox(10, treeTitle, countLabel);
+        
+        String overview = "Der Database-Tab, auch History genannt, ist das zentrale Gedächtnis und das Archiv deiner gesamten Entwicklungsarbeit in der Antigravity Protocol Suite. Jedes Mal, wenn du einen Single-Backtest, einen Multi-Backtest, eine komplexe Optimierung oder einen intensiven Robustness-Scan ausführst, generiert das System eine gewaltige Menge an Ergebnissen, Parametern und Metriken.\n\n" +
+                          "Warum ist diese Historie so essentiell wichtig? Strategie-Entwicklung ist ein iterativer Prozess. Du änderst oft nur eine winzige Einstellung am Expert Advisor, führst einen Test durch, änderst sie wieder und testest erneut. Ohne eine lückenlose Dokumentation verliert man nach 50 Durchläufen komplett den Überblick, welche Parameterkombination zu welchem Ergebnis geführt hat.\n\n" +
+                          "Dieser Tab speichert all diese Durchläufe dauerhaft in einer eingebetteten, hochperformanten Datenbank ab. Er fungiert als dein persönliches Trading-Labor-Logbuch, in dem du jederzeit Wochen später nachsehen kannst, welche Einstellungen damals zu jener phänomenalen (oder katastrophalen) Equity-Kurve geführt haben.";
+        String details = "Detaillierte Analyse der Funktionen:\n\n" +
+                         "1. Die hierarchische Baumansicht (Tree View):\n" +
+                         "   Auf der linken Seite werden alle deine vergangenen Experimente strukturiert aufgelistet. Die oberste Ebene bildet der Name des Expert Advisors. Darunter gliedern sich die Durchläufe in logische Kategorien: 'Single Backtests', 'Multi Backtests', 'Optimizations' und 'Robustness Scans'. Das sorgt für maximale Übersichtlichkeit, selbst wenn die Datenbank Tausende von Einträgen fasst.\n\n" +
+                         "2. Lauf-Details & Parameter-Snapshots:\n" +
+                         "   Wenn du einen beliebigen Lauf anklickst, wird auf der rechten Seite das Dashboard aktualisiert. Das System speichert nicht nur das Endergebnis (Profit, Drawdown), sondern macht auch einen 'Snapshot' der exakten Konfiguration (Deposit, Zeitraum, Tick-Modell) und – besonders wichtig – der EA-Input-Parameter (.set Dateien), die zum Zeitpunkt des Tests verwendet wurden. Du kannst also einen Test, der vor Monaten durchgeführt wurde, mit exakt denselben Parametern reproduzieren.\n\n" +
+                         "3. Direkter Zugriff auf HTML-Reports:\n" +
+                         "   Der MetaTrader generiert bei jedem Test detaillierte HTML-Berichte und Graphen, die auf der Festplatte abgelegt werden. Ein Doppelklick auf einen Eintrag im Database-Tab öffnet diesen nativen Bericht direkt in deinem Standard-Webbrowser, vorausgesetzt, die Dateien wurden nicht physisch vom Laufwerk gelöscht. Dies ermöglicht tiefgehende Post-Analysen der Trade-Historie.\n\n" +
+                         "4. Datenbank-Verwaltung (Cleanup):\n" +
+                         "   Da die Reports viel Speicherplatz beanspruchen können, bietet der Tab Werkzeuge zur Datenpflege. Du kannst gezielt veraltete oder fehlerhafte Läufe löschen ('Delete Selected'). Dies entfernt nicht nur den Eintrag aus der Datenbank, sondern räumt auf Wunsch auch die zugehörigen physischen Dateien und Reports von deiner Festplatte auf, um Speicher freizugeben.";
+                         
+        javafx.scene.layout.Region infoSpacer = new javafx.scene.layout.Region();
+        javafx.scene.layout.HBox.setHgrow(infoSpacer, javafx.scene.layout.Priority.ALWAYS);
+        HBox titleBox = new HBox(15, treeTitle, countLabel, infoSpacer, DocHelper.createInfoButton("Database", overview, details));
+        titleBox.setAlignment(javafx.geometry.Pos.CENTER_LEFT);
 
         TreeItem<RunNodeData> rootItem = new TreeItem<>(new RunNodeData("History", null, false));
         rootItem.setExpanded(true);
@@ -144,7 +162,12 @@ public class HistoryView {
 
         List<HistoryRun> runs = dbManager.getAllRuns();
         
-        Platform.runLater(() -> countLabel.setText("Total: " + runs.size()));
+        Platform.runLater(() -> {
+            countLabel.setText("Total: " + runs.size());
+            if (tab != null) {
+                tab.setText("Database (" + runs.size() + ")");
+            }
+        });
         
         // Group by type -> expert
         Map<String, Map<String, List<HistoryRun>>> grouped = runs.stream()
@@ -287,6 +310,14 @@ public class HistoryView {
         @Override
         public String toString() {
             return label;
+        }
+    }
+
+    public void bindTab(Tab tab) {
+        this.tab = tab;
+        if (dbManager != null) {
+            List<HistoryRun> runs = dbManager.getAllRuns();
+            Platform.runLater(() -> tab.setText("Database (" + runs.size() + ")"));
         }
     }
 

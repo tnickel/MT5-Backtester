@@ -50,6 +50,28 @@ public class DukascopyView {
 
         Label title = new Label("Step 1: Download Dukascopy Data");
         title.getStyleClass().add("sci-fi-panel-title");
+        
+        String overview = "Der Dukascopy Data Tab ist die professionelle Lösung für das fundamentale Problem ungenauer Broker-Daten. Wenn du Backtests im MetaTrader durchführst, bist du standardmäßig auf die historischen Daten deines Brokers angewiesen. Diese weisen oft Lücken auf, haben eine schlechte Qualität (weniger als 99% Modelling Quality) oder gehen nicht weit genug in die Vergangenheit zurück.\n\n" +
+                          "Warum ist das ein Problem? Weil Scalping-Strategien oder hochfrequente EAs bei schlechten Daten fantastische Ergebnisse im Backtest liefern können, die in der Realität jedoch komplett scheitern. Dieses Phänomen nennt sich 'Garbage In, Garbage Out'.\n\n" +
+                          "Dukascopy ist ein renommierter Schweizer Broker, der seine exakten, realen Tick-Daten (jeden einzelnen Preis-Tick) kostenlos zur Verfügung stellt. Mit diesem Tab kannst du diese riesigen Datenmengen vollautomatisiert herunterladen, sie in das benötigte Format konvertieren und als 'Custom Symbol' (z.B. EURUSD_Duka) in deinen MetaTrader importieren. Dies garantiert dir eine Modellierungsqualität von 99.9% und somit Backtest-Ergebnisse, denen du tatsächlich vertrauen kannst.";
+        String details = "Umfassender Workflow und Funktionen:\n\n" +
+                         "1. Symbol Selection (Währungspaare):\n" +
+                         "   Wähle die Instrumente aus, für die du historische Daten benötigst. Bedenke: Tick-Daten sind gigantisch groß. Ein einziges Jahr EURUSD kann als unkomprimierte CSV-Datei mehrere Gigabyte Speicherplatz beanspruchen. Lade daher nur die Paare herunter, die du wirklich intensiv testen möchtest.\n\n" +
+                         "2. Date Range (Zeitraum):\n" +
+                         "   Lege fest, wie weit in die Vergangenheit die Daten reichen sollen. Ein robuster Backtest sollte im Idealfall über 5-10 Jahre durchgeführt werden, um sicherzustellen, dass die Strategie Bullenmärkte, Bärenmärkte und Flash-Crashes überlebt.\n\n" +
+                         "3. Step 1: Download Data:\n" +
+                         "   Dieser Prozess verbindet sich mit den Servern von Dukascopy und lädt die Daten im stark komprimierten, proprietären '.bi5' Format herunter. Dieser Vorgang kann je nach Zeitraum und Internetverbindung extrem lange dauern (teilweise Stunden). Der Download-Manager im Hintergrund stellt sicher, dass abbrechende Verbindungen wieder aufgenommen werden.\n\n" +
+                         "4. Step 2: Scan & Convert (Konvertierung):\n" +
+                         "   Die heruntergeladenen .bi5 Dateien können vom MetaTrader nicht direkt gelesen werden. \n" +
+                         "   - 'Scan Downloaded Data' durchsucht deinen lokalen Speicher nach erfolgreich heruntergeladenen Datensätzen.\n" +
+                         "   - 'Convert to CSV' entpackt und wandelt die .bi5 Dateien in standardisierte, tabellarische CSV-Dateien um. Dabei werden Zeitstempel (inklusive Millisekunden), Bid-Preis, Ask-Preis und das Volumen exakt extrahiert.\n\n" +
+                         "5. Step 3: Import to MT5 (MetaTrader Integration):\n" +
+                         "   Dies ist der wichtigste Schritt. Das Tool generiert automatisch ein sogenanntes 'Custom Symbol' in deinem MetaTrader. Es injiziert die konvertierten Tick-Daten direkt in die Datenbank des MT5. Wenn du nun im Backtest-Tab dieses Custom Symbol auswählst und das Tick-Modell auf 'Every tick based on real ticks' stellst, führt der MT5 den Test mit den Schweizer Bank-Daten aus. Das Ergebnis ist ein Backtest in institutioneller Qualität.";
+                         
+        javafx.scene.layout.Region infoSpacer = new javafx.scene.layout.Region();
+        javafx.scene.layout.HBox.setHgrow(infoSpacer, javafx.scene.layout.Priority.ALWAYS);
+        javafx.scene.layout.HBox titleBox = new javafx.scene.layout.HBox(15, title, infoSpacer, DocHelper.createInfoButton("Dukascopy Data", overview, details));
+        titleBox.setAlignment(javafx.geometry.Pos.CENTER_LEFT);
 
         // Symbols
         VBox symbolBox = new VBox(10);
@@ -109,7 +131,7 @@ public class DukascopyView {
 
         controlBox.getChildren().addAll(downloadBtn, cancelBtn, downloadProgress);
 
-        box.getChildren().addAll(title, symbolBox, dateBox, controlBox);
+        box.getChildren().addAll(titleBox, symbolBox, dateBox, controlBox);
         return box;
     }
 

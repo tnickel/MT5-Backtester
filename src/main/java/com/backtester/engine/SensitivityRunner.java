@@ -55,6 +55,228 @@ public class SensitivityRunner {
         }
     }
 
+    public boolean isCancelled() {
+        return cancelled;
+    }
+
+    /**
+     * Determines the end date of the backtest portion of the original optimization,
+     * mirroring how MT5 splits the period when forward testing is enabled.
+     *
+     * MT5 ForwardMode values:
+     *   0 = no forward (full range is backtest)
+     *   1 = 1/2 (forward = last half of the range)
+     *   2 = 1/3 (forward = last third)
+     *   3 = 1/4 (forward = last quarter)
+     *   4 = custom (use ForwardDate)
+     */
+    private java.time.LocalDate computeBacktestEndDate(OptimizationConfig cfg) {
+        java.time.LocalDate from = cfg.getFromDate();
+        java.time.LocalDate to = cfg.getToDate();
+        int mode = cfg.getForwardMode();
+
+        if (mode == 0 || from == null || to == null) {
+            return to;
+        }
+        if (mode == 4) {
+            java.time.LocalDate fwd = cfg.getForwardDate();
+            if (fwd != null && fwd.isAfter(from) && fwd.isBefore(to)) {
+                return fwd.minusDays(1);
+            }
+            return to;
+        }
+
+        long totalDays = java.time.temporal.ChronoUnit.DAYS.between(from, to);
+        long backtestDays;
+        switch (mode) {
+            case 1: backtestDays = totalDays / 2;       break; // forward = last 1/2
+            case 2: backtestDays = (totalDays * 2) / 3; break; // forward = last 1/3
+            case 3: backtestDays = (totalDays * 3) / 4; break; // forward = last 1/4
+            default: return to;
+        }
+        if (backtestDays <= 0) return to;
+        return from.plusDays(backtestDays);
+    }
+
+    /** Returns the start date of the forward window, or null if there is no forward. */
+    private java.time.LocalDate computeForwardStartDate(OptimizationConfig cfg) {
+        java.time.LocalDate from = cfg.getFromDate();
+        java.time.LocalDate to = cfg.getToDate();
+        int mode = cfg.getForwardMode();
+
+        if (mode == 0 || from == null || to == null) return null;
+        if (mode == 4) {
+            java.time.LocalDate fwd = cfg.getForwardDate();
+            if (fwd != null && fwd.isAfter(from) && fwd.isBefore(to)) return fwd;
+            return null;
+        }
+
+        java.time.LocalDate btEnd = computeBacktestEndDate(cfg);
+        if (btEnd == null || !btEnd.isBefore(to)) return null;
+        return btEnd.plusDays(1);
+    }
+
+    /**
+     * Runs a single parameter sweep on the given period, computes Mean / StdDev / CV
+     * over the variants and stores the result into the SensitivityResult.
+     *
+     * @param isForward true = write into FW maps, false = write into BT maps
+     */
+    private void runSweepForPeriod(SensitivityResult target,
+                                   String paramName,
+                                   String presetBaseName,
+                                   OptimizationConfig baseConfig,
+                                   java.time.LocalDate sweepFrom,
+                                   java.time.LocalDate sweepTo,
+                                   String label,
+                                   boolean isForward,
+                                   long runTimestamp,
+                                   String sweepStart,
+                                   String sweepStep,
+                                   String sweepEnd) {
+        OptimizationConfig sweepConfig = new OptimizationConfig();
+        sweepConfig.setSymbol(baseConfig.getSymbol());
+        sweepConfig.setPeriod(baseConfig.getPeriod());
+        sweepConfig.setExpert(baseConfig.getExpert());
+        sweepConfig.setModel(baseConfig.getModel());
+        sweepConfig.setFromDate(sweepFrom);
+        sweepConfig.setToDate(sweepTo);
+        sweepConfig.setDeposit(baseConfig.getDeposit());
+        sweepConfig.setCurrency(baseConfig.getCurrency());
+        sweepConfig.setLeverage(baseConfig.getLeverage());
+        sweepConfig.setExpertParameters(presetBaseName);
+        sweepConfig.setOptimizationMode(1); // Complete algorithm
+        sweepConfig.setOptimizationCriterion(baseConfig.getOptimizationCriterion());
+        sweepConfig.setForwardMode(0);
+        sweepConfig.setUseLocal(baseConfig.isUseLocal());
+
+        currentOptRunner = new OptimizationRunner(config);
+        currentOptRunner.setLogCallback(msg -> log.info("Sensitivity Runner [" + label + "]: " + msg));
+        OptimizationResult optResult = currentOptRunner.runOptimization(sweepConfig);
+
+        if (optResult == null || !optResult.isSuccess()) {
+            if (!cancelled) {
+                logMessage("WARNING: Sensitivity " + label + " sweep failed for parameter " + paramName);
+            }
+            return;
+        }
+
+        List<OptimizationResult.Pass> variants = optResult.getPasses();
+        if (variants.isEmpty()) {
+            logMessage("WARNING: Sensitivity " + label + " sweep returned no passes for " + paramName);
+            return;
+        }
+
+        double sum = 0;
+        double minProfit = Double.MAX_VALUE;
+        double maxProfit = -Double.MAX_VALUE;
+        for (OptimizationResult.Pass v : variants) {
+            double p = v.getProfit();
+            sum += p;
+            if (p < minProfit) minProfit = p;
+            if (p > maxProfit) maxProfit = p;
+        }
+        double mean = sum / variants.size();
+
+        double varianceSum = 0;
+        for (OptimizationResult.Pass v : variants) {
+            varianceSum += Math.pow(v.getProfit() - mean, 2);
+        }
+        double stdDev = Math.sqrt(varianceSum / variants.size());
+
+        // --- Improved CV calculation ---
+        double baseProfit = isForward
+                ? (target.getOriginalPass().getForwardPass() != null
+                        ? target.getOriginalPass().getFwProfit() : 0.0)
+                : target.getOriginalPass().getBtProfit();
+        double absBase = Math.abs(baseProfit);
+
+        double cv;
+        if (stdDev < 1e-9) {
+            cv = 0.0;
+        } else if (absBase > 100.0) {
+            cv = (stdDev / absBase) * 100.0;
+        } else {
+            if (stdDev < 100.0) {
+                cv = 5.0;
+            } else if (stdDev < 1000.0) {
+                cv = 50.0;
+            } else {
+                cv = 150.0;
+            }
+        }
+        // Cap at 200%. Above 100% already means "variation > base profit" =
+        // extremely fragile.  Whether it's 300% or 800% changes nothing
+        // about the conclusion, so we cap for cleaner display & comparison.
+        cv = Math.min(cv, 200.0);
+
+        // Determine verdict for LLM (relaxed thresholds)
+        String verdict;
+        if (cv < 30.0) verdict = "ROBUST";
+        else if (cv <= 60.0) verdict = "ACCEPTABLE";
+        else verdict = "FRAGILE";
+
+        List<SensitivityResult.DataPoint> curve = new ArrayList<>();
+        for (OptimizationResult.Pass v : variants) {
+            try {
+                String valStr = v.getParameterValues().get(paramName);
+                if (valStr != null) {
+                    double pVal = Double.parseDouble(valStr);
+                    curve.add(new SensitivityResult.DataPoint(pVal, v.getProfit()));
+                }
+            } catch (Exception ignored) {}
+        }
+        curve.sort(java.util.Comparator.comparingDouble(p -> p.paramValue));
+
+        if (isForward) {
+            target.addParameterCurveFw(paramName, curve);
+            target.addParameterCVFw(paramName, cv);
+        } else {
+            target.addParameterCurve(paramName, curve);
+            target.addParameterCV(paramName, cv);
+        }
+
+        // --- Persist to normalized SENSITIVITY_DETAIL table ---
+        try {
+            // Build curve JSON
+            StringBuilder curveJsonBuilder = new StringBuilder("[");
+            for (int i = 0; i < curve.size(); i++) {
+                if (i > 0) curveJsonBuilder.append(",");
+                curveJsonBuilder.append(String.format(java.util.Locale.US,
+                        "{\"paramValue\":%.5f,\"profit\":%.2f}",
+                        curve.get(i).paramValue, curve.get(i).profit));
+            }
+            curveJsonBuilder.append("]");
+
+            String baseValue = target.getOriginalPass().getBacktestPass()
+                    .getParameterValues().get(paramName);
+
+            com.backtester.database.DatabaseManager.getInstance().saveSensitivityDetail(
+                    runTimestamp,
+                    target.getOriginalPass().getPassNumber(),
+                    target.getOriginalPass().getName(),
+                    baseConfig.getExpert(),
+                    baseConfig.getSymbol(),
+                    paramName,
+                    baseValue != null ? baseValue : "",
+                    isForward ? "FW" : "BT",
+                    baseProfit, mean, stdDev, cv,
+                    minProfit, maxProfit, variants.size(),
+                    sweepStart != null ? sweepStart : "",
+                    sweepStep != null ? sweepStep : "",
+                    sweepEnd != null ? sweepEnd : "",
+                    curveJsonBuilder.toString(),
+                    verdict
+            );
+        } catch (Exception e) {
+            log.warn("Failed to persist sensitivity detail to DB: {}", e.getMessage());
+        }
+
+        if (resultUpdateCallback != null) resultUpdateCallback.accept(target);
+        logMessage(String.format("Sensitivity %s [%s] -> Mean: %.2f, StdDev: %.2f, BaseProfit: %.2f, CV: %.2f%% [%s]",
+                paramName, label, mean, stdDev, baseProfit, cv, verdict));
+    }
+
     public void runSensitivityScan(List<SensitivityResult> targets, OptimizationConfig baseConfig, List<EaParameter> allEaParams) {
         cancelled = false;
         if (targets.isEmpty()) {
@@ -63,6 +285,7 @@ public class SensitivityRunner {
         }
 
         Path testerDir = config.getMt5InstallDir().resolve("MQL5").resolve("Profiles").resolve("Tester");
+        long runTimestamp = System.currentTimeMillis();
 
         int totalPasses = targets.size();
         int currentPassCount = 0;
@@ -86,17 +309,67 @@ public class SensitivityRunner {
 
             for (String paramName : optimizedParamNames) {
                 if (cancelled) break;
+
+                // ----- Find the matching EaParameter definition -----
+                EaParameter originalParam = null;
+                for (EaParameter p : allEaParams) {
+                    if (p.getName().equals(paramName)) { originalParam = p; break; }
+                }
+
+                // Skip string/enum parameters
+                if (originalParam != null && originalParam.isStringType()) {
+                    logMessage("Pass " + pass.getPassNumber() + ": Skipping enum/string parameter '" + paramName + "' (not suitable for sensitivity sweep).");
+                    continue;
+                }
+
+                // Detect boolean-like / tiny-enum integer parameters
+                if (originalParam != null && !originalParam.isStringType()) {
+                    try {
+                        String optStartStr = originalParam.getOptimizeStart();
+                        String optEndStr   = originalParam.getOptimizeEnd();
+                        String optStepStr  = originalParam.getOptimizeStep();
+                        if (optStartStr != null && !optStartStr.isEmpty() && optEndStr != null && !optEndStr.isEmpty() && optStepStr != null && !optStepStr.isEmpty()) {
+                            double oStart = Double.parseDouble(optStartStr);
+                            double oEnd   = Double.parseDouble(optEndStr);
+                            double oStep  = Double.parseDouble(optStepStr);
+                            if (oStep > 0) {
+                                long distinctValues = (long) ((oEnd - oStart) / oStep) + 1;
+                                if (distinctValues <= 3) {
+                                    logMessage("Pass " + pass.getPassNumber() + ": Skipping parameter '" + paramName
+                                            + "' (only " + distinctValues + " distinct values in optimization range "
+                                            + optStartStr + ".." + optEndStr + " step " + optStepStr + " → effectively enum/boolean).");
+                                    continue;
+                                }
+                            }
+                        }
+                    } catch (Exception ignored) {}
+                }
+
+                // Heuristic for categorical / boolean parameters even if they lack optimization bounds
+                String lowerParam = paramName.toLowerCase();
+                if (lowerParam.startsWith("type") || lowerParam.startsWith("mode") || lowerParam.startsWith("use") 
+                    || lowerParam.startsWith("enable") || lowerParam.startsWith("is") || lowerParam.startsWith("has")
+                    || lowerParam.contains("boolean") || lowerParam.contains("enum")) {
+                    logMessage("Pass " + pass.getPassNumber() + ": Skipping parameter '" + paramName + "' (name implies categorical/boolean).");
+                    continue;
+                }
                 
+                String valCheck = optimizedValues.get(paramName);
+                if ("true".equalsIgnoreCase(valCheck) || "false".equalsIgnoreCase(valCheck)) {
+                    logMessage("Pass " + pass.getPassNumber() + ": Skipping parameter '" + paramName + "' (value is boolean).");
+                    continue;
+                }
+
                 logMessage("Pass " + pass.getPassNumber() + ": Sweeping parameter " + paramName);
 
                 // Prepare specialized parameters
                 List<EaParameter> isolatedParams = new ArrayList<>();
+                String sweepStartStr = null, sweepStepStr = null, sweepEndStr = null;
                 for (EaParameter p : allEaParams) {
                     EaParameter copy = new EaParameter();
                     copy.setName(p.getName());
                     copy.setStringType(p.isStringType());
                     
-                    // If this parameter was optimized, freeze it at its optimized value, EXCEPT the one we're sweeping
                     if (optimizedValues.containsKey(p.getName())) {
                         copy.setValue(optimizedValues.get(p.getName()));
                         copy.setOptimizeEnabled(false);
@@ -106,48 +379,71 @@ public class SensitivityRunner {
                     }
 
                     if (p.getName().equals(paramName)) {
-                        // Calculate ranges
                         try {
                             double baseVal = Double.parseDouble(copy.getValue());
-                            // Fallback if baseVal is 0
                             if (baseVal == 0.0) baseVal = 0.0001;
 
                             boolean isInteger = p.getOptimizeStep() != null && !p.getOptimizeStep().contains(".");
-                            
-                            double start = baseVal * 0.9;
-                            double end = baseVal * 1.1;
-                            
-                            // Make sure end is always > start
-                            if (start > end) {
-                                double tmp = start;
-                                start = end;
-                                end = tmp;
+
+                            double origStep = 0, origStart = 0, origEnd = 0;
+                            boolean hasOrigRange = false;
+                            try {
+                                if (p.getOptimizeStep() != null && p.getOptimizeStart() != null && p.getOptimizeEnd() != null) {
+                                    origStep  = Double.parseDouble(p.getOptimizeStep());
+                                    origStart = Double.parseDouble(p.getOptimizeStart());
+                                    origEnd   = Double.parseDouble(p.getOptimizeEnd());
+                                    hasOrigRange = origStep > 0;
+                                }
+                            } catch (Exception ignored) {}
+
+                            double start, end, step;
+                            if (hasOrigRange) {
+                                step  = origStep;
+                                // Tighter sweep (2 steps instead of 5 steps) to assess local sensitivity fairly
+                                start = baseVal - 2 * step;
+                                end   = baseVal + 2 * step;
+                                start = Math.max(start, origStart);
+                                end   = Math.min(end, origEnd);
+                            } else {
+                                // Tighter sweep (5% instead of 10%)
+                                start = baseVal * 0.95;
+                                end   = baseVal * 1.05;
+                                step  = (end - start) / 10.0;
                             }
 
-                            double step = (end - start) / 10.0;
-                            
+                            if (start > end) {
+                                double tmp = start; start = end; end = tmp;
+                            }
+
                             if (isInteger) {
                                 long startInt = Math.round(start);
                                 long endInt = Math.round(end);
                                 long stepInt = Math.max(1, Math.round(step));
-                                
-                                // Ensure variation
                                 if (startInt == endInt) {
                                     startInt = Math.round(baseVal) - 2;
                                     endInt = Math.round(baseVal) + 2;
                                     stepInt = 1;
                                 }
-
+                                long distinctCount = (endInt - startInt) / stepInt + 1;
+                                if (distinctCount < 3) {
+                                    startInt = Math.round(baseVal) - 3 * stepInt;
+                                    endInt   = Math.round(baseVal) + 3 * stepInt;
+                                }
                                 copy.setOptimizeStart(String.valueOf(startInt));
                                 copy.setOptimizeStep(String.valueOf(stepInt));
                                 copy.setOptimizeEnd(String.valueOf(endInt));
                             } else {
-                                // For doubles, format to standard decimals to avoid precision issues
                                 copy.setOptimizeStart(String.format(java.util.Locale.US, "%.5f", start));
                                 copy.setOptimizeStep(String.format(java.util.Locale.US, "%.5f", step));
                                 copy.setOptimizeEnd(String.format(java.util.Locale.US, "%.5f", end));
                             }
                             copy.setOptimizeEnabled(true);
+                            // Capture sweep range for DB persistence
+                            sweepStartStr = copy.getOptimizeStart();
+                            sweepStepStr  = copy.getOptimizeStep();
+                            sweepEndStr   = copy.getOptimizeEnd();
+                            logMessage(String.format("  Range: %s .. %s (step %s)",
+                                    sweepStartStr, sweepEndStr, sweepStepStr));
                         } catch (Exception ex) {
                             logMessage("Could not calculate ranges for " + paramName + ": " + ex.getMessage());
                             copy.setOptimizeEnabled(false);
@@ -156,7 +452,6 @@ public class SensitivityRunner {
                     isolatedParams.add(copy);
                 }
 
-                // Ensure at least one parameter is enabled for optimization to prevent MT5 from running single test
                 boolean anyEnabled = isolatedParams.stream().anyMatch(EaParameter::isOptimizeEnabled);
                 if (!anyEnabled) {
                     logMessage("No variation possible for " + paramName + ". Skipping.");
@@ -173,66 +468,24 @@ public class SensitivityRunner {
                     continue;
                 }
 
-                // Run Optimization
-                OptimizationConfig sweepConfig = new OptimizationConfig();
-                sweepConfig.setSymbol(baseConfig.getSymbol());
-                sweepConfig.setPeriod(baseConfig.getPeriod());
-                sweepConfig.setExpert(baseConfig.getExpert());
-                sweepConfig.setModel(baseConfig.getModel());
-                sweepConfig.setFromDate(baseConfig.getFromDate());
-                sweepConfig.setToDate(baseConfig.getToDate());
-                sweepConfig.setDeposit(baseConfig.getDeposit());
-                sweepConfig.setCurrency(baseConfig.getCurrency());
-                sweepConfig.setLeverage(baseConfig.getLeverage());
-                sweepConfig.setExpertParameters(presetBaseName);
-                sweepConfig.setOptimizationMode(1); // 1 = Complete algorithm
-                sweepConfig.setOptimizationCriterion(baseConfig.getOptimizationCriterion());
-                sweepConfig.setForwardMode(0); // No forward testing during sensitivity
-                sweepConfig.setUseLocal(baseConfig.isUseLocal());
+                // ---- Backtest period sweep (in-sample) ----
+                java.time.LocalDate btFrom = baseConfig.getFromDate();
+                java.time.LocalDate btTo = computeBacktestEndDate(baseConfig);
+                runSweepForPeriod(target, paramName, presetBaseName, baseConfig,
+                        btFrom, btTo, "BT", false,
+                        runTimestamp, sweepStartStr, sweepStepStr, sweepEndStr);
 
-                currentOptRunner = new OptimizationRunner(config);
-                currentOptRunner.setLogCallback(msg -> log.info("Sensitivity Runner: " + msg)); // Keep console clean
-                OptimizationResult optResult = currentOptRunner.runOptimization(sweepConfig);
+                if (cancelled) break;
 
-                if (optResult != null && optResult.isSuccess()) {
-                    List<OptimizationResult.Pass> variants = optResult.getPasses();
-                    if (!variants.isEmpty()) {
-                        double sum = 0;
-                        for (OptimizationResult.Pass variant : variants) {
-                            sum += variant.getProfit();
-                        }
-                        double mean = sum / variants.size();
-
-                        double varianceSum = 0;
-                        for (OptimizationResult.Pass variant : variants) {
-                            varianceSum += Math.pow(variant.getProfit() - mean, 2);
-                        }
-                        double variance = varianceSum / variants.size();
-                        double stdDev = Math.sqrt(variance);
-
-                        // Coefficient of Variation (CV) = StdDev / |Mean|
-                        double cv = mean == 0 ? 0 : (stdDev / Math.abs(mean)) * 100.0;
-                        
-                        target.addParameterCV(paramName, cv);
-                        
-                        List<SensitivityResult.DataPoint> curve = new ArrayList<>();
-                        for (OptimizationResult.Pass variant : variants) {
-                            try {
-                                String valStr = variant.getParameterValues().get(paramName);
-                                if (valStr != null) {
-                                    double pVal = Double.parseDouble(valStr);
-                                    curve.add(new SensitivityResult.DataPoint(pVal, variant.getProfit()));
-                                }
-                            } catch (Exception ignored) {}
-                        }
-                        curve.sort(java.util.Comparator.comparingDouble(p -> p.paramValue));
-                        target.addParameterCurve(paramName, curve);
-                        
-                        if (resultUpdateCallback != null) resultUpdateCallback.accept(target);
-                        logMessage(String.format("Sensitivity %s -> Mean: %.2f, StdDev: %.2f, CV: %.2f%%", paramName, mean, stdDev, cv));
-                    }
-                } else if (!cancelled) {
-                    logMessage("WARNING: Sensitivity scan failed for parameter " + paramName);
+                // ---- Forward period sweep (out-of-sample) ----
+                java.time.LocalDate fwFrom = computeForwardStartDate(baseConfig);
+                java.time.LocalDate fwTo = baseConfig.getToDate();
+                if (fwFrom != null && fwTo != null && fwFrom.isBefore(fwTo)) {
+                    runSweepForPeriod(target, paramName, presetBaseName, baseConfig,
+                            fwFrom, fwTo, "FW", true,
+                            runTimestamp, sweepStartStr, sweepStepStr, sweepEndStr);
+                } else {
+                    logMessage("Pass " + pass.getPassNumber() + " has no forward period - skipping FW sweep for " + paramName);
                 }
             } // end parameter loop
 

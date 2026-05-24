@@ -372,6 +372,12 @@ public class EaParameterManager {
         long total = 1;
         for (EaParameter p : params) {
             if (p.isOptimizeEnabled() && !p.isStringType()) {
+                String val = p.getValue() != null ? p.getValue().toLowerCase() : "";
+                if ("true".equals(val) || "false".equals(val)) {
+                    // Boolean params have 2 states: false and true
+                    total *= 2;
+                    continue;
+                }
                 try {
                     double start = Double.parseDouble(p.getOptimizeStart());
                     double step = Double.parseDouble(p.getOptimizeStep());

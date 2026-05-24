@@ -87,6 +87,12 @@
 .table-row-cell:selected {
     -fx-background-color: rgba(0, 229, 255, 0.2);
 }
+.table-row-cell:selected .table-cell {
+    -fx-text-fill: #e6e9f0;
+}
+.table-view:focused .table-row-cell:selected .table-cell {
+    -fx-text-fill: #e6e9f0;
+}
 
 /* ProgressBar */
 .progress-bar {
@@ -365,3 +371,43 @@
 .transparent-split-pane > .split-pane-divider:pressed {
     -fx-background-color: #00e5ff;
 }
+
+/* JavaFX Chart Styling (Neon Dark Theme) */
+.chart {
+    -fx-padding: 10px;
+    -fx-background-color: transparent;
+}
+.chart-title {
+    -fx-text-fill: #00e5ff;
+    -fx-font-size: 15px;
+    -fx-font-weight: bold;
+}
+.chart-plot-background {
+    -fx-background-color: #171b26;
+    -fx-border-color: #3e4555;
+    -fx-border-width: 1px;
+}
+.chart-horizontal-grid-lines {
+    -fx-stroke: #2b303d;
+}
+.chart-vertical-grid-lines {
+    -fx-stroke: #2b303d;
+}
+.axis {
+    -fx-tick-label-fill: #7e889a;
+    -fx-font-size: 11px;
+}
+.axis-label {
+    -fx-text-fill: #b4bac8;
+    -fx-font-size: 12px;
+    -fx-font-weight: bold;
+}
+.default-color0.chart-bar {
+    -fx-background-color: linear-gradient(to top, #143c23, #287846, #69f0ae);
+    -fx-background-radius: 4 4 0 0;
+    -fx-effect: dropshadow(gaussian, rgba(105, 240, 174, 0.4), 8, 0.0, 0, -2);
+}
+.chart-bar:hover {
+    -fx-effect: dropshadow(gaussian, rgba(105, 240, 174, 0.8), 15, 0.0, 0, 0);
+}
+

@@ -90,6 +90,7 @@ public class RobustnessView {
         root.setBottom(controlBox);
 
         loadPreferences();
+        loadResultsFromDb();
     }
 
     private VBox createConfigBox() {
@@ -98,6 +99,29 @@ public class RobustnessView {
 
         Label title = new Label("Scan Settings");
         title.getStyleClass().add("sci-fi-panel-title");
+        
+        String overview = "Der Robustness Scanner ist die ultimative Feuerprobe für jede Trading-Strategie. Bevor du echtes Geld auf ein System setzt, musst du dir zu 100% sicher sein, dass die Ergebnisse des Backtests oder der Optimierung nicht nur reines Glück oder eine Überanpassung (Curve-Fitting) an historische Daten waren.\n\n" +
+                          "Das Grundprinzip der Robustheits-Prüfung beruht auf der Simulation von Markt-Unvollkommenheiten. Märkte wiederholen sich nie exakt. Was passiert mit deiner Strategie, wenn sich die Volatilität ändert, wenn Spreads breiter werden, Slippage auftritt, oder wenn Einstiegssignale zufällig ein paar Pips später erfolgen? \n\n" +
+                          "Der Robustness Scanner führt genau solche Stresstests durch. Er nimmt deine vermeintlich perfekten Parameter und manipuliert sie systematisch oder fügt künstliches Rauschen hinzu (Monte Carlo Simulationen, Parameter-Shifting). Wenn deine Strategie nach diesen 'Sabotage-Akten' zusammenbricht und massive Verluste einfährt, ist sie wertlos für den Live-Handel. Überlebt sie den Stresstest und bleibt profitabel, hast du eine hochrobuste Strategie gefunden.";
+        String details = "Erweiterte Erklärung der Stresstest-Methodiken:\n\n" +
+                         "1. Selection Mode (Datenquelle):\n" +
+                         "   - 'Current Input Parameters': Testet exakt die Parameter, die momentan in den EA geladen sind. Ideal für einen schnellen Check vor dem Live-Gang.\n" +
+                         "   - 'From Best Optimization Results': Ein Workflow-Booster. Du kannst die Top-10 Ergebnisse aus dem Optimizer-Tab direkt hierher importieren und sie alle nacheinander stresse-testen lassen. So filterst du die 'Glückstreffer' aus der Optimierung heraus.\n\n" +
+                         "2. Parameter Shifting (Verschiebung):\n" +
+                         "   Dies ist das Herzstück des Scanners. Du wählst Kernparameter deiner Strategie (z.B. StopLoss, TrailingStop, Indikator-Schwellenwerte) aus. Das System wird nun dutzende Backtests durchführen, wobei es diese Parameter bei jedem Durchlauf zufällig um einen bestimmten Prozentsatz nach oben oder unten abweichen lässt (Shift).\n" +
+                         "   - Warum? Weil eine gute Strategie nicht von einer magischen Zahl abhängen darf. Wenn ein StopLoss von 50 Pips extrem profitabel ist, ein StopLoss von 48 oder 52 Pips aber das Konto vernichtet, ist das System instabil und wird live scheitern.\n\n" +
+                         "3. Shifts Configuration (Durchläufe):\n" +
+                         "   - Shifts (Anzahl): Bestimmt, wie viele mutierte Backtests generiert werden sollen. Je mehr, desto statistisch signifikanter das Ergebnis.\n" +
+                         "   - Shift Days/Period: Erlaubt es, den Start- oder Endzeitpunkt des historischen Tests leicht zu verschieben, um zu prüfen, ob die Strategie auch dann funktioniert, wenn sie an einem ungünstigen Tag gestartet wird (Market Timing Robustness).\n\n" +
+                         "4. Interpretation der Ergebnisse (Results Tabs):\n" +
+                         "   Nach Abschluss des Scans präsentiert dir das System eine Verteilung der Ergebnisse.\n" +
+                         "   - Du wirst sehen, wie stark der Profit und der Drawdown unter Stress schwanken.\n" +
+                         "   - Achte auf die Degradation: Es ist völlig normal, dass der Profit bei manipulierten Parametern sinkt. Wichtig ist, DASS er im positiven Bereich bleibt. Fällt die Mehrheit der Stress-Durchläufe in den negativen Bereich (Verlust), gilt die Strategie als nicht robust und das Risiko für einen Einsatz auf einem Live-Konto ist extrem hoch.";
+                         
+        javafx.scene.layout.Region infoSpacer = new javafx.scene.layout.Region();
+        javafx.scene.layout.HBox.setHgrow(infoSpacer, javafx.scene.layout.Priority.ALWAYS);
+        javafx.scene.layout.HBox titleBox = new javafx.scene.layout.HBox(15, title, infoSpacer, DocHelper.createInfoButton("Robustness Scanner", overview, details));
+        titleBox.setAlignment(javafx.geometry.Pos.CENTER_LEFT);
 
         ToggleGroup modeGroup = new ToggleGroup();
         singleEaRadio = new RadioButton("Single Expert Advisor");
@@ -191,7 +215,7 @@ public class RobustnessView {
         modelCombo.getStyleClass().add("combo-box");
         grid.add(modelCombo, 3, 5);
 
-        box.getChildren().addAll(title, modeBox, grid);
+        box.getChildren().addAll(titleBox, modeBox, grid);
         return box;
     }
 
@@ -295,7 +319,7 @@ public class RobustnessView {
         nameCol2.setPrefWidth(100);
         
         TableColumn<com.backtester.report.OptimizationResult.CombinedPass, String> scoreCol = new TableColumn<>("Score");
-        scoreCol.setCellValueFactory(c -> new javafx.beans.property.SimpleStringProperty(String.format("%.1f", c.getValue().getScore())));
+        scoreCol.setCellValueFactory(c -> new javafx.beans.property.SimpleStringProperty(String.format("%.2f", c.getValue().getScore())));
         
         TableColumn<com.backtester.report.OptimizationResult.CombinedPass, String> profitCol = new TableColumn<>("BT Profit");
         profitCol.setCellValueFactory(c -> new javafx.beans.property.SimpleStringProperty(String.format("%.2f", c.getValue().getBtProfit())));
@@ -804,6 +828,49 @@ public class RobustnessView {
         paramTable.setDisable(running);
         shiftsSpinner.setDisable(running);
         shiftDaysSpinner.setDisable(running);
+    }
+
+    private void loadResultsFromDb() {
+        try {
+            java.util.List<com.backtester.database.HistoryRun> runs =
+                com.backtester.database.DatabaseManager.getInstance().getRunsByType("ROBUSTNESS");
+            if (runs.isEmpty()) return;
+
+            int loaded = 0;
+            for (com.backtester.database.HistoryRun run : runs) {
+                try {
+                    String label = "";
+                    if (run.getResultJson() != null && !run.getResultJson().isEmpty()) {
+                        com.google.gson.JsonObject json = new com.google.gson.Gson().fromJson(run.getResultJson(), com.google.gson.JsonObject.class);
+                        String stratName = json.has("strategyName") ? json.get("strategyName").getAsString() : "";
+                        String metric = json.has("targetMetric") ? json.get("targetMetric").getAsString() : "";
+                        label = "SUCCESS: " + (stratName.isEmpty() ? run.getExpertName() : stratName) + " - " + metric;
+                    } else {
+                        label = "SUCCESS: " + run.getExpertName();
+                    }
+                    resultsList.getItems().add(label);
+                    loaded++;
+                } catch (Exception ex) {
+                    // Skip invalid entries
+                }
+            }
+            if (loaded > 0) {
+                logView.log("INFO", "Loaded " + loaded + " robustness results from database.");
+            }
+        } catch (Exception ex) {
+            logView.log("ERROR", "Failed to load robustness results from DB: " + ex.getMessage());
+        }
+    }
+
+    public void bindTab(Tab tab) {
+        updateTabTitle(tab, resultsList.getItems().size());
+        resultsList.getItems().addListener((javafx.collections.ListChangeListener<String>) c -> {
+            updateTabTitle(tab, resultsList.getItems().size());
+        });
+    }
+
+    private void updateTabTitle(Tab tab, int count) {
+        javafx.application.Platform.runLater(() -> tab.setText("Robustness (" + count + ")"));
     }
 
     public BorderPane getView() {

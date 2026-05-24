@@ -76,6 +76,7 @@ public class BacktestView {
         root.setCenter(splitPane);
         
         loadPreferences();
+        loadResultsFromDb();
     }
 
     private VBox createConfigBox() {
@@ -84,6 +85,21 @@ public class BacktestView {
 
         Label title = new Label("Backtest Configuration");
         title.getStyleClass().add("sci-fi-panel-title");
+        
+        String overview = "Der Backtest-Tab ermöglicht es, einen Expert Advisor (EA) für ein einzelnes Symbol und eine spezifische Periode über einen bestimmten Zeitraum in der Vergangenheit zu testen. Hierdurch kann die grundlegende Funktionalität und Performance der Strategie überprüft werden.";
+        String details = "Funktionen im Detail:\n\n" +
+                         "- Expert Advisor: Wähle den zu testenden EA (.ex5) aus dem MT5-Verzeichnis aus.\n" +
+                         "- Symbol & Periode: Lege das Währungspaar (z.B. EURUSD) und den Zeitrahmen (z.B. H1) fest.\n" +
+                         "- Datumsbereich (From / To): Bestimmt den Zeitraum für den historischen Test.\n" +
+                         "- Deposit, Currency & Leverage: Einstellungen zum simulierten Konto.\n" +
+                         "- Tick Model: Wähle die Genauigkeit der Kursdaten (z.B. 'Every tick' für höchste Genauigkeit oder 'Open prices only' für sehr schnelle Tests).\n" +
+                         "- Visual Mode: Wenn aktiviert, wird der MT5 Strategy Tester im visuellen Modus gestartet, sodass man den Trades auf dem Chart zusehen kann.\n\n" +
+                         "Ergebnisse:\nNach Abschluss des Tests erscheinen die wichtigsten Kennzahlen (Profit, Drawdown, Win Rate) in der unteren Tabelle. Mit einem Doppelklick oder den Buttons unten kann der detaillierte HTML-Report aufgerufen werden.";
+                         
+        javafx.scene.layout.Region infoSpacer = new javafx.scene.layout.Region();
+        javafx.scene.layout.HBox.setHgrow(infoSpacer, javafx.scene.layout.Priority.ALWAYS);
+        javafx.scene.layout.HBox titleBox = new javafx.scene.layout.HBox(15, title, infoSpacer, DocHelper.createInfoButton("Backtest", overview, details));
+        titleBox.setAlignment(javafx.geometry.Pos.CENTER_LEFT);
 
         GridPane grid = new GridPane();
         grid.setHgap(15);
@@ -173,7 +189,7 @@ public class BacktestView {
 
         btnBox.getChildren().addAll(startBtn, visualBtn, cancelBtn, progress);
 
-        box.getChildren().addAll(title, grid, btnBox);
+        box.getChildren().addAll(titleBox, grid, btnBox);
         return box;
     }
 
@@ -204,7 +220,7 @@ public class BacktestView {
         tradesCol.setCellValueFactory(new PropertyValueFactory<>("totalTrades"));
         
         TableColumn<BacktestResult, String> winCol = new TableColumn<>("Win Rate");
-        winCol.setCellValueFactory(cellData -> new SimpleStringProperty(String.format("%.1f%%", cellData.getValue().getWinRate())));
+        winCol.setCellValueFactory(cellData -> new SimpleStringProperty(String.format("%.2f%%", cellData.getValue().getWinRate())));
         
         TableColumn<BacktestResult, String> ddCol = new TableColumn<>("Drawdown");
         ddCol.setCellValueFactory(cellData -> new SimpleStringProperty(String.format("%.2f%%", cellData.getValue().getMaxDrawdown())));
@@ -284,7 +300,8 @@ public class BacktestView {
         btConfig.setExpert(expert);
         btConfig.setSymbol(symbolCombo.getValue());
         btConfig.setPeriod(periodCombo.getValue());
-        btConfig.setModel(modelCombo.getSelectionModel().getSelectedIndex());
+        int mIdx = modelCombo.getSelectionModel().getSelectedIndex();
+        btConfig.setModel(mIdx >= 0 ? mIdx : 0);
         btConfig.setFromDate(from);
         btConfig.setToDate(to);
         btConfig.setDeposit(depositSpinner.getValue());
@@ -323,6 +340,20 @@ public class BacktestView {
                 resultsTable.getItems().add(0, result);
                 if (result.isSuccess()) {
                     logView.log("INFO", "Backtest completed successfully");
+                    // Persist full result to database
+                    try {
+                        com.google.gson.Gson gson = new com.google.gson.Gson();
+                        String fullJson = gson.toJson(result);
+                        com.backtester.database.DatabaseManager.getInstance().saveRun(
+                            "BACKTEST",
+                            result.getExpert(),
+                            System.currentTimeMillis(),
+                            fullJson,
+                            result.getOutputDirectory()
+                        );
+                    } catch (Exception ex) {
+                        logView.log("ERROR", "Failed to save backtest to DB: " + ex.getMessage());
+                    }
                 } else {
                     logView.log("WARN", "Backtest finished with issues: " + result.getMessage());
                 }
@@ -394,7 +425,20 @@ public class BacktestView {
         periodCombo.setValue(per);
         
         String mod = config.get("backtest.model", "Every tick");
-        modelCombo.setValue(mod);
+        try {
+            int idx = Integer.parseInt(mod);
+            if (idx >= 0 && idx < BacktestConfig.MODEL_NAMES.length) {
+                modelCombo.getSelectionModel().select(idx);
+            } else {
+                modelCombo.getSelectionModel().select(0);
+            }
+        } catch (NumberFormatException e) {
+            if (java.util.Arrays.asList(BacktestConfig.MODEL_NAMES).contains(mod)) {
+                modelCombo.setValue(mod);
+            } else {
+                modelCombo.getSelectionModel().select(0);
+            }
+        }
     }
 
     private void savePreferences() {
@@ -403,6 +447,46 @@ public class BacktestView {
         if (periodCombo.getValue() != null) config.set("backtest.period", periodCombo.getValue());
         if (modelCombo.getValue() != null) config.set("backtest.model", modelCombo.getValue());
         config.save();
+    }
+
+    private void loadResultsFromDb() {
+        try {
+            java.util.List<com.backtester.database.HistoryRun> runs =
+                com.backtester.database.DatabaseManager.getInstance().getRunsByType("BACKTEST");
+            if (runs.isEmpty()) return;
+
+            com.google.gson.Gson gson = new com.google.gson.Gson();
+            int loaded = 0;
+            for (com.backtester.database.HistoryRun run : runs) {
+                try {
+                    if (run.getResultJson() != null && !run.getResultJson().isEmpty()) {
+                        BacktestResult result = gson.fromJson(run.getResultJson(), BacktestResult.class);
+                        if (result != null) {
+                            resultsTable.getItems().add(result);
+                            loaded++;
+                        }
+                    }
+                } catch (Exception ex) {
+                    // Skip invalid entries (e.g. old format with only summary metrics)
+                }
+            }
+            if (loaded > 0) {
+                logView.log("INFO", "Loaded " + loaded + " backtest results from database.");
+            }
+        } catch (Exception ex) {
+            logView.log("ERROR", "Failed to load backtest results from DB: " + ex.getMessage());
+        }
+    }
+
+    public void bindTab(Tab tab) {
+        updateTabTitle(tab, resultsTable.getItems().size());
+        resultsTable.getItems().addListener((javafx.collections.ListChangeListener<BacktestResult>) c -> {
+            updateTabTitle(tab, resultsTable.getItems().size());
+        });
+    }
+
+    private void updateTabTitle(Tab tab, int count) {
+        javafx.application.Platform.runLater(() -> tab.setText("Backtest (" + count + ")"));
     }
 
     public BorderPane getView() {
