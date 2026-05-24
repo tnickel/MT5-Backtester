@@ -25,6 +25,7 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
 import java.time.LocalDate;
+import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.Vector;
 
@@ -43,6 +44,7 @@ public class OptimizationPanel extends JPanel {
     private JComboBox<String> modelCombo;
     private DatePicker fromDatePicker;
     private DatePicker toDatePicker;
+    private JLabel dateRangeMonthsLabel;
     private JTextField depositField;
     private JTextField currencyField;
     private JTextField leverageField;
@@ -178,7 +180,7 @@ public class OptimizationPanel extends JPanel {
         gbc.gridx = 0; gbc.gridy = row; gbc.weightx = 0;
         form.add(new JLabel("Dates:"), gbc);
         gbc.gridx = 1; gbc.weightx = 1;
-        JPanel datePanel = new JPanel(new GridLayout(1, 2, 5, 0));
+        JPanel datePanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 5, 0));
         DatePickerSettings fromSettings = new DatePickerSettings();
         fromSettings.setFormatForDatesCommonEra("yyyy-MM-dd");
         fromDatePicker = new DatePicker(fromSettings);
@@ -188,9 +190,18 @@ public class OptimizationPanel extends JPanel {
         toSettings.setFormatForDatesCommonEra("yyyy-MM-dd");
         toDatePicker = new DatePicker(toSettings);
         toDatePicker.setDate(LocalDate.now());
-        
+
+        fromDatePicker.addDateChangeListener(e -> updateDateRangeMonthsLabel());
+        toDatePicker.addDateChangeListener(e -> updateDateRangeMonthsLabel());
+
+        dateRangeMonthsLabel = new JLabel();
+        dateRangeMonthsLabel.setFont(new Font("Segoe UI", Font.ITALIC, 11));
+        dateRangeMonthsLabel.setForeground(new Color(180, 186, 200));
+
         datePanel.add(fromDatePicker);
         datePanel.add(toDatePicker);
+        datePanel.add(dateRangeMonthsLabel);
+        updateDateRangeMonthsLabel();
         form.add(datePanel, gbc);
 
         // Deposit
@@ -879,6 +890,25 @@ public class OptimizationPanel extends JPanel {
                 }
             }
         }
+    }
+
+    private void updateDateRangeMonthsLabel() {
+        if (dateRangeMonthsLabel == null || fromDatePicker == null || toDatePicker == null) return;
+        LocalDate from = fromDatePicker.getDate();
+        LocalDate to = toDatePicker.getDate();
+
+        if (from == null || to == null) {
+            dateRangeMonthsLabel.setText("");
+            return;
+        }
+
+        if (to.isBefore(from)) {
+            dateRangeMonthsLabel.setText("(ungueltig)");
+            return;
+        }
+
+        long months = ChronoUnit.MONTHS.between(from, to);
+        dateRangeMonthsLabel.setText("(" + months + (months == 1 ? " Monat)" : " Monate)"));
     }
 
     private void savePreferences() {

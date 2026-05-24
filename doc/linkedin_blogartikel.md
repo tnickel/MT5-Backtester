@@ -51,7 +51,12 @@ War das Projekt im ersten Wurf perfekt? Nein, natürlich nicht. *Fast* fertig be
 Künstliche Intelligenz handelt nach festen, gelernten Mustern. Sie hat kein Bewusstsein. Das Debugging, die Fehlersuche, die feinen Architektur-Korrekturen und das Troubleshooting bleiben der Job des menschlichen Entwicklers. Wer keine Ahnung von Systemarchitektur hat, wird auch mit der besten KI irgendwann vor einer Wand stehen. Aber wenn man das Handwerk versteht, wird die KI zum ultimativen Exoskelett für Entwickler. Es macht einfach unglaublich viel Spaß!
 
 #### 📈 Das Resultat: Der MT5 Multi-Backtester
-Entstanden ist eine vollumfängliche Desktop-App in Java, die MetaTrader 5 komplett automatisiert, asynchrone Batches verarbeitet und wunderschöne Offline-Reports mit hochauflösenden Equity-Graphen generiert. Was früher stundenlanges manuelles Klicken war, passiert jetzt vollautomatisch im Hintergrund.
+Entstanden ist eine vollumfängliche Desktop-App in Java, die MetaTrader 5 komplett automatisiert, asynchrone Batches verarbeitet und wunderschöne Offline-Reports generiert. Was früher stundenlanges manuelles Klicken war, passiert jetzt vollautomatisch im Hintergrund.
+
+**🔥 Neue Meilensteine (Update):**
+Inzwischen ist das System noch einen Schritt weiter:
+- **KI-Strategie-Bewertung:** Durch eine direkte Integration von **OpenRouter (LLMs)** analysiert die KI jetzt selbstständig die Sensitivitätsdaten der Trading-Strategien, erkennt "Klippen" in den Profit-Kurven und vergibt einen Stabilitäts-Score!
+- **Claude Desktop Integration (MCP Server):** Das Projekt liefert jetzt einen eigenen **Model Context Protocol (MCP) Server** mit. Damit kann mein lokaler Claude-Desktop direkt auf die Backtest-Datenbank zugreifen und mir im Chat komplexe SQL-Queries und statistische Analysen beantworten.
 
 Ich kann jeden – egal ob Entwickler, Projektmanager oder Tech-Enthusiast – nur ermutigen, sich tiefgreifend mit modernen KI-Workflows auseinanderzusetzen. 
 

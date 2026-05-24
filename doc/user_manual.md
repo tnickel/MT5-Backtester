@@ -14,6 +14,7 @@
 8. [Bereich: Dukascopy (Tickdaten-Download)](#8-bereich-dukascopy-tickdaten-download)
 9. [Bereich: Log (Protokoll & Ueberwachung)](#9-bereich-log-protokoll--ueberwachung)
 10. [MT5-Prozessschutz (Process Guard)](#10-mt5-prozessschutz-process-guard)
+11. [Claude Desktop Integration (MCP Server)](#11-claude-desktop-integration-mcp-server)
 
 ---
 
@@ -122,22 +123,30 @@ Neu in der aktuellen Version: Nach einer Optimierung mit Forward-Test erscheint 
 - **Drawdown-Spalten**: < 15 % gruen, 15–25 % gelb, > 25 % rot.
 
 **Filter & Sortierung (Filter & Sortierung...)**:
-- Klicken Sie auf den blauen Button, um einen Filter-Dialog zu oeffnen. Hier koennen Sie **sechs Schwellwerte** gleichzeitig definieren:
-  - Min. BT Profit / Min. FW Profit
-  - Min. BT Trades / Min. FW Trades
-  - Max. BT Drawdown% / Max. FW Drawdown%
-- Ueber die Dropdown-Box "Sortierung" waehlen Sie aus sechs verschiedenen Sortierkriterien: kombinierter Score, BT/FW Profit, Konsistenz, FW Profit Factor, FW Drawdown oder Pass-Nummer.
+- Klicken Sie auf den blauen Button, um einen Filter-Dialog zu oeffnen. Hier koennen Sie **zwoelf Schwellwerte** gleichzeitig definieren:
+  - Min. BT Profit / Min. FW Profit (Standard: 0.0)
+  - Min. BT Trades / Min. FW Trades (Standard: 1 / 0)
+  - Max. BT Drawdown% / Max. FW Drawdown% (Standard: 100.0)
+  - Min. BT Expected Payoff / Min. FW Expected Payoff (Standard: 0.0)
+  - Min. BT Sharpe Ratio / Min. FW Sharpe Ratio (Standard: 0.0)
+  - Min. BT Recovery Factor / Min. FW Recovery Factor (Standard: 0.0)
+- **NaN-Handling**: Wenn Sie eine restriktive Forward-Filterung einrichten (z. B. Min. FW Profit > 0.0), werden Passes ohne Forward-Ergebnis automatisch ausgefiltert. Unbeschraenkte Standardwerte (z. B. `0.0` Profit oder `100.0` Drawdown) erlauben es diesen Paessen jedoch weiterhin, die Tabelle zu passieren (sofern „Nur Passes mit Forward-Ergebnis“ deaktiviert ist).
+- **Auto-Aktivierung**: Beim Klicken auf „Anwenden & Schließen“ wird die Filterfunktion automatisch eingeschaltet und die Checkbox „Filter aktiv“ im Hauptfenster gesetzt.
+- **Persistenz**: Alle 12 Filterwerte sowie die Zustände der Checkboxen „Filter aktiv“ und „Nur Passes mit Forward-Ergebnis“ werden in der lokalen SQLite-Datenbank persistiert und bleiben bei einem Neustart der Anwendung erhalten.
+- Ueber die Dropdown-Box "Sortierung" waehlen Sie aus verschiedenen Sortierkriterien (z. B. kombinierter Score, BT/FW Profit, Konsistenz, FW Profit Factor, FW Drawdown oder Pass-Nummer).
 - Mit der Checkbox **"Nur Passes mit Forward-Ergebnis"** blenden Sie alle Eintraege ohne Forward-Daten aus.
 - Der Counter zeigt stets die aktuelle Anzahl der angezeigten Ergebnisse an.
 
 **Score-Gewichtung (Score-Gewichtung...)**:
 - Klicken Sie auf den gelben Button, um zu bestimmen, wie der kombinierte Score berechnet wird.
-- **Fuenf Gewichte** steuerbar per Slider (0–100 %):
-  - BT Profit (Standard: 25 %)
-  - FW Profit (Standard: 35 %)
-  - Konsistenz FW/BT (Standard: 20 %)
+- **Sieben Gewichte** steuerbar per Spinner/Slider (0–100 %):
+  - BT Profit (Standard: 20 %)
+  - FW Profit (Standard: 30 %)
+  - Konsistenz FW/BT (Standard: 10 %)
   - FW Profit Factor (Standard: 10 %)
-  - Drawdown-Strafe (Standard: 5 %)
+  - Drawdown-Strafe (Standard: 20 %)
+  - FW Trade-Anzahl (Standard: 50 %)
+  - Erholungsfaktor (Standard: 20 %)
 - Die Gewichte muessen nicht exakt 100 ergeben – das System normalisiert automatisch.
 
 **Strategien auswaehlen (Select Strategies)**:
@@ -195,6 +204,12 @@ Nach einem Doppelklick oeffnet sich ein umfangreiches Detail-Popup:
 
 Dieses Tool gibt Ihnen mathematisch fundierte Sicherheit, ob Ihre Top-Strategie ueberhaupt robust genug fuer den Live-Handel ist.
 
+**KI-gestützte Auswertung (AI Strategy Stability Scoring):**
+- Das Programm verfuegt ueber eine Integration zu OpenRouter, womit Sie Ihre Sensitivitaets-Ergebnisse von einem Large Language Model (z.B. GPT-4o-mini, Claude, etc.) analysieren lassen koennen.
+- Die KI prueft die einzelnen Schwankungskoeffizienten, filtert "fragile" vs. "robuste" Parameter und berechnet einen **Stabilitäts-Score (0-100)**.
+- Die Ergebnisse (inklusive kurzer Fazit-Texte der KI) werden geladen und **automatisch ueber alle Tabellen synchronisiert** (Sensitivity Analysis, Combined Analysis und Selected Tab), sodass Sie ueberall den "Score" im Blick behalten.
+- Richten Sie Ihren OpenRouter API-Key im Menuepunkt "⚙ KI-Einstellungen" ein.
+
 ---
 
 ### 6. Bereich: Robustness Scanner (Kennlinienfahrt)
@@ -251,5 +266,17 @@ Ab Version 1.2.0 verfuegt der Backtester ueber einen intelligenten Prozessschutz
 **Funktionsweise:**
 - **Vor jedem MT5-Start** (Backtest, Optimierung, etc.) prueft das System blitzschnell, ob noch ein alter MT5-Prozess aus einem vorherigen Lauf aktiv ist. Diese Pruefung verwendet die native Java `ProcessHandle`-API und ist extrem schnell (Mikrosekunden, kein Shell-Aufruf noetig).
 - **Nur eigene Prozesse**: Es werden ausschliesslich MT5-Prozesse erkannt und beendet, die **von diesem Backtester** gestartet wurden. Fremde MT5-Instanzen (z.B. Ihr manuelles Trading-Terminal) bleiben unberuehrt.
-- **Benutzer-Dialog**: Wird ein alter Prozess gefunden, erscheint ein Dialogfenster mit der Frage, ob der alte Prozess beendet werden soll. Bei Bestaetigung wird er sauber beendet; bei Ablehnung wird der neue Lauf abgebrochen.
 - **Typisches Szenario**: Sie brechen einen Multi-Backtest ab und starten sofort einen neuen. Der alte MT5 hat sich noch nicht vollstaendig geschlossen. Der Process Guard erkennt dies und bietet Ihnen an, den alten Prozess sauber zu beenden, bevor der neue gestartet wird.
+
+---
+
+### 11. Claude Desktop Integration (MCP Server)
+Der MT5 Backtester bringt einen integrierten Model Context Protocol (MCP) Server (`backtester_mcp.py`) mit, der es lokalen KI-Assistenten (wie der **Claude Desktop App**) ermoeglicht, direkt auf Ihre gespeicherten Backtest- und Optimierungsdaten zuzugreifen.
+
+**Vorteile:**
+- Sie koennen Claude im Chat direkt bitten: *"Analysiere meine letzten Optimierungslaeufe und sage mir, welche Strategie am robustesten ist."*
+- Der MCP-Server stellt dafuer spezialisierte Tools bereit (z.B. `get_sensitivity_overview`, `get_fragile_parameters`, `get_parameter_curve`), mit denen Claude selbststaendig die SQLite-Datenbank abfragt.
+- Claude kann Ihnen daraufhin detaillierte Erklaerungen zu den Profit-Kurven (Plateaus vs. Klippen) in natuerlicher Sprache liefern.
+
+**Einrichtung:**
+Der MCP-Server ist vorkonfiguriert und muss in der Claude Desktop Konfigurationsdatei verlinkt werden (siehe Anleitung im Ordner `mcp-server/README.md`). Nach einem Neustart von Claude taucht der Backtester als Tool auf.

@@ -18,6 +18,10 @@ public class Main {
     private static final Logger log = LoggerFactory.getLogger(Main.class);
 
     public static void main(String[] args) {
+        Thread.setDefaultUncaughtExceptionHandler((thread, throwable) -> {
+            log.error("Uncaught exception in thread: " + thread.getName(), throwable);
+        });
+
         log.info("=== MT5 Backtester Starting ===");
 
         // Initialize configuration

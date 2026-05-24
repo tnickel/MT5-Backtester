@@ -39,6 +39,10 @@ Full integration with the MT5 built-in genetic and complete algorithm optimizer.
     - Interactive Line Charts (Kennlinien): Sparkline charts visualizing parameter variations vs. profit, with the base value explicitly highlighted in red and precise Start/Step/End axis labels.
     - Calculation Transparency: An Info-Button (`ℹ`) displays a detailed, layman-friendly mathematical explanation of the CV calculation for that specific parameter row.
     - Full list of the original optimized strategy settings.
+  - **AI Strategy Stability Scoring (LLM Integration)**: Automates the evaluation of sensitivity results using Large Language Models via OpenRouter. The AI analyzes parameter robustness, detects "cliffs" vs. "plateaus", and assigns a normalized Stability Score (0-100). The parsed AI stability score is automatically synchronized across the Sensitivity, Combined, and Selected analysis tables for seamless data consistency.
+  - **Optimization Results Filtering**: Features a robust 12-criterion trade filter with user-configurable thresholds for profit, trade counts, drawdown, expected payoff, Sharpe ratio, and recovery factor.
+    - *Dynamic NaN Handling*: Dynamically processes `NaN` values (for passes lacking forward results) in out-of-sample filters, filtering them out only if the corresponding boundary is set to a restrictive value.
+    - *Auto-Activation & SQLite Persistence*: Clicking "Anwenden & Schließen" automatically updates the active filter status in the UI, and persists the 12 thresholds, filter-enabled state, and only-matched-state to the `APP_SETTINGS` database table.
 ### 2.4. Robustness Scanner (Parameter Sensitivity / "Kennlinienfahrt")
 A unique module for advanced strategy validation through systematic parameter sweeps.
 - **Individual Parameter Sweep**: Each selected parameter is optimized in isolation via the Slow Complete Algorithm while all other parameters remain fixed.
@@ -84,6 +88,11 @@ Comprehensive EA input parameter lifecycle management.
 - **Report Viewer Dialog**: Modal dialog with dark-mode metrics cards, embedded equity chart, detailed statistics, and "Open in Browser" / "Open Folder" actions.
 - **Multi-Report HTML Generator**: Aggregates batch results into a single HTML document with Base64-embedded equity chart PNGs.
 - **Robustness HTML Generator**: Produces Chart.js interactive line charts for parameter sensitivity analysis.
+
+### 2.9. Model Context Protocol (MCP) Server
+- **Claude Desktop Integration**: Includes a Python-based MCP Server (`backtester_mcp.py`) that allows AI assistants (like Claude) to directly connect to the Backtester's local SQLite database.
+- **Available Tools**: Exposes SQL queries, schema extraction, and specialized functions like `get_sensitivity_overview`, `get_robust_strategies`, and `get_fragile_parameters`.
+- **Use Case**: Enables users to prompt Claude to perform deep statistical analysis on optimization runs and parameter sensitivity curves directly from the chat interface.
 
 ## 3. Technology Stack & Architecture
 
@@ -197,7 +206,15 @@ com.backtester
 | `data/` | Downloaded Dukascopy tick data |
 | `backtest_reports/` | Generated backtest reports, charts, and HTML summaries |
 | `~/.mt5_backtester/history.db` | SQLite database (run history + saved EA configs) |
-| `logs/` | Application log files (Logback) |
+| `logs/backtester.log` | Application log files (Logback, relative to app execution directory) |
+| `C:\Forex\Mt5\TickmillLifeMql5\MQL5\Logs\` | MetaTrader 5 Terminal Logs (for MT5 actions & MQL5 scripts) |
+| `C:\Forex\Mt5\TickmillLifeMql5\tester\logs\` | MetaTrader 5 Strategy Tester Logs (for CLI backtest & optimization runs) |
+
+### Logging Notes for AI & Developers
+* **Application Logs**: Standard application logs (using SLF4J and Logback) are written to `logs/backtester.log` relative to the current directory from which the JAR is executed. Daily log rotation keeps up to 30 days of history as `logs/backtester.YYYY-MM-DD.log`.
+* **MT5 Logs**: When executing backtests or optimizations via CLI, MT5 records the tester-specific execution logs in the MT5 data directory under `tester/logs/` (e.g., `C:\Forex\Mt5\TickmillLifeMql5\tester\logs\YYYYMMDD.log`). Terminal-wide messages are stored in `MQL5/Logs/`.
+* **Uncaught JavaFX Exceptions**: Any uncaught exceptions thrown on the UI thread (JavaFX Application Thread) that are not caught explicitly will be written to the standard error stream (`System.err`). They can be observed in the terminal console when starting the application via `start.bat`.
+
 
 ## 6. Supported Currency Pairs
 EURUSD, GBPUSD, USDJPY, USDCHF, AUDUSD, NZDUSD, USDCAD, EURGBP, EURJPY, GBPJPY, EURCHF, EURAUD, GBPAUD, AUDNZD, AUDCAD — all with correct Dukascopy point multiplier mappings for data download.
@@ -209,3 +226,32 @@ EURUSD, GBPUSD, USDJPY, USDCHF, AUDUSD, NZDUSD, USDCAD, EURGBP, EURJPY, GBPJPY, 
 
 ## 8. Automation & AI Development Context
 This project serves as a showcase for modern AI-assisted Software Engineering. Engineered using an *Antigravity + Gemini Ultra* prompt chain workflow, the boilerplate generation, complex architectural wireframing, and feature implementation were dramatically accelerated. The application grew from initial concept to a full-featured, professional-grade desktop application with 8 major modules, 30+ Java classes, and 15,000+ lines of code in a fraction of the time traditional development would require. Focus remained strictly on logic refinement, debugging, edge-case handling (UTF-16 parsing, German locale support), and UX polish.
+
+## 9. Quality Assurance & Test Engineering Framework
+To ensure system stability and support continuous integration, QA teams and test engineers can use the following framework to design test concepts and test specifications:
+
+### 9.1. Architectural Test Boundaries (Mocking Strategy)
+The application relies heavily on external systems. A robust Unit/Integration test concept must strictly isolate the core Java logic from these systems:
+- **MT5 Terminal Integration**: The execution of `terminal64.exe` via `ProcessBuilder` (in `BacktestRunner`, `OptimizationRunner`, and `RobustnessRunner`) must be mocked. Tests should inject simulated MT5 HTML/XML reports from the file system to test the `ReportParser` logic without needing an actual MT5 instance running.
+- **SQLite Database**: The `DatabaseManager` operations should be tested using an in-memory database (e.g., H2) or an isolated, temporary SQLite test-file to ensure tests remain independent and fast.
+- **Dukascopy API**: The HTTP endpoints in `DukascopyDownloader` must be mocked (e.g., using Mockito or WireMock) to return static binary data arrays (`.bi5`), preventing network dependencies, rate-limiting, and slow test executions.
+
+### 9.2. Critical Path Testing
+A comprehensive test concept should prioritize the following components based on their business value and risk:
+1. **Core Engine Logic (Highest Priority)**:
+   - Parameter permutation logic (math accuracy for start/step/stop optimization ranges).
+   - Correct generation and encoding of `tester.ini` and `.set` files (UTF-16LE with BOM, correct Windows vs. Linux path formatting).
+   - Robustness scanner calculations (correct aggregation of metrics, coefficient of variation (CV%), and plateau detection).
+   - AI Stability Score parsing from LLM API responses.
+2. **Data Parsers & Converters**:
+   - Reliable extraction of metrics from varying MT5 report localizations (Regex handling for German/English reports).
+   - Correct decompression of `.bi5` files and conversion to MT5 CSV format (handling timezone shifts and gap detection).
+3. **Database Layer (Persistence)**:
+   - Thread-safe CRUD operations (Create, Read, Update, Delete) for Backtest and Optimization results.
+   - Bulk-insert transaction performance and automated rollbacks on SQL errors.
+
+### 9.3. Test Design Guidelines
+When writing detailed test concepts for this project, it is recommended to structure test cases logically by package modules (Engine, Database, Dukascopy, UI). 
+- Target a Line Coverage of **> 85%** on the packages `com.backtester.engine.*` and `com.backtester.report.*`.
+- Pure business logic (e.g., the mathematics inside `RobustnessResult` and `MultiBacktestConfig`) must be fully unit-tested.
+- UI Tests (Swing Components) should be considered secondary; prioritize the underlying TableModels and Export logic over visual rendering tests.

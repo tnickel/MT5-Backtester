@@ -48,12 +48,15 @@ public class MultiBacktestView {
 
     public static class BatchRun {
         private String name;
+        private int dbId = -1;
         private java.util.List<com.backtester.report.BacktestResult> results = new java.util.ArrayList<>();
         private java.nio.file.Path htmlReportPath;
         
         public BatchRun(String name) { this.name = name; }
         public String getName() { return name; }
         public void setName(String name) { this.name = name; }
+        public int getDbId() { return dbId; }
+        public void setDbId(int dbId) { this.dbId = dbId; }
         public java.util.List<com.backtester.report.BacktestResult> getResults() { return results; }
         public java.nio.file.Path getHtmlReportPath() { return htmlReportPath; }
         public void setHtmlReportPath(java.nio.file.Path htmlReportPath) { this.htmlReportPath = htmlReportPath; }
@@ -86,6 +89,7 @@ public class MultiBacktestView {
         root.setCenter(splitPane);
         
         loadPreferences();
+        loadBatchesFromDb();
     }
 
     private VBox createConfigBox() {
@@ -94,6 +98,26 @@ public class MultiBacktestView {
 
         Label title = new Label("Batch / Multi-Symbol Backtest Configuration");
         title.getStyleClass().add("sci-fi-panel-title");
+        
+        String overview = "Der Multi-Backtester Tab ist das ideale Werkzeug, um die Universalität und Skalierbarkeit eines Expert Advisors zu prüfen. Eine klassische Falle in der algorithmischen Entwicklung ist die Überanpassung (Curve-Fitting) an ein einziges Währungspaar, z.B. EURUSD. Eine Strategie, die auf EURUSD fantastisch funktioniert, könnte auf USDJPY verheerende Verluste einfahren, weil sie nicht auf universellen Marktprinzipien beruht.\n\n" +
+                          "Warum nutzt man den Multi-Backtester? Um echtes Portfolio-Trading zu simulieren und zu validieren. Anstatt mühsam 20 einzelne Backtests manuell zu starten, die Parameter jedes Mal zu ändern und zu warten, erlaubt dir dieses Tool die Definition einer ganzen 'Batch-Queue' (Warteschlange). Du kannst den EA auf 15 verschiedenen Symbolen und 5 verschiedenen Zeitrahmen testen – mit einem einzigen Klick.\n\n" +
+                          "Dieses Tool arbeitet die Liste nacheinander vollautomatisch im Hintergrund ab. So kannst du den Rechner über Nacht laufen lassen und am nächsten Morgen sofort sehen, auf welchen Assets und Timeframes deine Strategie einen statistischen Edge (Vorteil) besitzt und welche Märkte strikt gemieden werden sollten.";
+        String details = "Erweiterte Funktionsübersicht:\n\n" +
+                         "1. Grid-Auswahl (Symbole & Perioden):\n" +
+                         "   Auf der linken Seite befindet sich eine umfangreiche Matrix. Hier markierst du per Checkbox alle gewünschten Instrumente (Majors, Minors, Exoten, Metalle) und die zugehörigen Timeframes. Jede markierte Kombination stellt einen individuellen Backtest-Job dar, der in die Ausführungswarteschlange aufgenommen wird.\n\n" +
+                         "2. Globale Konfiguration:\n" +
+                         "   Die Konfiguration (Deposit, Hebel, Datumsbereich) im oberen Bereich gilt global für alle ausgewählten Jobs. Dies gewährleistet, dass die Ergebnisse später absolut vergleichbar sind, da sie alle denselben historischen Zeitraum und dieselben Kontobedingungen durchlaufen haben.\n\n" +
+                         "3. Sequentielle Batch-Ausführung:\n" +
+                         "   Sobald du den Start-Button drückst, übernimmt die Engine die Kontrolle über den MetaTrader. Sie startet den ersten Test, wartet auf den Abschluss, liest die Ergebnisse aus, startet den zweiten Test, usw. Dies spart dem Nutzer unzählige Stunden an monotoner manueller Arbeit.\n\n" +
+                         "4. Aggregierte Ergebnistabelle (Runs):\n" +
+                         "   Während die Tests laufen, füllt sich die Tabelle auf der rechten Seite in Echtzeit. Diese Tabelle ist sortierbar. Du kannst nach Abschluss sofort auf 'Profit' oder 'Drawdown' klicken, um die lukrativsten oder sichersten Symbol-Timeframe-Kombinationen an die Spitze zu sortieren. So erkennst du sofort Muster (z.B. 'Die Strategie funktioniert nur auf M15, scheitert aber auf H1 völlig').\n\n" +
+                         "5. Combined Portfolio Report:\n" +
+                         "   Ein herausragendes Feature ist die Möglichkeit, einen kombinierten Report zu erstellen. Dabei werden die Einzelergebnisse aller erfolgreichen Backtests zu einer einzigen, aggregierten Portfolio-Equity-Kurve verschmolzen. Dies zeigt dir, wie sich dein Kapital entwickelt hätte, wenn du den EA auf all diesen Instrumenten gleichzeitig auf einem Live-Konto betrieben hättest, inklusive Überlappungen bei Drawdowns und Margin-Auslastungen.";
+                         
+        javafx.scene.layout.Region infoSpacer = new javafx.scene.layout.Region();
+        javafx.scene.layout.HBox.setHgrow(infoSpacer, javafx.scene.layout.Priority.ALWAYS);
+        javafx.scene.layout.HBox titleBox = new javafx.scene.layout.HBox(15, title, infoSpacer, DocHelper.createInfoButton("Multi-Backtester", overview, details));
+        titleBox.setAlignment(javafx.geometry.Pos.CENTER_LEFT);
 
         GridPane grid = new GridPane();
         grid.setHgap(15);
@@ -174,7 +198,7 @@ public class MultiBacktestView {
 
         btnBox.getChildren().addAll(startBtn, cancelBtn, progress, progressLabel);
 
-        box.getChildren().addAll(title, grid, selectionBox, btnBox);
+        box.getChildren().addAll(titleBox, grid, selectionBox, btnBox);
         return box;
     }
 
@@ -325,6 +349,9 @@ public class MultiBacktestView {
             BatchRun sel = batchList.getSelectionModel().getSelectedItem();
             if (sel != null) {
                 batchList.getItems().remove(sel);
+                if (sel.getDbId() > 0) {
+                    com.backtester.database.DatabaseManager.getInstance().deleteBatch(sel.getDbId());
+                }
             }
         });
         
@@ -352,7 +379,7 @@ public class MultiBacktestView {
         tradesCol.setCellValueFactory(new javafx.scene.control.cell.PropertyValueFactory<>("totalTrades"));
         
         javafx.scene.control.TableColumn<com.backtester.report.BacktestResult, String> winCol = new javafx.scene.control.TableColumn<>("Win Rate");
-        winCol.setCellValueFactory(cellData -> new javafx.beans.property.SimpleStringProperty(String.format("%.1f%%", cellData.getValue().getWinRate())));
+        winCol.setCellValueFactory(cellData -> new javafx.beans.property.SimpleStringProperty(String.format("%.2f%%", cellData.getValue().getWinRate())));
         
         javafx.scene.control.TableColumn<com.backtester.report.BacktestResult, String> ddCol = new javafx.scene.control.TableColumn<>("Drawdown");
         ddCol.setCellValueFactory(cellData -> new javafx.beans.property.SimpleStringProperty(String.format("%.2f%%", cellData.getValue().getMaxDrawdown())));
@@ -476,7 +503,20 @@ public class MultiBacktestView {
         updateTimeframesPaneTitle();
         
         String mod = config.get("multibacktest.model", "Every tick");
-        modelCombo.setValue(mod);
+        try {
+            int idx = Integer.parseInt(mod);
+            if (idx >= 0 && idx < BacktestConfig.MODEL_NAMES.length) {
+                modelCombo.getSelectionModel().select(idx);
+            } else {
+                modelCombo.getSelectionModel().select(0);
+            }
+        } catch (NumberFormatException e) {
+            if (java.util.Arrays.asList(BacktestConfig.MODEL_NAMES).contains(mod)) {
+                modelCombo.setValue(mod);
+            } else {
+                modelCombo.getSelectionModel().select(0);
+            }
+        }
     }
 
     private void savePreferences() {
@@ -535,7 +575,8 @@ public class MultiBacktestView {
         batchConfig.setDeposit(depositSpinner.getValue());
         batchConfig.setCurrency(currencyCombo.getValue());
         batchConfig.setLeverage(leverageField.getText().trim());
-        batchConfig.setModel(modelCombo.getSelectionModel().getSelectedIndex());
+        int mIdx = modelCombo.getSelectionModel().getSelectedIndex();
+        batchConfig.setModel(mIdx >= 0 ? mIdx : 0);
 
         com.backtester.config.EaParameterManager paramManager = new com.backtester.config.EaParameterManager();
         String setFileName = paramManager.prepareForBacktest(expert);
@@ -589,6 +630,26 @@ public class MultiBacktestView {
                         }
                     } catch (Exception e) {}
                     
+                    // Persist batch to database
+                    try {
+                        com.google.gson.Gson gson = new com.google.gson.Gson();
+                        String resultsJson = gson.toJson(newBatch.getResults());
+                        String htmlPathStr = newBatch.getHtmlReportPath() != null ? newBatch.getHtmlReportPath().toString() : "";
+                        com.backtester.database.DatabaseManager.getInstance().saveBatch(
+                            newBatch.getName(), System.currentTimeMillis(), htmlPathStr, resultsJson);
+                        // Also save individual results to HISTORY_RUNS for the History tab
+                        for (com.backtester.report.BacktestResult res : newBatch.getResults()) {
+                            if (res.isSuccess()) {
+                                String fullJson = gson.toJson(res);
+                                com.backtester.database.DatabaseManager.getInstance().saveRun(
+                                    "MULTI_BACKTEST", res.getExpert(), System.currentTimeMillis(),
+                                    fullJson, res.getOutputDirectory());
+                            }
+                        }
+                    } catch (Exception ex) {
+                        logView.log("ERROR", "Failed to save batch to DB: " + ex.getMessage());
+                    }
+                    
                     batchList.refresh();
                     logView.log("INFO", "Batch execution completed.");
                 });
@@ -603,6 +664,57 @@ public class MultiBacktestView {
             currentRunner.cancel(true);
             logView.log("WARN", "Batch execution cancelled.");
         }
+    }
+
+    private void loadBatchesFromDb() {
+        try {
+            java.util.List<Object[]> dbBatches = com.backtester.database.DatabaseManager.getInstance().getAllBatches();
+            if (dbBatches.isEmpty()) return;
+
+            com.google.gson.Gson gson = new com.google.gson.Gson();
+            java.lang.reflect.Type listType = new com.google.gson.reflect.TypeToken<java.util.List<com.backtester.report.BacktestResult>>(){}.getType();
+            int loaded = 0;
+            for (Object[] row : dbBatches) {
+                try {
+                    int id = (int) row[0];
+                    String batchName = (String) row[1];
+                    String htmlPath = (String) row[3];
+                    String resultsJson = (String) row[4];
+
+                    BatchRun batch = new BatchRun(batchName);
+                    batch.setDbId(id);
+                    if (htmlPath != null && !htmlPath.isEmpty()) {
+                        batch.setHtmlReportPath(java.nio.file.Paths.get(htmlPath));
+                    }
+                    if (resultsJson != null && !resultsJson.isEmpty()) {
+                        java.util.List<com.backtester.report.BacktestResult> results = gson.fromJson(resultsJson, listType);
+                        if (results != null) {
+                            batch.getResults().addAll(results);
+                        }
+                    }
+                    batchList.getItems().add(batch);
+                    loaded++;
+                } catch (Exception ex) {
+                    // Skip invalid entries
+                }
+            }
+            if (loaded > 0) {
+                logView.log("INFO", "Loaded " + loaded + " multi-backtest batches from database.");
+            }
+        } catch (Exception ex) {
+            logView.log("ERROR", "Failed to load batches from DB: " + ex.getMessage());
+        }
+    }
+
+    public void bindTab(Tab tab) {
+        updateTabTitle(tab, batchList.getItems().size());
+        batchList.getItems().addListener((javafx.collections.ListChangeListener<BatchRun>) c -> {
+            updateTabTitle(tab, batchList.getItems().size());
+        });
+    }
+
+    private void updateTabTitle(Tab tab, int count) {
+        javafx.application.Platform.runLater(() -> tab.setText("Multi-Backtester (" + count + ")"));
     }
 
     public BorderPane getView() {

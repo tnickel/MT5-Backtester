@@ -32,7 +32,7 @@ public class MainView {
         title.setFont(Font.font("Segoe UI", FontWeight.BOLD, 24));
         title.setTextFill(Color.web("#00e5ff"));
 
-        Label subtitle = new Label("— Antigravity Protocol Suite");
+        Label subtitle = new Label("— Antigravity Protocol Suite v1.2.6");
         subtitle.setFont(Font.font("Segoe UI", FontWeight.BOLD, 16));
         subtitle.setTextFill(Color.web("#7e889a"));
 
@@ -47,24 +47,31 @@ public class MainView {
         LogView logView = new LogView();
         
         BacktestView backtestView = new BacktestView(logView);
-        tabPane.getTabs().add(new Tab("Backtest", backtestView.getView()));
+        Tab backtestTab = new Tab("Backtest", backtestView.getView());
+        tabPane.getTabs().add(backtestTab);
+        backtestView.bindTab(backtestTab);
         
         MultiBacktestView multiBacktestView = new MultiBacktestView(logView);
-        tabPane.getTabs().add(new Tab("Multi-Backtester", multiBacktestView.getView()));
+        Tab multiBacktestTab = new Tab("Multi-Backtester", multiBacktestView.getView());
+        tabPane.getTabs().add(multiBacktestTab);
+        multiBacktestView.bindTab(multiBacktestTab);
         
         // Integration of new OptimizationView
         OptimizationView optimizationView = new OptimizationView(logView);
         Tab optimizerTab = new Tab("Optimizer", optimizationView.getView());
-        // Force the optimizer tab to be selected to show glow
         tabPane.getTabs().add(optimizerTab);
         tabPane.getSelectionModel().select(optimizerTab);
+        optimizationView.bindTab(optimizerTab);
         
         RobustnessView robustnessView = new RobustnessView(logView, optimizationView);
-        tabPane.getTabs().add(new Tab("Robustness", robustnessView.getView()));
+        Tab robustnessTab = new Tab("Robustness", robustnessView.getView());
+        tabPane.getTabs().add(robustnessTab);
+        robustnessView.bindTab(robustnessTab);
         
         HistoryView historyView = new HistoryView();
         Tab databaseTab = new Tab("Database", historyView.getView());
         tabPane.getTabs().add(databaseTab);
+        historyView.bindTab(databaseTab);
         
         // Auto-refresh Database tab when selected
         tabPane.getSelectionModel().selectedItemProperty().addListener((obs, oldTab, newTab) -> {

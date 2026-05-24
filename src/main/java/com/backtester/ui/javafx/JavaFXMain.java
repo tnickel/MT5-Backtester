@@ -19,7 +19,7 @@ public class JavaFXMain extends Application {
             scene.getStylesheets().add(cssUrl.toExternalForm());
         }
 
-        primaryStage.setTitle("MT5 Backtester — Antigravity Protocol Suite");
+        primaryStage.setTitle("MT5 Backtester — Antigravity Protocol Suite v1.3.0");
         
         // Try to set app icon
         try {
