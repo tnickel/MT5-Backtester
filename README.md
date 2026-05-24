@@ -12,7 +12,7 @@
 
 ---
 
-![Multi-Backtester Results](images/multi-backtester-results.png)
+![MT5 Backtester Platform](images/backtester_platform.png)
 
 ## 📌 Overview
 
@@ -66,6 +66,8 @@ Full integration with MT5's built-in optimization engine, controlled entirely th
 - **Double-Click to Verify**: Double-click any optimization pass to instantly run a single backtest with those exact parameters and see the full report
 - **Apply Best Parameters**: One click to write the best result's parameters back to the EA's active config
 
+![MT5 Optimizer Results](images/backtester_optimizer.png)
+
 ---
 
 ## 📉 Robustness Scanner (Unique Feature)
@@ -85,6 +87,8 @@ A specialized module for advanced strategy validation that goes beyond standard 
 - **Remove Failed**: One-click deselect failed or insensitive parameters
 - **Database Integration**: Save and load sweep configurations from the DB
 
+![Sensitivity Analysis and Robustness](images/backtester_sensitivity.png)
+
 ---
 
 ## 📊 Reporting Engine
@@ -95,6 +99,8 @@ The platform completely bypasses MT5's internal report generator and builds its 
 - **Java2D Equity Charts**: Crystal-clear, anti-aliased equity curves with gradient fills, dual Balance/Equity lines, date-based X-axis, and deposit reference lines
 - **Report Viewer Dialog**: Dark-mode modal with 6 metric cards, embedded chart, and 14-field statistics panel
 - **Robustness Chart.js Reports**: Interactive line charts with plateau annotations and default-value markers
+
+![AI Strategy Stability Scoring](images/backtester_ki_analysis.png)
 
 ---
 
