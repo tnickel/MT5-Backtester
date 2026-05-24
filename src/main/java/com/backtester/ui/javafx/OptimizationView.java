@@ -2,6 +2,8 @@ package com.backtester.ui.javafx;
 
 import com.backtester.engine.OptimizationConfig;
 import com.backtester.engine.OptimizationRunner;
+import com.backtester.engine.BacktestConfig;
+import com.backtester.engine.BacktestRunner;
 import com.backtester.config.EaParameterManager;
 import com.backtester.config.EaParameter;
 import com.backtester.report.OptimizationResult;
@@ -1600,9 +1602,28 @@ public class OptimizationView {
         placeholder.setStyle("-fx-text-fill: #7e889a;");
         t.setPlaceholder(placeholder);
 
-        // Double-click → Zeige detaillierte Erklärung
+        // Double-click → Zeige detaillierte Erklärung, Right-click → Kontextmenü für Backtest
         t.setRowFactory(tv -> {
             javafx.scene.control.TableRow<CombinedPass> row = new javafx.scene.control.TableRow<>();
+            
+            javafx.scene.control.ContextMenu contextMenu = new javafx.scene.control.ContextMenu();
+            javafx.scene.control.MenuItem backtestItem = new javafx.scene.control.MenuItem("Backtest in MT5 ausführen (Terminal offen lassen)");
+            backtestItem.setOnAction(event -> {
+                CombinedPass item = row.getItem();
+                if (item != null) {
+                    runVerificationBacktest(item.getBacktestPass());
+                }
+            });
+            contextMenu.getItems().add(backtestItem);
+            
+            row.emptyProperty().addListener((obs, wasEmpty, isEmpty) -> {
+                if (isEmpty) {
+                    row.setContextMenu(null);
+                } else {
+                    row.setContextMenu(contextMenu);
+                }
+            });
+            
             row.setOnMouseClicked(event -> {
                 if (event.getClickCount() == 2 && (!row.isEmpty())) {
                     showPassExplanationDialog(row.getItem());
@@ -2128,6 +2149,25 @@ public class OptimizationView {
 
         t.setRowFactory(tv -> {
             TableRow<com.backtester.report.SensitivityResult> row = new TableRow<>();
+            
+            javafx.scene.control.ContextMenu contextMenu = new javafx.scene.control.ContextMenu();
+            javafx.scene.control.MenuItem backtestItem = new javafx.scene.control.MenuItem("Backtest in MT5 ausführen (Terminal offen lassen)");
+            backtestItem.setOnAction(event -> {
+                com.backtester.report.SensitivityResult item = row.getItem();
+                if (item != null && item.getOriginalPass() != null) {
+                    runVerificationBacktest(item.getOriginalPass().getBacktestPass());
+                }
+            });
+            contextMenu.getItems().add(backtestItem);
+            
+            row.emptyProperty().addListener((obs, wasEmpty, isEmpty) -> {
+                if (isEmpty) {
+                    row.setContextMenu(null);
+                } else {
+                    row.setContextMenu(contextMenu);
+                }
+            });
+            
             row.setOnMouseClicked(event -> {
                 if (event.getClickCount() == 2 && (!row.isEmpty())) {
                     com.backtester.report.SensitivityResult rowData = row.getItem();
@@ -3111,6 +3151,30 @@ public class OptimizationView {
         placeholder.setStyle("-fx-text-fill: #7e889a;");
         table.setPlaceholder(placeholder);
         
+        table.setRowFactory(tv -> {
+            javafx.scene.control.TableRow<com.backtester.report.OptimizationResult.Pass> row = new javafx.scene.control.TableRow<>();
+            
+            javafx.scene.control.ContextMenu contextMenu = new javafx.scene.control.ContextMenu();
+            javafx.scene.control.MenuItem backtestItem = new javafx.scene.control.MenuItem("Backtest in MT5 ausführen (Terminal offen lassen)");
+            backtestItem.setOnAction(event -> {
+                com.backtester.report.OptimizationResult.Pass item = row.getItem();
+                if (item != null) {
+                    runVerificationBacktest(item);
+                }
+            });
+            contextMenu.getItems().add(backtestItem);
+            
+            row.emptyProperty().addListener((obs, wasEmpty, isEmpty) -> {
+                if (isEmpty) {
+                    row.setContextMenu(null);
+                } else {
+                    row.setContextMenu(contextMenu);
+                }
+            });
+            
+            return row;
+        });
+
         return table;
     }
 
@@ -4167,6 +4231,129 @@ public class OptimizationView {
 
         stage.setScene(scene);
         stage.show();
+    }
+
+    private void runVerificationBacktest(com.backtester.report.OptimizationResult.Pass pass) {
+        if (pass == null) return;
+        String expert = expertField.getText().trim();
+        if (expert.isEmpty()) {
+            new Alert(Alert.AlertType.WARNING, "Bitte wähle zuerst einen Expert Advisor aus.").show();
+            return;
+        }
+
+        com.backtester.config.AppConfig config = com.backtester.config.AppConfig.getInstance();
+        java.nio.file.Path mt5Dir = config.getMt5InstallDir();
+        if (mt5Dir == null) {
+            new Alert(Alert.AlertType.ERROR, "MetaTrader 5 Installationsverzeichnis ist nicht konfiguriert.").show();
+            return;
+        }
+
+        List<EaParameter> allParams = eaParamManager.getEffectiveParameters(expert);
+        if (allParams == null || allParams.isEmpty()) {
+            new Alert(Alert.AlertType.ERROR, "Konnte Parameter für den Expert Advisor nicht laden.").show();
+            return;
+        }
+
+        // Parameterwerte aus dem gewählten Pass in die EA-Parameterliste schreiben und Optimierung deaktivieren
+        java.util.Map<String, String> passVals = pass.getParameterValues();
+        for (EaParameter param : allParams) {
+            if (passVals.containsKey(param.getName())) {
+                param.setValue(passVals.get(param.getName()));
+            }
+            param.setOptimizeEnabled(false);
+        }
+
+        // Parameter direkt in das MT5 Tester-Profilverzeichnis schreiben
+        String eaName = EaParameterManager.extractEaBaseName(expert);
+        String presetFileName = "Backtester_" + eaName + "_Verify.set";
+        java.nio.file.Path presetsDir = mt5Dir.resolve("MQL5").resolve("Profiles").resolve("Tester");
+        try {
+            java.nio.file.Files.createDirectories(presetsDir);
+        } catch (java.io.IOException ex) {
+            log.error("Failed to create Tester directory", ex);
+            new Alert(Alert.AlertType.ERROR, "Fehler beim Erstellen des Presets-Verzeichnisses: " + ex.getMessage()).show();
+            return;
+        }
+
+        java.nio.file.Path destFile = presetsDir.resolve(presetFileName);
+        eaParamManager.writeSetFile(destFile, allParams, eaName);
+
+        // BacktestConfig erstellen
+        BacktestConfig btConfig = new BacktestConfig();
+        btConfig.setExpert(expert);
+        btConfig.setExpertParameters(presetFileName);
+        btConfig.setSymbol(symbolCombo.getValue());
+        btConfig.setPeriod(periodCombo.getValue());
+        int mIdx = modelCombo.getSelectionModel().getSelectedIndex();
+        btConfig.setModel(mIdx >= 0 ? mIdx : 0);
+        
+        if (fromDatePicker.getValue() != null) {
+            btConfig.setFromDate(fromDatePicker.getValue());
+        }
+        if (toDatePicker.getValue() != null) {
+            btConfig.setToDate(toDatePicker.getValue());
+        }
+        
+        try {
+            btConfig.setDeposit(Integer.parseInt(depositField.getText().trim()));
+        } catch (Exception ex) {
+            btConfig.setDeposit(10000);
+        }
+        btConfig.setCurrency(currencyField.getText().trim());
+        btConfig.setLeverage(leverageField.getText().trim());
+        
+        // Terminal offen lassen
+        btConfig.setShutdownTerminal(false);
+
+        logView.log("INFO", "Starte Verifikations-Backtest für Pass #" + pass.getPassNumber() + " (Terminal bleibt offen)...");
+        progressBar.setProgress(ProgressBar.INDETERMINATE_PROGRESS);
+        progressLabel.setText("Backtest Pass #" + pass.getPassNumber() + "...");
+        setUIState(true);
+
+        BacktestRunner runner = new BacktestRunner();
+        runner.setLogCallback(msg -> Platform.runLater(() -> logView.log("INFO", msg)));
+
+        Task<com.backtester.report.BacktestResult> task = new Task<>() {
+            @Override
+            protected com.backtester.report.BacktestResult call() throws Exception {
+                return runner.runBacktest(btConfig);
+            }
+        };
+
+        task.setOnSucceeded(e -> {
+            Platform.runLater(() -> {
+                setUIState(false);
+                progressBar.setProgress(1.0);
+                progressLabel.setText("Backtest Pass #" + pass.getPassNumber() + " fertig");
+                com.backtester.report.BacktestResult res = task.getValue();
+                if (res != null && res.isSuccess()) {
+                    logView.log("INFO", "Verifikations-Backtest für Pass #" + pass.getPassNumber() + " erfolgreich abgeschlossen.");
+                    // Report anzeigen
+                    try {
+                        javax.swing.SwingUtilities.invokeLater(() -> {
+                            com.backtester.ui.ReportViewerDialog.showForDirectory(null, res.getOutputDirectory());
+                        });
+                    } catch (Exception ex) {
+                        logView.log("ERROR", "Fehler beim Öffnen des Reports: " + ex.getMessage());
+                    }
+                } else {
+                    logView.log("WARN", "Verifikations-Backtest für Pass #" + pass.getPassNumber() + " fehlgeschlagen oder keine Trades.");
+                }
+            });
+        });
+
+        task.setOnFailed(e -> {
+            Platform.runLater(() -> {
+                setUIState(false);
+                progressBar.setProgress(0.0);
+                progressLabel.setText("Fehler");
+                logView.log("ERROR", "Verifikations-Backtest fehlgeschlagen: " + task.getException().getMessage());
+            });
+        });
+
+        Thread th = new Thread(task);
+        th.setDaemon(true);
+        th.start();
     }
 
     public BorderPane getView() {
