@@ -143,9 +143,10 @@ public class BacktestConfig {
 
     /** Major currency pairs and crosses */
     public static final String[] SYMBOLS = {
-        "EURUSD", "GBPUSD", "USDJPY", "USDCHF", "AUDUSD",
-        "NZDUSD", "USDCAD", "EURGBP", "EURJPY", "GBPJPY",
-        "AUDCAD", "AUDNZD", "AUDCHF", "NZDJPY", "CADJPY", "CADCHF",
-        "XAUUSD", "XAGUSD", "XTIUSD"
+        "AUDCAD", "AUDCHF", "AUDJPY", "AUDNZD", "AUDUSD",
+        "CADCHF", "CADJPY", "EURAUD", "EURCHF", "EURGBP",
+        "EURJPY", "EURUSD", "GBPCHF", "GBPJPY", "GBPUSD",
+        "NZDJPY", "NZDUSD", "USDCAD", "USDCHF", "USDJPY",
+        "XAGUSD", "XAUUSD", "XTIUSD"
     };
 }

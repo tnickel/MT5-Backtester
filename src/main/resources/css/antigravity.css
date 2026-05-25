@@ -411,3 +411,15 @@
     -fx-effect: dropshadow(gaussian, rgba(105, 240, 174, 0.8), 15, 0.0, 0, 0);
 }
 
+/* Optimization row highlighting */
+.table-row-cell.opt-highlighted {
+    -fx-background-color: rgba(0, 229, 255, 0.12);
+}
+.table-row-cell.opt-highlighted:odd {
+    -fx-background-color: rgba(0, 229, 255, 0.15);
+}
+.table-row-cell.opt-highlighted:selected {
+    -fx-background-color: rgba(0, 229, 255, 0.3);
+}
+
+

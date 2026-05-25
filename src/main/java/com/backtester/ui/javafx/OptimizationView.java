@@ -192,6 +192,9 @@ public class OptimizationView {
         
         loadPreferences();
         
+        symbolCombo.valueProperty().addListener((obs, oldVal, newVal) -> loadParameters());
+        periodCombo.valueProperty().addListener((obs, oldVal, newVal) -> loadParameters());
+
         // Load state from DB after UI is built
         Platform.runLater(this::loadStateFromDb);
     }
@@ -243,10 +246,7 @@ public class OptimizationView {
         grid.add(browseBtn, 2, 1);
 
         grid.add(new Label("Symbol:"), 0, 2);
-        symbolCombo = new ComboBox<>(FXCollections.observableArrayList(
-            "EURUSD", "GBPUSD", "USDJPY", "USDCHF", "AUDUSD", "NZDUSD", "USDCAD",
-            "EURGBP", "EURJPY", "GBPJPY", "AUDCAD", "AUDNZD", "AUDCHF",
-            "NZDJPY", "CADJPY", "CADCHF", "XAUUSD", "XAGUSD", "XTIUSD"));
+        symbolCombo = new ComboBox<>(FXCollections.observableArrayList(com.backtester.engine.BacktestConfig.SYMBOLS));
         symbolCombo.getStyleClass().add("combo-box");
         grid.add(symbolCombo, 1, 2, 2, 1);
         
@@ -356,30 +356,7 @@ public class OptimizationView {
                         java.util.List<String> options = KNOWN_ENUMS.containsKey(lowerName) ? 
                             KNOWN_ENUMS.get(lowerName) : java.util.Arrays.asList("false", "true");
                             
-                        if (comboBox == null) {
-                            comboBox = new ComboBox<>(FXCollections.observableArrayList(options));
-                            comboBox.valueProperty().addListener((obs, old, newVal) -> {
-                                if (newVal != null) {
-                                    if (isBool) {
-                                        commitEdit(newVal);
-                                    } else {
-                                        int idx = options.indexOf(newVal);
-                                        if (idx >= 0) commitEdit(String.valueOf(idx));
-                                    }
-                                }
-                            });
-                            comboBox.focusedProperty().addListener((obs, old, newVal) -> {
-                                if (!newVal && isEditing()) {
-                                    if (isBool) {
-                                        commitEdit(comboBox.getValue());
-                                    } else {
-                                        int idx = options.indexOf(comboBox.getValue());
-                                        if (idx >= 0) commitEdit(String.valueOf(idx));
-                                        else cancelEdit();
-                                    }
-                                }
-                            });
-                        }
+                        comboBox = new ComboBox<>(FXCollections.observableArrayList(options));
                         
                         String v = getItem();
                         if (isBool) {
@@ -396,19 +373,39 @@ public class OptimizationView {
                                 comboBox.setValue(options.get(0));
                             }
                         }
+
+                        comboBox.valueProperty().addListener((obs, old, newVal) -> {
+                            if (newVal != null) {
+                                if (isBool) {
+                                    commitEdit(newVal);
+                                } else {
+                                    int idx = options.indexOf(newVal);
+                                    if (idx >= 0) commitEdit(String.valueOf(idx));
+                                }
+                            }
+                        });
+                        comboBox.focusedProperty().addListener((obs, old, newVal) -> {
+                            if (!newVal && isEditing()) {
+                                if (isBool) {
+                                    commitEdit(comboBox.getValue());
+                                } else {
+                                    int idx = options.indexOf(comboBox.getValue());
+                                    if (idx >= 0) commitEdit(String.valueOf(idx));
+                                    else cancelEdit();
+                                }
+                            }
+                        });
                         
                         setText(null);
                         setGraphic(comboBox);
                         comboBox.requestFocus();
                         comboBox.show();
                     } else {
-                        if (textField == null) {
-                            textField = new TextField(getItem());
-                            textField.setOnAction(e -> commitEdit(textField.getText()));
-                            textField.focusedProperty().addListener((obs, old, newVal) -> {
-                                if (!newVal && isEditing()) commitEdit(textField.getText());
-                            });
-                        }
+                        textField = new TextField(getItem());
+                        textField.setOnAction(e -> commitEdit(textField.getText()));
+                        textField.focusedProperty().addListener((obs, old, newVal) -> {
+                            if (!newVal && isEditing()) commitEdit(textField.getText());
+                        });
                         textField.setText(getItem());
                         setText(null);
                         setGraphic(textField);
@@ -469,12 +466,31 @@ public class OptimizationView {
         paramTable = new TableView<>();
         paramTable.setStyle("-fx-background-color: transparent;");
         paramTable.setEditable(true);
+        paramTable.setRowFactory(tv -> new TableRow<EaParameter>() {
+            @Override
+            protected void updateItem(EaParameter item, boolean empty) {
+                super.updateItem(item, empty);
+                if (empty || item == null) {
+                    getStyleClass().remove("opt-highlighted");
+                } else if (item.isOptimizeEnabled()) {
+                    if (!getStyleClass().contains("opt-highlighted")) {
+                        getStyleClass().add("opt-highlighted");
+                    }
+                } else {
+                    getStyleClass().remove("opt-highlighted");
+                }
+            }
+        });
         
         TableColumn<EaParameter, Boolean> optCol = new TableColumn<>("Opt");
         optCol.setCellValueFactory(cellData -> {
             com.backtester.config.EaParameter param = cellData.getValue();
             javafx.beans.property.BooleanProperty property = new javafx.beans.property.SimpleBooleanProperty(param.isOptimizeEnabled());
-            property.addListener((obs, oldV, newV) -> param.setOptimizeEnabled(newV));
+            property.addListener((obs, oldV, newV) -> {
+                param.setOptimizeEnabled(newV);
+                paramTable.refresh();
+                saveParametersOnDemand();
+            });
             return property;
         });
         optCol.setCellFactory(javafx.scene.control.cell.CheckBoxTableCell.forTableColumn(optCol));
@@ -3224,6 +3240,26 @@ public class OptimizationView {
         String expert = expertField.getText().trim();
         if (expert.isEmpty()) return;
         
+        String symbol = symbolCombo.getValue() != null ? symbolCombo.getValue() : "EURUSD";
+        String period = periodCombo.getValue() != null ? periodCombo.getValue() : "H1";
+        
+        // Try DB first
+        String dbParamsJson = com.backtester.database.DatabaseManager.getInstance().getEaParameterSettings(expert, symbol, period);
+        if (dbParamsJson != null && !dbParamsJson.isEmpty()) {
+            try {
+                java.lang.reflect.Type listType = new com.google.gson.reflect.TypeToken<java.util.List<com.backtester.config.EaParameter>>(){}.getType();
+                java.util.List<com.backtester.config.EaParameter> params = new com.google.gson.Gson().fromJson(dbParamsJson, listType);
+                if (params != null && !params.isEmpty()) {
+                    paramTable.getItems().setAll(params);
+                    logView.log("INFO", "Loaded parameters for " + EaParameterManager.extractEaBaseName(expert) + " [" + symbol + ", " + period + "] from DB");
+                    return;
+                }
+            } catch (Exception e) {
+                logView.log("WARN", "Failed to parse parameters from DB: " + e.getMessage());
+            }
+        }
+        
+        // Fallback to files
         java.util.List<EaParameter> params = eaParamManager.getEffectiveParameters(expert);
         if (params != null) {
             paramTable.getItems().setAll(params);
@@ -3358,7 +3394,11 @@ public class OptimizationView {
         
         // Save current param table to custom .set
         if (!paramTable.getItems().isEmpty()) {
-            eaParamManager.saveCustomParameters(expertField.getText().trim(), new java.util.ArrayList<>(paramTable.getItems()));
+            String expert = expertField.getText().trim();
+            String symbol = symbolCombo.getValue() != null ? symbolCombo.getValue() : "EURUSD";
+            String period = periodCombo.getValue() != null ? periodCombo.getValue() : "H1";
+            com.backtester.database.DatabaseManager.getInstance().saveEaParameterSettings(expert, symbol, period, new com.google.gson.Gson().toJson(paramTable.getItems()));
+            eaParamManager.saveCustomParameters(expert, new java.util.ArrayList<>(paramTable.getItems()));
         }
 
         // Safety-Check for 1-Parameter Forward Test
@@ -4358,5 +4398,16 @@ public class OptimizationView {
 
     public BorderPane getView() {
         return root;
+    }
+
+    private void saveParametersOnDemand() {
+        String expert = expertField.getText().trim();
+        if (expert.isEmpty()) return;
+        if (paramTable != null && !paramTable.getItems().isEmpty()) {
+            String symbol = symbolCombo.getValue() != null ? symbolCombo.getValue() : "EURUSD";
+            String period = periodCombo.getValue() != null ? periodCombo.getValue() : "H1";
+            com.backtester.database.DatabaseManager.getInstance().saveEaParameterSettings(expert, symbol, period, new com.google.gson.Gson().toJson(paramTable.getItems()));
+            eaParamManager.saveCustomParameters(expert, new java.util.ArrayList<>(paramTable.getItems()));
+        }
     }
 }

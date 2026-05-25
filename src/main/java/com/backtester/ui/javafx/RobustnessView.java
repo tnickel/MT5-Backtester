@@ -91,6 +91,9 @@ public class RobustnessView {
 
         loadPreferences();
         loadResultsFromDb();
+
+        symbolCombo.valueProperty().addListener((obs, oldVal, newVal) -> loadParameters());
+        periodCombo.valueProperty().addListener((obs, oldVal, newVal) -> loadParameters());
     }
 
     private VBox createConfigBox() {
@@ -158,10 +161,7 @@ public class RobustnessView {
 
         // Row 1: Symbol & Period
         grid.add(new Label("Symbol:"), 0, 1);
-        symbolCombo = new ComboBox<>(FXCollections.observableArrayList(
-            "EURUSD", "GBPUSD", "USDJPY", "USDCHF", "AUDUSD", "NZDUSD", "USDCAD",
-            "EURGBP", "EURJPY", "GBPJPY", "AUDCAD", "AUDNZD", "AUDCHF",
-            "NZDJPY", "CADJPY", "CADCHF", "XAUUSD", "XAGUSD", "XTIUSD"));
+        symbolCombo = new ComboBox<>(FXCollections.observableArrayList(com.backtester.engine.BacktestConfig.SYMBOLS));
         symbolCombo.getStyleClass().add("combo-box");
         grid.add(symbolCombo, 1, 1);
 
@@ -232,12 +232,31 @@ public class RobustnessView {
         paramTable = new TableView<>();
         paramTable.setStyle("-fx-background-color: transparent;");
         paramTable.setEditable(true);
+        paramTable.setRowFactory(tv -> new TableRow<EaParameter>() {
+            @Override
+            protected void updateItem(EaParameter item, boolean empty) {
+                super.updateItem(item, empty);
+                if (empty || item == null) {
+                    getStyleClass().remove("opt-highlighted");
+                } else if (item.isOptimizeEnabled()) {
+                    if (!getStyleClass().contains("opt-highlighted")) {
+                        getStyleClass().add("opt-highlighted");
+                    }
+                } else {
+                    getStyleClass().remove("opt-highlighted");
+                }
+            }
+        });
         
         TableColumn<EaParameter, Boolean> optCol = new TableColumn<>("Opt");
         optCol.setCellValueFactory(cellData -> {
             com.backtester.config.EaParameter param = cellData.getValue();
             javafx.beans.property.BooleanProperty property = new javafx.beans.property.SimpleBooleanProperty(param.isOptimizeEnabled());
-            property.addListener((obs, oldV, newV) -> param.setOptimizeEnabled(newV));
+            property.addListener((obs, oldV, newV) -> {
+                param.setOptimizeEnabled(newV);
+                paramTable.refresh();
+                saveParametersOnDemand();
+            });
             return property;
         });
         optCol.setCellFactory(javafx.scene.control.cell.CheckBoxTableCell.forTableColumn(optCol));
@@ -413,6 +432,26 @@ public class RobustnessView {
         String expert = expertField.getText().trim();
         if (expert.isEmpty()) return;
         
+        String symbol = symbolCombo.getValue() != null ? symbolCombo.getValue() : "EURUSD";
+        String period = periodCombo.getValue() != null ? periodCombo.getValue() : "H1";
+        
+        // Try DB first
+        String dbParamsJson = com.backtester.database.DatabaseManager.getInstance().getEaParameterSettings(expert, symbol, period);
+        if (dbParamsJson != null && !dbParamsJson.isEmpty()) {
+            try {
+                java.lang.reflect.Type listType = new com.google.gson.reflect.TypeToken<java.util.List<com.backtester.config.EaParameter>>(){}.getType();
+                java.util.List<com.backtester.config.EaParameter> params = new com.google.gson.Gson().fromJson(dbParamsJson, listType);
+                if (params != null && !params.isEmpty()) {
+                    paramTable.getItems().setAll(params);
+                    logView.log("INFO", "Loaded parameters for " + EaParameterManager.extractEaBaseName(expert) + " [" + symbol + ", " + period + "] from DB");
+                    return;
+                }
+            } catch (Exception e) {
+                logView.log("WARN", "Failed to parse parameters from DB: " + e.getMessage());
+            }
+        }
+        
+        // Fallback to files
         java.util.List<EaParameter> params = eaParamManager.getEffectiveParameters(expert);
         if (params != null) {
             paramTable.getItems().setAll(params);
@@ -649,6 +688,12 @@ public class RobustnessView {
                 return;
             }
 
+            if (paramTable != null && !paramTable.getItems().isEmpty()) {
+                String symbol = symbolCombo.getValue() != null ? symbolCombo.getValue() : "EURUSD";
+                String period = periodCombo.getValue() != null ? periodCombo.getValue() : "H1";
+                com.backtester.database.DatabaseManager.getInstance().saveEaParameterSettings(expert, symbol, period, new com.google.gson.Gson().toJson(paramTable.getItems()));
+            }
+
             OptimizationConfig optConfig = new OptimizationConfig();
             optConfig.setExpert(expert);
             optConfig.setSymbol(symbolCombo.getValue() != null ? symbolCombo.getValue() : "EURUSD");
@@ -875,5 +920,15 @@ public class RobustnessView {
 
     public BorderPane getView() {
         return root;
+    }
+
+    private void saveParametersOnDemand() {
+        String expert = expertField.getText().trim();
+        if (expert.isEmpty()) return;
+        if (paramTable != null && !paramTable.getItems().isEmpty()) {
+            String symbol = symbolCombo.getValue() != null ? symbolCombo.getValue() : "EURUSD";
+            String period = periodCombo.getValue() != null ? periodCombo.getValue() : "H1";
+            com.backtester.database.DatabaseManager.getInstance().saveEaParameterSettings(expert, symbol, period, new com.google.gson.Gson().toJson(paramTable.getItems()));
+        }
     }
 }

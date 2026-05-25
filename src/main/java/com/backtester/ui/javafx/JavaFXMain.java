@@ -12,7 +12,7 @@ public class JavaFXMain extends Application {
     @Override
     public void start(Stage primaryStage) {
         MainView mainView = new MainView();
-        Scene scene = new Scene(mainView.getView(), 1300, 1050);
+        Scene scene = new Scene(mainView.getView(), 1700, 1050);
 
         URL cssUrl = getClass().getResource("/css/antigravity.css");
         if (cssUrl != null) {
