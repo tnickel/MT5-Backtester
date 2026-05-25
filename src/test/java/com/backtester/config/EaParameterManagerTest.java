@@ -242,4 +242,52 @@ public class EaParameterManagerTest {
         assertEquals("TakeProfit", preparedParams.get(0).getName());
         assertEquals("70", preparedParams.get(0).getValue());
     }
+
+    @Test
+    public void testExtractEaBaseNameEdgeCases() {
+        assertEquals("", EaParameterManager.extractEaBaseName("Experts/"));
+        assertEquals("", EaParameterManager.extractEaBaseName("Experts\\"));
+        assertEquals("MyEA", EaParameterManager.extractEaBaseName("MyEA.ex5"));
+        assertEquals("test", EaParameterManager.extractEaBaseName("test.EX5"));
+    }
+
+    @Test
+    public void testCalculateTotalPassesEdgeCases() {
+        EaParameterManager manager = new EaParameterManager();
+        List<EaParameter> params = new ArrayList<>();
+        assertEquals(1, manager.calculateTotalPasses(params));
+        
+        EaParameter p = new EaParameter("param", "val");
+        p.setOptimizeEnabled(true);
+        p.setStringType(true);
+        params.add(p);
+        assertEquals(1, manager.calculateTotalPasses(params));
+    }
+
+    @Test
+    public void testWriteAndReadSetFileWithEmptyList() throws IOException {
+        EaParameterManager manager = new EaParameterManager();
+        Path file = tempFolder.newFile("empty.set").toPath();
+        manager.writeSetFile(file, new ArrayList<>(), "EmptyRobot");
+        List<EaParameter> read = manager.readSetFile(file);
+        assertTrue(read.isEmpty());
+    }
+
+    @Test
+    public void testWriteAndReadSetFileWithSpecialCharacters() throws IOException {
+        EaParameterManager manager = new EaParameterManager();
+        Path file = tempFolder.newFile("special.set").toPath();
+        List<EaParameter> params = new ArrayList<>();
+        params.add(new EaParameter("RobotName", "Super\"Robot\"=Best\tVal"));
+        manager.writeSetFile(file, params, "SpecialBot");
+        List<EaParameter> read = manager.readSetFile(file);
+        assertEquals(1, read.size());
+        assertEquals("Super\"Robot\"=Best\tVal", read.get(0).getValue());
+    }
+
+    @Test
+    public void testCountModifiedParametersWithNonexistentExpert() {
+        EaParameterManager manager = new EaParameterManager();
+        assertEquals(0, manager.countModifiedParameters("NonExistentBot"));
+    }
 }

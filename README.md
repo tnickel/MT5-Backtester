@@ -96,8 +96,13 @@ A specialized module for advanced strategy validation that goes beyond standard 
 The platform completely bypasses MT5's internal report generator and builds its own reports from raw data.
 
 - **HTML Report Parser**: Handles MT5's UTF-16LE encoded reports with German/English locale detection
-- **Java2D Equity Charts**: Crystal-clear, anti-aliased equity curves with gradient fills, dual Balance/Equity lines, date-based X-axis, and deposit reference lines
+- **Java2D Equity & Bar Charts**: Crystal-clear, anti-aliased charts including:
+  - Combined Equity Curve (all trades overlaid chronologically)
+  - Monthly Net Profit (Euros & %)
+  - Monthly Max Drawdown (Euros & %)
+  - Monthly Recovery Factor
 - **Report Viewer Dialog**: Dark-mode modal with 6 metric cards, embedded chart, and 14-field statistics panel
+- **Multi-Backtest Summary Cards**: Highlights overall **Portfolio Max Drawdown** (absolute & percentage) and **Portfolio Recovery Factor**
 - **Robustness Chart.js Reports**: Interactive line charts with plateau annotations and default-value markers
 
 ![AI Strategy Stability Scoring](images/backtester_ki_analysis.png)
@@ -199,7 +204,7 @@ MT5-Backtester/
 
 ## 🌐 Supported Symbols
 
-EURUSD, GBPUSD, USDJPY, USDCHF, AUDUSD, NZDUSD, USDCAD, EURGBP, EURJPY, GBPJPY, EURCHF, EURAUD, GBPAUD, AUDNZD, AUDCAD — all with correct Dukascopy point multiplier mappings.
+AUDCAD, AUDCHF, AUDJPY, AUDNZD, AUDUSD, CADCHF, CADJPY, EURAUD, EURCHF, EURGBP, EURJPY, EURUSD, GBPCHF, GBPJPY, GBPUSD, NZDJPY, NZDUSD, USDCAD, USDCHF, USDJPY, XAGUSD, XAUUSD, XTIUSD — all with correct Dukascopy point multiplier mappings.
 
 ---
 

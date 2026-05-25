@@ -11,6 +11,9 @@ import javafx.stage.FileChooser;
 
 import java.io.File;
 import java.time.LocalDate;
+import com.backtester.config.EaParameter;
+import com.backtester.config.EaParameterManager;
+import javafx.scene.control.cell.PropertyValueFactory;
 
 public class MultiBacktestView {
 
@@ -46,6 +49,10 @@ public class MultiBacktestView {
     private TableView<com.backtester.report.BacktestResult> resultsTable;
     private ListView<BatchRun> batchList;
 
+    // Parameters Table
+    private TableView<com.backtester.config.EaParameter> paramTable;
+    private final com.backtester.config.EaParameterManager eaParamManager = new com.backtester.config.EaParameterManager();
+
     public static class BatchRun {
         private String name;
         private int dbId = -1;
@@ -77,13 +84,20 @@ public class MultiBacktestView {
         splitPane.getStyleClass().add("transparent-split-pane");
         splitPane.setStyle("-fx-background-color: transparent; -fx-box-border: transparent;");
 
-        // Top: Config
+        // Top Split: Config vs Parameters
+        HBox topBox = new HBox(15);
         VBox configBox = createConfigBox();
+        VBox paramBox = createParamBox();
+        
+        HBox.setHgrow(configBox, Priority.ALWAYS);
+        HBox.setHgrow(paramBox, Priority.ALWAYS);
+        topBox.getChildren().addAll(configBox, paramBox);
+        topBox.setMinHeight(0);
         
         // Bottom: Results
         VBox resultsBox = createResultsBox();
 
-        splitPane.getItems().addAll(configBox, resultsBox);
+        splitPane.getItems().addAll(topBox, resultsBox);
         splitPane.setDividerPositions(0.45);
 
         root.setCenter(splitPane);
@@ -168,6 +182,13 @@ public class MultiBacktestView {
         modelCombo.getSelectionModel().select(config.getDefaultModel());
         grid.add(modelCombo, 1, 3, 3, 1);
 
+        // Row 4: Presets
+        grid.add(new Label("Presets:"), 0, 4);
+        Button set1Btn = new Button("Set 1 (M5 Core Pairs)");
+        set1Btn.getStyleClass().add("button");
+        set1Btn.setOnAction(e -> applySet1Preset());
+        grid.add(set1Btn, 1, 4, 3, 1);
+
         // Middle: Checkbox Selections
         HBox selectionBox = new HBox(20);
         symbolsPane = createSymbolsPane();
@@ -207,11 +228,7 @@ public class MultiBacktestView {
         symbolsGrid.setHgap(20);
         symbolsGrid.setVgap(10);
         
-        String[] symbols = {
-            "EURUSD", "GBPUSD", "USDJPY", "USDCHF", "AUDUSD", "NZDUSD",
-            "USDCAD", "EURGBP", "EURJPY", "GBPJPY", "AUDCAD", "AUDNZD",
-            "AUDCHF", "NZDJPY", "CADJPY", "CADCHF", "XAUUSD", "XAGUSD", "XTIUSD"
-        };
+        String[] symbols = com.backtester.engine.BacktestConfig.SYMBOLS;
         
         for (String sym : symbols) {
             CheckBox cb = addSymbolCheckbox(sym);
@@ -419,8 +436,24 @@ public class MultiBacktestView {
             com.backtester.report.BacktestResult sel = resultsTable.getSelectionModel().getSelectedItem();
             BatchRun batch = batchList.getSelectionModel().getSelectedItem();
             if (sel != null && batch != null) {
-                batch.getResults().remove(sel);
-                resultsTable.getItems().remove(sel);
+                Alert alert = new Alert(Alert.AlertType.CONFIRMATION);
+                alert.setTitle("Confirm Deletion");
+                alert.setHeaderText("Delete Selected Run");
+                alert.setContentText("Are you sure you want to delete this run from the batch?");
+                java.util.Optional<ButtonType> res = alert.showAndWait();
+                if (res.isPresent() && res.get() == ButtonType.OK) {
+                    batch.getResults().remove(sel);
+                    resultsTable.getItems().remove(sel);
+                    if (batch.getDbId() > 0) {
+                        try {
+                            String resultsJson = new com.google.gson.Gson().toJson(batch.getResults());
+                            com.backtester.database.DatabaseManager.getInstance().updateBatchResults(batch.getDbId(), resultsJson);
+                        } catch (Exception ex) {
+                            logView.log("ERROR", "Failed to update batch results in DB: " + ex.getMessage());
+                        }
+                    }
+                    logView.log("INFO", "Deleted run from batch.");
+                }
             }
         });
         
@@ -463,6 +496,7 @@ public class MultiBacktestView {
                 expertField.setText(path);
             }
             savePreferences();
+            loadParameters();
         }
     }
 
@@ -470,6 +504,7 @@ public class MultiBacktestView {
         String exp = config.get("multibacktest.expert", "");
         if (!exp.isEmpty()) {
             expertField.setText(exp);
+            loadParameters();
         }
         
         String syms = config.get("multibacktest.symbol", "EURUSD");
@@ -578,8 +613,12 @@ public class MultiBacktestView {
         int mIdx = modelCombo.getSelectionModel().getSelectedIndex();
         batchConfig.setModel(mIdx >= 0 ? mIdx : 0);
 
-        com.backtester.config.EaParameterManager paramManager = new com.backtester.config.EaParameterManager();
-        String setFileName = paramManager.prepareForBacktest(expert);
+        if (paramTable != null && !paramTable.getItems().isEmpty()) {
+            com.backtester.database.DatabaseManager.getInstance().saveEaParameterSettings(expert, "GLOBAL", "GLOBAL", new com.google.gson.Gson().toJson(paramTable.getItems()));
+            eaParamManager.saveCustomParameters(expert, new java.util.ArrayList<>(paramTable.getItems()));
+        }
+
+        String setFileName = eaParamManager.prepareForBacktest(expert);
         if (setFileName != null) {
             batchConfig.setExpertParameters(expert, setFileName);
             logView.log("INFO", "Batch Config: Using parameters (" + setFileName + ")");
@@ -666,6 +705,50 @@ public class MultiBacktestView {
         }
     }
 
+    private void applySet1Preset() {
+        java.util.List<String> corePairs = java.util.List.of(
+            "AUDJPY", "AUDUSD", "EURAUD", "EURCHF", "EURGBP", "EURJPY", "EURUSD",
+            "GBPCHF", "GBPJPY", "GBPUSD", "NZDUSD", "USDCAD", "USDCHF", "USDJPY"
+        );
+
+        // 1. Manage timeframes: only check M5
+        for (CheckBox cb : timeframeBoxes) {
+            if ("M5".equals(cb.getText())) {
+                cb.setSelected(true);
+            } else {
+                cb.setSelected(false);
+            }
+        }
+
+        // 2. Manage symbols: check core 14, uncheck others, dynamically add missing ones
+        for (String sym : corePairs) {
+            CheckBox found = null;
+            for (CheckBox cb : symbolBoxes) {
+                if (cb.getText().equals(sym)) {
+                    found = cb;
+                    break;
+                }
+            }
+            if (found == null) {
+                found = addSymbolCheckbox(sym);
+                found.setOnAction(e -> updateSymbolsPaneTitle());
+            }
+            found.setSelected(true);
+        }
+
+        // Uncheck any symbols NOT in the core list
+        for (CheckBox cb : symbolBoxes) {
+            if (!corePairs.contains(cb.getText())) {
+                cb.setSelected(false);
+            }
+        }
+
+        updateSymbolsPaneTitle();
+        updateTimeframesPaneTitle();
+        savePreferences();
+        logView.log("INFO", "Applied Set 1 preset (M5 and 14 core currency pairs).");
+    }
+
     private void loadBatchesFromDb() {
         try {
             java.util.List<Object[]> dbBatches = com.backtester.database.DatabaseManager.getInstance().getAllBatches();
@@ -719,5 +802,401 @@ public class MultiBacktestView {
 
     public BorderPane getView() {
         return root;
+    }
+
+    // ==================== EA Parameter Section & Logic ====================
+
+    private void loadParameters() {
+        String expert = expertField.getText().trim();
+        if (expert.isEmpty()) return;
+        
+        // Try DB first
+        String dbParamsJson = com.backtester.database.DatabaseManager.getInstance().getEaParameterSettings(expert, "GLOBAL", "GLOBAL");
+        if (dbParamsJson != null && !dbParamsJson.isEmpty()) {
+            try {
+                java.lang.reflect.Type listType = new com.google.gson.reflect.TypeToken<java.util.List<com.backtester.config.EaParameter>>(){}.getType();
+                java.util.List<com.backtester.config.EaParameter> params = new com.google.gson.Gson().fromJson(dbParamsJson, listType);
+                if (params != null && !params.isEmpty()) {
+                    paramTable.getItems().setAll(params);
+                    logView.log("INFO", "Loaded global parameters for " + EaParameterManager.extractEaBaseName(expert) + " from DB");
+                    return;
+                }
+            } catch (Exception e) {
+                logView.log("WARN", "Failed to parse parameters from DB: " + e.getMessage());
+            }
+        }
+        
+        // Fallback to files
+        java.util.List<com.backtester.config.EaParameter> params = eaParamManager.getEffectiveParameters(expert);
+        if (params != null) {
+            paramTable.getItems().setAll(params);
+            logView.log("INFO", "Loaded " + params.size() + " parameters for " + EaParameterManager.extractEaBaseName(expert));
+        } else {
+            paramTable.getItems().clear();
+            logView.log("WARN", "No parameters found for " + EaParameterManager.extractEaBaseName(expert) + ". Click AutoConfig or select a valid EA.");
+        }
+    }
+
+    private VBox createParamBox() {
+        VBox box = new VBox(10);
+        box.getStyleClass().add("sci-fi-panel");
+
+        Label title = new Label("EA Parameters");
+        title.getStyleClass().add("sci-fi-panel-title");
+
+        paramTable = new TableView<>();
+        paramTable.setStyle("-fx-background-color: transparent;");
+        paramTable.setEditable(true);
+        paramTable.setRowFactory(tv -> new TableRow<com.backtester.config.EaParameter>() {
+            @Override
+            protected void updateItem(com.backtester.config.EaParameter item, boolean empty) {
+                super.updateItem(item, empty);
+                if (empty || item == null) {
+                    getStyleClass().remove("opt-highlighted");
+                } else if (item.isOptimizeEnabled()) {
+                    if (!getStyleClass().contains("opt-highlighted")) {
+                        getStyleClass().add("opt-highlighted");
+                    }
+                } else {
+                    getStyleClass().remove("opt-highlighted");
+                }
+            }
+        });
+        
+        TableColumn<com.backtester.config.EaParameter, Boolean> optCol = new TableColumn<>("Opt");
+        optCol.setCellValueFactory(cellData -> {
+            com.backtester.config.EaParameter param = cellData.getValue();
+            javafx.beans.property.BooleanProperty property = new javafx.beans.property.SimpleBooleanProperty(param.isOptimizeEnabled());
+            property.addListener((obs, oldV, newV) -> {
+                param.setOptimizeEnabled(newV);
+                paramTable.refresh();
+                saveParametersOnDemand();
+            });
+            return property;
+        });
+        optCol.setCellFactory(javafx.scene.control.cell.CheckBoxTableCell.forTableColumn(optCol));
+        optCol.setPrefWidth(40);
+        
+        TableColumn<com.backtester.config.EaParameter, String> nameCol = new TableColumn<>("Variable");
+        nameCol.setCellValueFactory(new PropertyValueFactory<>("name"));
+        nameCol.setPrefWidth(200);
+        
+        TableColumn<com.backtester.config.EaParameter, String> valCol = new TableColumn<>("Value");
+        valCol.setCellValueFactory(new PropertyValueFactory<>("value"));
+        valCol.setCellFactory(createEnumAwareCellFactory());
+        valCol.setOnEditCommit(e -> e.getRowValue().setValue(e.getNewValue()));
+        valCol.setPrefWidth(100);
+        
+        TableColumn<com.backtester.config.EaParameter, String> startCol = new TableColumn<>("Start");
+        startCol.setCellValueFactory(new PropertyValueFactory<>("optimizeStart"));
+        startCol.setCellFactory(createEnumAwareCellFactory());
+        startCol.setOnEditCommit(e -> e.getRowValue().setOptimizeStart(e.getNewValue()));
+        
+        TableColumn<com.backtester.config.EaParameter, String> stepCol = new TableColumn<>("Step");
+        stepCol.setCellValueFactory(new PropertyValueFactory<>("optimizeStep"));
+        stepCol.setCellFactory(javafx.scene.control.cell.TextFieldTableCell.forTableColumn());
+        stepCol.setOnEditCommit(e -> e.getRowValue().setOptimizeStep(e.getNewValue()));
+        
+        TableColumn<com.backtester.config.EaParameter, String> stopCol = new TableColumn<>("Stop");
+        stopCol.setCellValueFactory(new PropertyValueFactory<>("optimizeEnd"));
+        stopCol.setCellFactory(createEnumAwareCellFactory());
+        stopCol.setOnEditCommit(e -> e.getRowValue().setOptimizeEnd(e.getNewValue()));
+        
+        paramTable.getColumns().addAll(optCol, nameCol, valCol, startCol, stepCol, stopCol);
+        
+        Label placeholder = new Label("No parameters loaded.\nLoad an Expert Advisor or a .set file.");
+        placeholder.setStyle("-fx-text-fill: #7e889a;");
+        paramTable.setPlaceholder(placeholder);
+        
+        VBox.setVgrow(paramTable, Priority.ALWAYS);
+
+        HBox btnBox = new HBox(10);
+        btnBox.setAlignment(Pos.CENTER_RIGHT);
+        Button autoConfigBtn = new Button("AutoConfig");
+        autoConfigBtn.setOnAction(e -> autoConfigParameters());
+        
+        Button loadBtn = new Button("Load .set");
+        loadBtn.setOnAction(e -> loadFromFile());
+        
+        Button saveBtn = new Button("Save .set");
+        saveBtn.setOnAction(e -> saveToFile());
+        
+        btnBox.getChildren().addAll(autoConfigBtn, loadBtn, saveBtn);
+
+        box.getChildren().addAll(title, paramTable, btnBox);
+        return box;
+    }
+
+    private static final java.util.Map<String, java.util.List<String>> KNOWN_ENUMS = new java.util.HashMap<>();
+    static {
+        KNOWN_ENUMS.put("typeposition", java.util.Arrays.asList("Buy & Sell", "Buy Only", "Sell Only"));
+    }
+
+    private javafx.util.Callback<TableColumn<com.backtester.config.EaParameter, String>, TableCell<com.backtester.config.EaParameter, String>> createEnumAwareCellFactory() {
+        return col -> new TableCell<com.backtester.config.EaParameter, String>() {
+            private ComboBox<String> comboBox;
+            private TextField textField;
+
+            @Override
+            public void startEdit() {
+                if (!isEmpty()) {
+                    super.startEdit();
+                    com.backtester.config.EaParameter param = getTableRow().getItem();
+                    String lowerName = param != null && param.getName() != null ? param.getName().toLowerCase() : "";
+                    
+                    String currentValue = getItem() != null ? getItem().toLowerCase().trim() : "";
+                    boolean isBool = "true".equals(currentValue) || "false".equals(currentValue);
+                    
+                    if (KNOWN_ENUMS.containsKey(lowerName) || isBool) {
+                        java.util.List<String> options = KNOWN_ENUMS.containsKey(lowerName) ? 
+                            KNOWN_ENUMS.get(lowerName) : java.util.Arrays.asList("false", "true");
+                            
+                        comboBox = new ComboBox<>(FXCollections.observableArrayList(options));
+                        
+                        String v = getItem();
+                        if (isBool) {
+                            comboBox.setValue(v != null ? v.toLowerCase() : "false");
+                        } else {
+                            try {
+                                int idx = Integer.parseInt(v != null ? v.trim() : "0");
+                                if (idx >= 0 && idx < options.size()) {
+                                    comboBox.setValue(options.get(idx));
+                                } else {
+                                    comboBox.setValue(options.get(0));
+                                }
+                            } catch (Exception e) {
+                                comboBox.setValue(options.get(0));
+                            }
+                        }
+
+                        comboBox.valueProperty().addListener((obs, old, newVal) -> {
+                            if (newVal != null) {
+                                if (isBool) {
+                                    commitEdit(newVal);
+                                } else {
+                                    int idx = options.indexOf(newVal);
+                                    if (idx >= 0) commitEdit(String.valueOf(idx));
+                                }
+                            }
+                        });
+                        comboBox.focusedProperty().addListener((obs, old, newVal) -> {
+                            if (!newVal && isEditing()) {
+                                if (isBool) {
+                                    commitEdit(comboBox.getValue());
+                                } else {
+                                    int idx = options.indexOf(comboBox.getValue());
+                                    if (idx >= 0) commitEdit(String.valueOf(idx));
+                                    else cancelEdit();
+                                }
+                            }
+                        });
+                        
+                        setText(null);
+                        setGraphic(comboBox);
+                        comboBox.requestFocus();
+                        comboBox.show();
+                    } else {
+                        textField = new TextField(getItem());
+                        textField.setOnAction(e -> commitEdit(textField.getText()));
+                        textField.focusedProperty().addListener((obs, old, newVal) -> {
+                            if (!newVal && isEditing()) commitEdit(textField.getText());
+                        });
+                        textField.setText(getItem());
+                        setText(null);
+                        setGraphic(textField);
+                        textField.selectAll();
+                        textField.requestFocus();
+                    }
+                }
+            }
+
+            @Override
+            public void cancelEdit() {
+                super.cancelEdit();
+                setText(getDisplayText(getItem()));
+                setGraphic(null);
+            }
+
+            @Override
+            public void updateItem(String item, boolean empty) {
+                super.updateItem(item, empty);
+                if (empty || item == null) {
+                    setText(null);
+                    setGraphic(null);
+                } else {
+                    if (isEditing()) {
+                        // handling in startEdit
+                    } else {
+                        setText(getDisplayText(item));
+                        setGraphic(null);
+                    }
+                }
+            }
+            
+            private String getDisplayText(String val) {
+                if (getTableRow() != null && getTableRow().getItem() != null) {
+                    String lowerName = getTableRow().getItem().getName().toLowerCase();
+                    if (KNOWN_ENUMS.containsKey(lowerName)) {
+                        try {
+                            int idx = Integer.parseInt(val != null ? val.trim() : "0");
+                            java.util.List<String> options = KNOWN_ENUMS.get(lowerName);
+                            if (idx >= 0 && idx < options.size()) {
+                                return options.get(idx);
+                            }
+                        } catch (Exception e) {}
+                    }
+                }
+                return val;
+            }
+        };
+    }
+
+    private void autoConfigParameters() {
+        if (paramTable.getItems().isEmpty()) {
+            logView.log("WARN", "No parameters loaded. Please select an EA first.");
+            return;
+        }
+
+        int activated = 0;
+        int skipped = 0;
+
+        for (com.backtester.config.EaParameter param : paramTable.getItems()) {
+            String name = param.getName();
+            String value = param.getValue();
+
+            if (isExcludedParameterName(name) || !isNumericValue(value)) {
+                param.setOptimizeEnabled(false);
+                skipped++;
+                continue;
+            }
+
+            double[] range = calculateOptRange(name, value);
+            if (range == null) {
+                param.setOptimizeEnabled(false);
+                skipped++;
+                continue;
+            }
+
+            double steps = (range[2] - range[0]) / range[1];
+            if (steps < 5) {
+                param.setOptimizeEnabled(false);
+                skipped++;
+                continue;
+            }
+
+            param.setOptimizeEnabled(true);
+            param.setOptimizeStart(formatNumber(range[0]));
+            param.setOptimizeStep(formatNumber(range[1]));
+            param.setOptimizeEnd(formatNumber(range[2]));
+            activated++;
+        }
+        paramTable.refresh();
+        logView.log("INFO", "AutoConfig applied: " + activated + " enabled, " + skipped + " skipped.");
+    }
+
+    private boolean isExcludedParameterName(String name) {
+        String lower = name.toLowerCase();
+        return lower.contains("magic") || lower.contains("slippage") || lower.contains("comment") || lower.contains("color");
+    }
+
+    private boolean isNumericValue(String value) {
+        if (value == null || value.isEmpty() || value.contains(":") || value.contains(",")) return false;
+        try { Double.parseDouble(value); return true; } catch (NumberFormatException e) { return false; }
+    }
+
+    private double[] calculateOptRange(String name, String currentValue) {
+        double current;
+        try { current = Double.parseDouble(currentValue); } catch (NumberFormatException e) { return null; }
+        
+        double start = 1;
+        double end = current;
+        double step = 1;
+        
+        String lower = name.toLowerCase();
+        if (lower.contains("lot") || lower.contains("volume")) {
+            start = 0.01;
+            end = Math.max(current, 0.1);
+            step = 0.01;
+        } else if (lower.contains("dist") || lower.contains("step") || lower.contains("tp") || lower.contains("sl")) {
+            start = 10;
+            end = Math.max(current, 100);
+            step = 10;
+        } else if (lower.contains("period") || lower.contains("ma") || lower.contains("rsi")) {
+            start = 2;
+            end = Math.max(current, 50);
+            step = 1;
+        } else if (lower.contains("mult") || lower.contains("factor")) {
+            start = 1.0;
+            end = Math.max(current, 3.0);
+            step = 0.1;
+        } else {
+            if (current == 0) return null;
+            if (current < 1) {
+                start = 0.01;
+                end = current;
+                step = 0.01;
+            } else if (current <= 10) {
+                start = 1;
+                end = current;
+                step = 1;
+            } else if (current <= 100) {
+                start = 5;
+                end = current;
+                step = 5;
+            } else {
+                start = 10;
+                end = current;
+                step = 10;
+            }
+        }
+        
+        return new double[]{start, step, end};
+    }
+
+    private String formatNumber(double value) {
+        if (value == (long) value) return String.format(java.util.Locale.US, "%d", (long) value);
+        else return String.format(java.util.Locale.US, "%s", value);
+    }
+
+    private void loadFromFile() {
+        javafx.stage.FileChooser chooser = new javafx.stage.FileChooser();
+        chooser.setTitle("Load .set File");
+        chooser.getExtensionFilters().add(new javafx.stage.FileChooser.ExtensionFilter("MT5 Set Files", "*.set"));
+        java.io.File file = chooser.showOpenDialog(root.getScene().getWindow());
+        if (file != null) {
+            java.util.List<com.backtester.config.EaParameter> params = eaParamManager.readSetFile(file.toPath());
+            if (params != null && !params.isEmpty()) {
+                paramTable.getItems().setAll(params);
+                logView.log("INFO", "Loaded parameters from " + file.getName());
+            } else {
+                logView.log("ERROR", "Failed to load parameters or file is empty.");
+            }
+        }
+    }
+
+    private void saveToFile() {
+        if (paramTable.getItems().isEmpty()) {
+            logView.log("WARN", "No parameters to save.");
+            return;
+        }
+        String eaName = com.backtester.config.EaParameterManager.extractEaBaseName(expertField.getText());
+        javafx.stage.FileChooser chooser = new javafx.stage.FileChooser();
+        chooser.setTitle("Save .set File");
+        chooser.setInitialFileName(eaName.isEmpty() ? "params.set" : eaName + ".set");
+        chooser.getExtensionFilters().add(new javafx.stage.FileChooser.ExtensionFilter("MT5 Set Files", "*.set"));
+        java.io.File file = chooser.showSaveDialog(root.getScene().getWindow());
+        if (file != null) {
+            eaParamManager.writeSetFile(file.toPath(), new java.util.ArrayList<>(paramTable.getItems()), eaName);
+            logView.log("INFO", "Saved parameters to " + file.getName());
+        }
+    }
+
+    private void saveParametersOnDemand() {
+        String expert = expertField.getText().trim();
+        if (expert.isEmpty()) return;
+        if (paramTable != null && !paramTable.getItems().isEmpty()) {
+            com.backtester.database.DatabaseManager.getInstance().saveEaParameterSettings(expert, "GLOBAL", "GLOBAL", new com.google.gson.Gson().toJson(paramTable.getItems()));
+            eaParamManager.saveCustomParameters(expert, new java.util.ArrayList<>(paramTable.getItems()));
+        }
     }
 }

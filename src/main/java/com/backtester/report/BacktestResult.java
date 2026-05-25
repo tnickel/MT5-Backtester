@@ -150,6 +150,10 @@ public class BacktestResult {
     public List<double[]> getEquityHistory() { return equityHistory; }
     public void setEquityHistory(List<double[]> equityHistory) { this.equityHistory = equityHistory; }
 
+    private transient int dbId = -1;
+    public int getDbId() { return dbId; }
+    public void setDbId(int dbId) { this.dbId = dbId; }
+
     @Override
     public String toString() {
         return String.format("BacktestResult{expert='%s', symbol='%s', period='%s', " +

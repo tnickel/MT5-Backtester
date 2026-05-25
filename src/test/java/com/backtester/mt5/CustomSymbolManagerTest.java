@@ -77,4 +77,41 @@ public class CustomSymbolManagerTest {
         assertEquals("Data originName should be preserved", "PERSIST", loadedInfo.originName);
         assertEquals("Data barCount should be preserved", 5000L, loadedInfo.barCount);
     }
+
+    @Test
+    public void testToCustomNameEdgeCases() {
+        assertEquals("_Duka", CustomSymbolManager.toCustomName(""));
+        try {
+            CustomSymbolManager.toCustomName(null);
+            fail("Expected NullPointerException");
+        } catch (NullPointerException e) {
+            // expected
+        }
+    }
+
+    @Test
+    public void testRegisterDuplicateSymbol() throws Exception {
+        CustomSymbolManager manager = new CustomSymbolManager(tempFolder.getRoot().toPath());
+        manager.registerSymbol("EURUSD_Duka", "EURUSD", LocalDate.of(2025, 1, 1), LocalDate.of(2025, 2, 1), 5, 100L);
+        assertEquals(100L, manager.getSymbolInfo("EURUSD_Duka").barCount);
+        
+        manager.registerSymbol("EURUSD_Duka", "EURUSD", LocalDate.of(2025, 1, 1), LocalDate.of(2025, 3, 1), 5, 250L);
+        assertEquals(250L, manager.getSymbolInfo("EURUSD_Duka").barCount);
+        assertEquals("2025-03-01", manager.getSymbolInfo("EURUSD_Duka").dataTo);
+    }
+
+    @Test
+    public void testRegisterInvalidDigits() throws Exception {
+        CustomSymbolManager manager = new CustomSymbolManager(tempFolder.getRoot().toPath());
+        manager.registerSymbol("EURUSD_Duka", "EURUSD", LocalDate.now(), LocalDate.now(), -1, 100L);
+        assertEquals(-1, manager.getSymbolInfo("EURUSD_Duka").digits);
+    }
+
+    @Test
+    public void testRemoveNonExistentSymbol() throws Exception {
+        CustomSymbolManager manager = new CustomSymbolManager(tempFolder.getRoot().toPath());
+        assertFalse(manager.hasSymbol("NON_EXISTENT_Duka"));
+        manager.removeSymbol("NON_EXISTENT_Duka");
+        assertFalse(manager.hasSymbol("NON_EXISTENT_Duka"));
+    }
 }

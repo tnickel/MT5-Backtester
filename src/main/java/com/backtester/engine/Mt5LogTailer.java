@@ -132,6 +132,38 @@ public class Mt5LogTailer implements Runnable {
         return lastPos;
     }
 
+    public static boolean shouldForwardToUi(String line) {
+        if (line == null) return false;
+        String lower = line.toLowerCase();
+        
+        // Always show warnings and errors
+        if (lower.contains("error") || lower.contains("failed") || lower.contains("cannot load") || 
+            lower.contains("warning") || lower.contains("warn") || lower.contains("critical") || 
+            lower.contains("exception") || lower.contains("timeout") || lower.contains("aborted")) {
+            return true;
+        }
+        
+        // Show terminal lifecycle events
+        if (lower.contains("exit with code") || lower.contains("stopped with") || 
+            lower.contains("shutdown with") || lower.contains("started")) {
+            return true;
+        }
+        
+        // Show connection/network updates
+        if (lower.contains("connected") || lower.contains("disconnected") || lower.contains("login")) {
+            return true;
+        }
+        
+        // Show backtest summary statistics
+        if (lower.contains("final balance") || lower.contains("testing finished") || 
+            lower.contains("test passed") || (lower.contains("ticks,") && lower.contains("bars generated")) ||
+            lower.contains("ticks for all symbols")) {
+            return true;
+        }
+        
+        return false;
+    }
+
     private void processNewLines(String content, String prefix) {
         String[] lines = content.split("\\r?\\n");
         for (String line : lines) {
@@ -150,11 +182,15 @@ public class Mt5LogTailer implements Runnable {
                     } catch (Exception e) {}
                 }
 
-                // If the line is an error, highlight it
-                if (lowerLine.contains("error") || lowerLine.contains("failed") || lowerLine.contains("cannot load")) {
-                    logCallback.accept("❌ " + prefix + line);
+                if (shouldForwardToUi(line)) {
+                    // If the line is an error, highlight it
+                    if (lowerLine.contains("error") || lowerLine.contains("failed") || lowerLine.contains("cannot load")) {
+                        logCallback.accept("❌ " + prefix + line);
+                    } else {
+                        logCallback.accept(prefix + line);
+                    }
                 } else {
-                    logCallback.accept(prefix + line);
+                    log.info(prefix + line);
                 }
             }
         }

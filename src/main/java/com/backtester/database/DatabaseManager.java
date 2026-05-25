@@ -120,9 +120,19 @@ public class DatabaseManager {
                 "results_json TEXT" +
                 ");";
 
+        String sqlEaParamSettings = "CREATE TABLE IF NOT EXISTS EA_PARAMETER_SETTINGS (" +
+                "expert_name TEXT," +
+                "symbol TEXT," +
+                "period TEXT," +
+                "parameters_json TEXT," +
+                "updated_at INTEGER," +
+                "PRIMARY KEY (expert_name, symbol, period)" +
+                ");";
+
         try (Connection conn = connect(); Statement stmt = conn.createStatement()) {
             stmt.execute(sqlHistory);
             stmt.execute(sqlSavedConfig);
+            stmt.execute(sqlEaParamSettings);
 
             // Check if OPTIMIZATION_STATE has the sensitivity_results_json column, otherwise recreate it
             try {
@@ -185,20 +195,26 @@ public class DatabaseManager {
         }
     }
 
-    public void saveRun(String runType, String expertName, long timestamp, String resultJson, String htmlPath) {
+    public int saveRun(String runType, String expertName, long timestamp, String resultJson, String htmlPath) {
         String sql = "INSERT INTO HISTORY_RUNS(run_type, expert_name, timestamp, result_json, html_path) VALUES(?,?,?,?,?)";
-        
-        try (Connection conn = connect(); PreparedStatement pstmt = conn.prepareStatement(sql)) {
+        int generatedId = -1;
+        try (Connection conn = connect(); PreparedStatement pstmt = conn.prepareStatement(sql, Statement.RETURN_GENERATED_KEYS)) {
             pstmt.setString(1, runType);
             pstmt.setString(2, expertName);
             pstmt.setLong(3, timestamp);
             pstmt.setString(4, resultJson);
             pstmt.setString(5, htmlPath);
             pstmt.executeUpdate();
-            log.info("Saved {} run for {} to database.", runType, expertName);
+            try (ResultSet rs = pstmt.getGeneratedKeys()) {
+                if (rs.next()) {
+                    generatedId = rs.getInt(1);
+                }
+            }
+            log.info("Saved {} run for {} to database with ID {}.", runType, expertName, generatedId);
         } catch (SQLException e) {
             log.error("Failed to save run to database", e);
         }
+        return generatedId;
     }
 
     public List<HistoryRun> getAllRuns() {
@@ -564,6 +580,18 @@ public class DatabaseManager {
         }
     }
 
+    public void updateBatchResults(int id, String resultsJson) {
+        String sql = "UPDATE MULTI_BACKTEST_BATCHES SET results_json = ? WHERE id = ?";
+        try (Connection conn = connect(); PreparedStatement p = conn.prepareStatement(sql)) {
+            p.setString(1, resultsJson);
+            p.setInt(2, id);
+            p.executeUpdate();
+            log.info("Updated batch ID {} results in database.", id);
+        } catch (SQLException e) {
+            log.error("Failed to update batch ID: " + id, e);
+        }
+    }
+
     public void clearBatches() {
         String sql = "DELETE FROM MULTI_BACKTEST_BATCHES";
         try (Connection conn = connect(); Statement stmt4 = conn.createStatement()) {
@@ -595,5 +623,48 @@ public class DatabaseManager {
             log.error("Failed to fetch runs by type '{}'", runType, e);
         }
         return runs;
+    }
+
+    public void saveEaParameterSettings(String expertName, String symbol, String period, String parametersJson) {
+        String sql = "INSERT OR REPLACE INTO EA_PARAMETER_SETTINGS (expert_name, symbol, period, parameters_json, updated_at) VALUES (?, ?, ?, ?, ?)";
+        try (Connection conn = connect(); PreparedStatement pstmt = conn.prepareStatement(sql)) {
+            pstmt.setString(1, expertName);
+            pstmt.setString(2, symbol);
+            pstmt.setString(3, period);
+            pstmt.setString(4, parametersJson);
+            pstmt.setLong(5, System.currentTimeMillis());
+            pstmt.executeUpdate();
+            log.info("Saved EA parameter settings to DB for: {} [{}, {}]", expertName, symbol, period);
+        } catch (SQLException e) {
+            log.error("Failed to save EA parameter settings to database for: " + expertName, e);
+        }
+    }
+
+    public String getEaParameterSettings(String expertName, String symbol, String period) {
+        String sql = "SELECT parameters_json FROM EA_PARAMETER_SETTINGS WHERE expert_name = ? AND symbol = ? AND period = ?";
+        try (Connection conn = connect(); PreparedStatement pstmt = conn.prepareStatement(sql)) {
+            pstmt.setString(1, expertName);
+            pstmt.setString(2, symbol);
+            pstmt.setString(3, period);
+            try (ResultSet rs = pstmt.executeQuery()) {
+                if (rs.next()) {
+                    return rs.getString("parameters_json");
+                }
+            }
+        } catch (SQLException e) {
+            log.error("Failed to fetch EA parameter settings from database for: " + expertName, e);
+        }
+        return null;
+    }
+
+    public void deleteRunsByType(String runType) {
+        String sql = "DELETE FROM HISTORY_RUNS WHERE run_type = ?";
+        try (Connection conn = connect(); PreparedStatement pstmt = conn.prepareStatement(sql)) {
+            pstmt.setString(1, runType);
+            int count = pstmt.executeUpdate();
+            log.info("Deleted runs of type {} ({} total) from database.", runType, count);
+        } catch (SQLException e) {
+            log.error("Failed to delete runs of type " + runType, e);
+        }
     }
 }

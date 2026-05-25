@@ -615,6 +615,12 @@ public class BacktestRunner {
             DateTimeFormatter.ofPattern("HH:mm:ss")) + " " + message;
         log.info(message);
         if (logCallback != null) {
+            if (message.startsWith("[MT5] ")) {
+                String stripped = message.substring(6).trim();
+                if (!com.backtester.engine.Mt5LogTailer.shouldForwardToUi(stripped)) {
+                    return; // skip forwarding to UI
+                }
+            }
             logCallback.accept(timestamped);
         }
     }
