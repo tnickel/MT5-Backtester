@@ -94,6 +94,24 @@ Comprehensive EA input parameter lifecycle management.
 - **Available Tools**: Exposes SQL queries, schema extraction, and specialized functions like `get_sensitivity_overview`, `get_robust_strategies`, and `get_fragile_parameters`.
 - **Use Case**: Enables users to prompt Claude to perform deep statistical analysis on optimization runs and parameter sensitivity curves directly from the chat interface.
 
+### 2.10. Workflow Automator (🔄 Workflow Automator)
+An automated pipeline framework that guides the user through strategy selection, batch optimization, filtering, robustness checks, and AI-assisted analysis.
+- **WorkflowEngine State Machine**: Coordinates a 6-step lifecycle that maintains current execution state (persisted to the local SQLite database in `WORKFLOW_STATE` to survive application restarts).
+- **Interactive Steps**:
+  1. *Configuration*: Sets target EA, timeframe, and parameters.
+  2. *MT5 Optimization*: Runs optimizations via configurable mode (Complete vs. Fast Genetic).
+  3. *Diversity Filtering*: Automatically selects the top 5 diverse strategy profiles based on trade variance.
+  4. *Stresstesting*: Conducts automated parameter variation sweeps (CV%) and shifts historical validation windows.
+  5. *AI Evaluation*: Feeds backtest and sensitivity results to local LLMs via OpenRouter, parsing a 0-100 Stability Score and generating a structured HTML Markdown report.
+  6. *Portfolio Selection*: Stages the final 3-5 stable strategies.
+- **Interactive Results Table**: Displays comprehensive parameters and performance metrics for optimization steps.
+  - *Key Metrics Columns*: Shows `BT Profit`, `BT Trades`, `BT PF` (Profit Factor), `BT DD%` (Drawdown), `BT RF` (Recovery Factor), `FW Profit`, `FW Trades`, `FW PF`, `FW DD%`, and `FW RF`, with clean formatting (e.g. 2 decimal places, automatic conversion of `NaN` to `"-"` display).
+  - *Right-Click Context Menu (Single Backtest Execution)*: Allows the user to select any parameter combination row in the table and execute a targeted verification backtest in MT5.
+    - `▶ Backtest starten (Normal)`: Runs a background backtest, streaming output in real-time within an interactive JavaFX progress dialog, and auto-opens the report viewer upon completion.
+    - `👁 Backtest starten (Visuell)`: Runs the test visually with the MT5 GUI open so the user can inspect trades.
+- **Unified Strategy Details Dialog (Mega-Report)**: A premium dialog containing side-by-side BT, FW, and Evaluation metric cards, a seamless connected in-sample/out-of-sample `LineChart` equity curve, a parameter variation breakdown table featuring organic sparkline parameter charts drawn directly into table cells, and a safety verdict box based on the worst-case coefficient of variation.
+- **JavaFX WebView Click Bridge**: Captures click events in the HTML AI evaluation report. A native `JavaBridge` registered to the WebView's JavaScript context maps row clicks on strategy IDs (`window.app.showPass(passNumber)`) directly back to the Java FX thread to pop up the unified details dialog.
+
 ## 3. Technology Stack & Architecture
 
 ### 3.1. Technologies Used

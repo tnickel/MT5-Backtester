@@ -129,10 +129,38 @@ public class DatabaseManager {
                 "PRIMARY KEY (expert_name, symbol, period)" +
                 ");";
 
+        String sqlWorkflowState = "CREATE TABLE IF NOT EXISTS WORKFLOW_STATE (" +
+                "id INTEGER PRIMARY KEY," +
+                "expert_name TEXT," +
+                "symbol TEXT," +
+                "period TEXT," +
+                "from_date TEXT," +
+                "to_date TEXT," +
+                "deposit INTEGER," +
+                "currency TEXT," +
+                "leverage TEXT," +
+                "tick_model INTEGER," +
+                "ea_parameters_json TEXT," +
+                "opt_result_json TEXT," +
+                "selected_diverse_passes_json TEXT," +
+                "sensitivity_results_json TEXT," +
+                "ki_report_text TEXT," +
+                "final_selected_passes_json TEXT," +
+                "last_active_step INTEGER" +
+                ");";
+
+        String sqlWorkflowStrategyConfigs = "CREATE TABLE IF NOT EXISTS WORKFLOW_STRATEGY_CONFIGS (" +
+                "expert_name TEXT PRIMARY KEY," +
+                "config_json TEXT," +
+                "updated_at INTEGER" +
+                ");";
+
         try (Connection conn = connect(); Statement stmt = conn.createStatement()) {
             stmt.execute(sqlHistory);
             stmt.execute(sqlSavedConfig);
             stmt.execute(sqlEaParamSettings);
+            stmt.execute(sqlWorkflowState);
+            stmt.execute(sqlWorkflowStrategyConfigs);
 
             // Check if OPTIMIZATION_STATE has the sensitivity_results_json column, otherwise recreate it
             try {
@@ -666,5 +694,112 @@ public class DatabaseManager {
         } catch (SQLException e) {
             log.error("Failed to delete runs of type " + runType, e);
         }
+    }
+
+    public void saveWorkflowState(
+            String expertName, String symbol, String period,
+            String fromDate, String toDate, int deposit,
+            String currency, String leverage, int tickModel,
+            String eaParametersJson, String optResultJson,
+            String selectedDiversePassesJson, String sensitivityResultsJson,
+            String kiReportText, String finalSelectedPassesJson,
+            int lastActiveStep) {
+        
+        String sql = "INSERT OR REPLACE INTO WORKFLOW_STATE (" +
+                "id, expert_name, symbol, period, from_date, to_date, deposit, " +
+                "currency, leverage, tick_model, ea_parameters_json, opt_result_json, " +
+                "selected_diverse_passes_json, sensitivity_results_json, ki_report_text, " +
+                "final_selected_passes_json, last_active_step" +
+                ") VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+        
+        try (Connection conn = connect(); PreparedStatement p = conn.prepareStatement(sql)) {
+            p.setString(1, expertName);
+            p.setString(2, symbol);
+            p.setString(3, period);
+            p.setString(4, fromDate);
+            p.setString(5, toDate);
+            p.setInt(6, deposit);
+            p.setString(7, currency);
+            p.setString(8, leverage);
+            p.setInt(9, tickModel);
+            p.setString(10, eaParametersJson);
+            p.setString(11, optResultJson);
+            p.setString(12, selectedDiversePassesJson);
+            p.setString(13, sensitivityResultsJson);
+            p.setString(14, kiReportText);
+            p.setString(15, finalSelectedPassesJson);
+            p.setInt(16, lastActiveStep);
+            p.executeUpdate();
+            log.info("Saved workflow state to database.");
+        } catch (SQLException e) {
+            log.error("Failed to save workflow state", e);
+        }
+    }
+
+    public Object[] getWorkflowState() {
+        String sql = "SELECT * FROM WORKFLOW_STATE WHERE id = 1";
+        try (Connection conn = connect(); Statement stmt = conn.createStatement(); ResultSet rs = stmt.executeQuery(sql)) {
+            if (rs.next()) {
+                return new Object[]{
+                    rs.getString("expert_name"),
+                    rs.getString("symbol"),
+                    rs.getString("period"),
+                    rs.getString("from_date"),
+                    rs.getString("to_date"),
+                    rs.getInt("deposit"),
+                    rs.getString("currency"),
+                    rs.getString("leverage"),
+                    rs.getInt("tick_model"),
+                    rs.getString("ea_parameters_json"),
+                    rs.getString("opt_result_json"),
+                    rs.getString("selected_diverse_passes_json"),
+                    rs.getString("sensitivity_results_json"),
+                    rs.getString("ki_report_text"),
+                    rs.getString("final_selected_passes_json"),
+                    rs.getInt("last_active_step")
+                };
+            }
+        } catch (SQLException e) {
+            log.error("Failed to get workflow state", e);
+        }
+        return null;
+    }
+
+    public void clearWorkflowState() {
+        String sql = "DELETE FROM WORKFLOW_STATE WHERE id = 1";
+        try (Connection conn = connect(); Statement stmt = conn.createStatement()) {
+            stmt.executeUpdate(sql);
+            log.info("Cleared workflow state.");
+        } catch (SQLException e) {
+            log.error("Failed to clear workflow state", e);
+        }
+    }
+
+    public void saveWorkflowStrategyConfig(String expertName, String configJson) {
+        String sql = "INSERT OR REPLACE INTO WORKFLOW_STRATEGY_CONFIGS (expert_name, config_json, updated_at) VALUES (?, ?, ?)";
+        try (Connection conn = connect(); PreparedStatement pstmt = conn.prepareStatement(sql)) {
+            pstmt.setString(1, expertName);
+            pstmt.setString(2, configJson);
+            pstmt.setLong(3, System.currentTimeMillis());
+            pstmt.executeUpdate();
+            log.info("Saved strategy config to DB for: {}", expertName);
+        } catch (SQLException e) {
+            log.error("Failed to save strategy config to database for: " + expertName, e);
+        }
+    }
+
+    public String getWorkflowStrategyConfig(String expertName) {
+        String sql = "SELECT config_json FROM WORKFLOW_STRATEGY_CONFIGS WHERE expert_name = ?";
+        try (Connection conn = connect(); PreparedStatement pstmt = conn.prepareStatement(sql)) {
+            pstmt.setString(1, expertName);
+            try (ResultSet rs = pstmt.executeQuery()) {
+                if (rs.next()) {
+                    return rs.getString("config_json");
+                }
+            }
+        } catch (SQLException e) {
+            log.error("Failed to fetch strategy config from database for: " + expertName, e);
+        }
+        return null;
     }
 }

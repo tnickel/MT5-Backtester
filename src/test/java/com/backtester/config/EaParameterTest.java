@@ -6,62 +6,83 @@ import static org.junit.Assert.*;
 public class EaParameterTest {
 
     @Test
-    public void testIsModified() {
-        EaParameter param = new EaParameter("TakeProfit", "50");
-        
-        // Initial sollte der Wert dem Standardwert entsprechen, also nicht modifiziert sein
-        assertFalse("Parameter sollte initial nicht als modifiziert gelten", param.isModified());
-        
-        // Wert ändern
-        param.setValue("60");
-        assertTrue("Parameter sollte nach Änderung als modifiziert gelten", param.isModified());
+    public void testDefaultState() {
+        EaParameter param = new EaParameter();
+        assertNull(param.getName());
+        assertNull(param.getValue());
+        assertNull(param.getDefaultValue());
+        assertNull(param.getSection());
+        assertEquals("", param.getOptimizeStart());
+        assertEquals("", param.getOptimizeStep());
+        assertEquals("", param.getOptimizeEnd());
+        assertFalse(param.isOptimizeEnabled());
+        assertFalse(param.isStringType());
+        assertEquals("", param.getRawLine());
     }
 
     @Test
-    public void testResetToDefault() {
-        EaParameter param = new EaParameter("StopLoss", "30");
-        param.setValue("40");
-        assertTrue(param.isModified());
-        
-        // Zurücksetzen
-        param.resetToDefault();
-        assertEquals("Wert sollte wieder auf Standardwert zurückgesetzt sein", "30", param.getValue());
-        assertFalse("Parameter sollte nach Reset nicht mehr als modifiziert gelten", param.isModified());
-    }
+    public void testConstructorAndGettersSetters() {
+        EaParameter param = new EaParameter("InpADRPeriod", "14");
+        assertEquals("InpADRPeriod", param.getName());
+        assertEquals("14", param.getValue());
+        assertEquals("14", param.getDefaultValue());
 
-    @Test
-    public void testToSetFileLine_StringType() {
-        EaParameter param = new EaParameter("ExpertName", "MyBot");
-        param.setStringType(true);
-        
-        // String-Parameter haben keine || Formatierungen in .set Dateien
-        String expected = "ExpertName=MyBot";
-        assertEquals("Formatierung für String-Typ fehlgeschlagen", expected, param.toSetFileLine());
-    }
-
-    @Test
-    public void testToSetFileLine_NumericType_NotOptimized() {
-        EaParameter param = new EaParameter("TrailingStop", "15");
         param.setOptimizeStart("10");
-        param.setOptimizeStep("5");
-        param.setOptimizeEnd("50");
-        param.setOptimizeEnabled(false);
-        
-        // Erwartetes Format: Name=Value||Start||Step||End||N
-        String expected = "TrailingStop=15||10||5||50||N";
-        assertEquals("Formatierung für numerischen Typ (nicht optimiert) fehlgeschlagen", expected, param.toSetFileLine());
+        param.setOptimizeStep("2");
+        param.setOptimizeEnd("20");
+        param.setOptimizeEnabled(true);
+        param.setSection("Indicator settings");
+        param.setStringType(false);
+        param.setRawLine("InpADRPeriod=14||10||2||20||Y");
+
+        assertEquals("10", param.getOptimizeStart());
+        assertEquals("2", param.getOptimizeStep());
+        assertEquals("20", param.getOptimizeEnd());
+        assertTrue(param.isOptimizeEnabled());
+        assertEquals("Indicator settings", param.getSection());
+        assertFalse(param.isStringType());
+        assertEquals("InpADRPeriod=14||10||2||20||Y", param.getRawLine());
     }
 
     @Test
-    public void testToSetFileLine_NumericType_Optimized() {
-        EaParameter param = new EaParameter("MagicNumber", "12345");
-        param.setOptimizeStart("10000");
-        param.setOptimizeStep("1");
-        param.setOptimizeEnd("20000");
+    public void testIsModified() {
+        EaParameter param = new EaParameter("InpGridStep", "20");
+        assertFalse(param.isModified());
+
+        param.setValue("25");
+        assertTrue(param.isModified());
+
+        param.resetToDefault();
+        assertFalse(param.isModified());
+        assertEquals("20", param.getValue());
+    }
+
+    @Test
+    public void testToSetFileLine() {
+        EaParameter p1 = new EaParameter("InpGridStep", "20");
+        p1.setOptimizeStart("10");
+        p1.setOptimizeStep("5");
+        p1.setOptimizeEnd("50");
+        p1.setOptimizeEnabled(true);
+        assertEquals("InpGridStep=20||10||5||50||Y", p1.toSetFileLine());
+
+        p1.setOptimizeEnabled(false);
+        assertEquals("InpGridStep=20||10||5||50||N", p1.toSetFileLine());
+
+        EaParameter p2 = new EaParameter("InpEAComment", "CC ADR EA");
+        p2.setStringType(true);
+        assertEquals("InpEAComment=CC ADR EA", p2.toSetFileLine());
+    }
+
+    @Test
+    public void testToggleOptimizeEnabled() {
+        EaParameter param = new EaParameter("InpStochK", "5");
+        assertFalse(param.isOptimizeEnabled());
+
         param.setOptimizeEnabled(true);
-        
-        // Erwartetes Format: Name=Value||Start||Step||End||Y
-        String expected = "MagicNumber=12345||10000||1||20000||Y";
-        assertEquals("Formatierung für numerischen Typ (optimiert) fehlgeschlagen", expected, param.toSetFileLine());
+        assertTrue(param.isOptimizeEnabled());
+
+        param.setOptimizeEnabled(false);
+        assertFalse(param.isOptimizeEnabled());
     }
 }

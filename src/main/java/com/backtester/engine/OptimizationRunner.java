@@ -111,8 +111,10 @@ public class OptimizationRunner {
             }
             pb.directory(mt5Dir.toFile());
 
+            final java.util.concurrent.atomic.AtomicInteger currentProgressVal = new java.util.concurrent.atomic.AtomicInteger(0);
             tailer = new Mt5LogTailer(mt5Dir, this::logMessage);
             tailer.setProgressCallback((current, ignored) -> {
+                currentProgressVal.set(current);
                 if (progressCallback != null) {
                     progressCallback.accept(current, (int) totalPasses);
                 }
@@ -126,8 +128,53 @@ public class OptimizationRunner {
             // Wait for completion
             Path reportXml = mt5Dir.resolve(REPORT_FILENAME + ".xml");
             if (optConfig.isShutdownTerminal()) {
-                int exitCode = currentProcess.waitFor();
-                logMessage("MT5 process exited with code " + exitCode);
+                boolean finished = false;
+                long lastProgressTime = System.currentTimeMillis();
+                int lastProgress = 0;
+                
+                while (!finished && !cancelled && currentProcess.isAlive()) {
+                    Thread.sleep(2000);
+                    int currentProgress = currentProgressVal.get();
+                    long now = System.currentTimeMillis();
+                    
+                    if (currentProgress > lastProgress) {
+                        lastProgress = currentProgress;
+                        lastProgressTime = now;
+                    } else if (now - lastProgressTime > 600_000) { // 10 minutes without progress
+                        if (lastProgress == 0 && now - lastProgressTime > 900_000) { // 15 minutes to start up
+                            logMessage("ERROR: MT5 terminal hung during startup (no progress for 15 minutes). Terminating process...");
+                            currentProcess.destroyForcibly();
+                            cancelled = true;
+                            result.setMessage("Hung during startup");
+                            break;
+                        } else if (lastProgress > 0) {
+                            logMessage("ERROR: No optimization progress detected for 10 minutes. Terminating process...");
+                            currentProcess.destroyForcibly();
+                            cancelled = true;
+                            result.setMessage("Progress timeout");
+                            break;
+                        }
+                    }
+                    
+                    if (Files.exists(reportXml)) {
+                        finished = true;
+                    }
+                }
+                
+                if (!cancelled) {
+                    logMessage("Waiting for MT5 process to exit...");
+                    try {
+                        if (!currentProcess.waitFor(30, java.util.concurrent.TimeUnit.SECONDS)) {
+                            logMessage("WARNING: MT5 process did not exit within 30 seconds after report completion. Forcibly terminating process...");
+                            currentProcess.destroyForcibly();
+                        }
+                    } catch (InterruptedException e) {
+                        logMessage("Interrupted while waiting for MT5 process to exit.");
+                        Thread.currentThread().interrupt();
+                    }
+                    int exitCode = currentProcess.isAlive() ? -1 : currentProcess.exitValue();
+                    logMessage("MT5 process exited with code " + exitCode);
+                }
             } else {
                 logMessage("Waiting for optimization to finish (MT5 will remain open)...");
                 boolean finished = false;

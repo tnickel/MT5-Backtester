@@ -286,6 +286,24 @@ public class EaParameterManagerTest {
     }
 
     @Test
+    public void testReadSetFileWithoutBomUtf16Le() throws IOException {
+        EaParameterManager manager = new EaParameterManager();
+        Path file = tempFolder.newFile("nobom_utf16le.set").toPath();
+        
+        // Write UTF-16 LE content without BOM bytes (no FF FE prefix)
+        byte[] rawBytes = "RobotName=SuperTrend\r\n".getBytes(java.nio.charset.StandardCharsets.UTF_16LE);
+        Files.write(file, rawBytes);
+        
+        List<EaParameter> read = manager.readSetFile(file);
+        assertEquals(1, read.size());
+        
+        EaParameter r = read.get(0);
+        assertEquals("RobotName", r.getName());
+        assertEquals("SuperTrend", r.getValue());
+        assertTrue(r.isStringType());
+    }
+
+    @Test
     public void testCountModifiedParametersWithNonexistentExpert() {
         EaParameterManager manager = new EaParameterManager();
         assertEquals(0, manager.countModifiedParameters("NonExistentBot"));

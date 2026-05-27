@@ -68,6 +68,13 @@ public class MainView {
         tabPane.getTabs().add(robustnessTab);
         robustnessView.bindTab(robustnessTab);
         
+        // Integration of new WorkflowAutomator
+        WorkflowView workflowView = new WorkflowView(logView);
+        Tab workflowTab = new Tab("🔄 Workflow Automator", workflowView.getView());
+        tabPane.getTabs().add(workflowTab);
+        tabPane.getSelectionModel().select(workflowTab);
+        workflowView.bindTab(workflowTab);
+        
         HistoryView historyView = new HistoryView();
         Tab databaseTab = new Tab("Database", historyView.getView());
         tabPane.getTabs().add(databaseTab);

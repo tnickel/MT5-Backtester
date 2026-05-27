@@ -29,6 +29,7 @@ public class RobustnessRunner {
     private final EaParameterManager eaParamManager;
     private java.util.function.Consumer<String> logCallback;
     private java.util.function.Consumer<Integer> progressCallback;
+    private java.util.function.BiConsumer<Integer, Integer> progressCountCallback;
     private java.util.function.Consumer<String> currentParamCallback;
     private java.util.function.BiConsumer<String, java.util.Map<String, com.backtester.report.OptimizationResult>> paramFinishCallback;
     private OptimizationRunner currentOptRunner = null;
@@ -45,6 +46,10 @@ public class RobustnessRunner {
     
     public void setProgressCallback(java.util.function.Consumer<Integer> progressCallback) {
         this.progressCallback = progressCallback;
+    }
+
+    public void setProgressCountCallback(java.util.function.BiConsumer<Integer, Integer> progressCountCallback) {
+        this.progressCountCallback = progressCountCallback;
     }
     
     public void setCurrentParamCallback(java.util.function.Consumer<String> paramCallback) {
@@ -73,8 +78,10 @@ public class RobustnessRunner {
         RobustnessResult result = new RobustnessResult();
         cancelled = false;
 
-        // Force complete algorithm
-        baseConfig.setOptimizationMode(1); // 1 = Slow Complete Algorithm in MT5
+        // Robustness scan must always use the Complete Algorithm (1) because we sweep parameters individually (1D search space).
+        // The Genetic Algorithm (2) in MT5 requires a minimum of 1024/2048 passes and will fail/hang on small 1D sweeps.
+        int optMode = 1;
+        baseConfig.setOptimizationMode(optMode);
 
         // Find all parameters that user wants to sweep
         List<EaParameter> toSweep = allParameters.stream()
@@ -111,6 +118,7 @@ public class RobustnessRunner {
                 copy.setOptimizeStart(p.getOptimizeStart());
                 copy.setOptimizeStep(p.getOptimizeStep());
                 copy.setOptimizeEnd(p.getOptimizeEnd());
+                copy.setStringType(p.isStringType());
                 
                 // Only enable optimization if it's the current parameter
                 copy.setOptimizeEnabled(p.getName().equals(sweepParam.getName()));
@@ -137,6 +145,10 @@ public class RobustnessRunner {
                 if (progressCallback != null) {
                     int percent = (int) (((double) (currentCount - 1) / totalOperations) * 100);
                     progressCallback.accept(percent);
+                }
+                
+                if (progressCountCallback != null) {
+                    progressCountCallback.accept(currentCount, totalOperations);
                 }
                 
                 long paramStartTime = System.currentTimeMillis();
@@ -168,7 +180,7 @@ public class RobustnessRunner {
                 sweepConfig.setLeverage(baseConfig.getLeverage());
                 // Sweep specifics
                 sweepConfig.setExpertParameters(presetBaseName); // MT5 will find it in Tester profile
-                sweepConfig.setOptimizationMode(1); // 1 = Complete 
+                sweepConfig.setOptimizationMode(optMode);
                 sweepConfig.setOptimizationCriterion(baseConfig.getOptimizationCriterion());
                 sweepConfig.setForwardMode(baseConfig.getForwardMode());
                 sweepConfig.setForwardDate(baseConfig.getForwardDate());
@@ -247,6 +259,7 @@ public class RobustnessRunner {
         }
 
         if (progressCallback != null) progressCallback.accept(100);
+        if (progressCountCallback != null) progressCountCallback.accept(totalOperations, totalOperations);
         logMessage("Robustness Sweep completely finished.");
         return result;
     }

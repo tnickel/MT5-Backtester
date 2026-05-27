@@ -422,4 +422,50 @@
     -fx-background-color: rgba(0, 229, 255, 0.3);
 }
 
+/* Context Menu Styling */
+.context-menu {
+    -fx-background-color: #1a1e28;
+    -fx-border-color: #00e5ff;
+    -fx-border-width: 1.5px;
+    -fx-border-radius: 4px;
+    -fx-background-radius: 4px;
+    -fx-padding: 5px;
+}
+.menu-item {
+    -fx-background-color: transparent;
+    -fx-padding: 6px 15px;
+}
+.menu-item .label {
+    -fx-text-fill: #e6e9f0;
+    -fx-font-family: "Segoe UI";
+    -fx-font-size: 13px;
+}
+.menu-item:focused {
+    -fx-background-color: #00e5ff;
+}
+.menu-item:focused .label {
+    -fx-text-fill: #0b0d13;
+}
+
+/* Currently optimizing row highlighting (Glow effect) */
+.table-row-cell.currently-optimizing {
+    -fx-background-color: rgba(255, 215, 0, 0.22);
+    -fx-border-color: #ffd700;
+    -fx-border-width: 1px 0 1px 0;
+}
+.table-row-cell.currently-optimizing .table-cell {
+    -fx-text-fill: #ffd740;
+    -fx-font-weight: bold;
+}
+
+/* Flat parameter row highlighting (indicating redundancy/no variance) */
+.table-row-cell.flat-parameter {
+    -fx-background-color: rgba(240, 100, 100, 0.15);
+    -fx-border-color: #f06464;
+    -fx-border-width: 1px 0 1px 0;
+}
+.table-row-cell.flat-parameter .table-cell {
+    -fx-text-fill: #ff8a80;
+}
+
 
