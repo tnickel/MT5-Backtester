@@ -40,6 +40,7 @@ public class RobustnessView {
     private ComboBox<String> metricCombo;
     private Spinner<Integer> shiftsSpinner;
     private Spinner<Integer> shiftDaysSpinner;
+    private ComboBox<String> optModeCombo;
 
     // Selection mode radio buttons
     private RadioButton singleEaRadio;
@@ -50,11 +51,14 @@ public class RobustnessView {
     private final EaParameterManager eaParamManager = new EaParameterManager();
     private RobustnessRunner currentRunner;
     private Task<Void> currentTask;
+    private String currentlyOptimizingParamName = null;
     
     // Controls
     private Button startBtn;
     private Button cancelBtn;
     private ProgressBar progress;
+    private Label progressLabel;
+    private final java.util.Set<String> flatParameters = new java.util.HashSet<>();
 
     public RobustnessView(LogView logView, OptimizationView optimizationView) {
         this.logView = logView;
@@ -215,6 +219,12 @@ public class RobustnessView {
         modelCombo.getStyleClass().add("combo-box");
         grid.add(modelCombo, 3, 5);
 
+        // Row 6: Opt. Mode
+        grid.add(new Label("Opt. Mode:"), 0, 6);
+        optModeCombo = new ComboBox<>(FXCollections.observableArrayList(OptimizationConfig.OPTIMIZATION_MODES));
+        optModeCombo.getStyleClass().add("combo-box");
+        grid.add(optModeCombo, 1, 6);
+
         box.getChildren().addAll(titleBox, modeBox, grid);
         return box;
     }
@@ -237,13 +247,31 @@ public class RobustnessView {
             protected void updateItem(EaParameter item, boolean empty) {
                 super.updateItem(item, empty);
                 if (empty || item == null) {
-                    getStyleClass().remove("opt-highlighted");
-                } else if (item.isOptimizeEnabled()) {
-                    if (!getStyleClass().contains("opt-highlighted")) {
-                        getStyleClass().add("opt-highlighted");
-                    }
+                    getStyleClass().removeAll("opt-highlighted", "currently-optimizing", "flat-parameter");
                 } else {
-                    getStyleClass().remove("opt-highlighted");
+                    if (item.isOptimizeEnabled()) {
+                        if (!getStyleClass().contains("opt-highlighted")) {
+                            getStyleClass().add("opt-highlighted");
+                        }
+                    } else {
+                        getStyleClass().remove("opt-highlighted");
+                    }
+                    
+                    if (item.getName().equals(currentlyOptimizingParamName)) {
+                        if (!getStyleClass().contains("currently-optimizing")) {
+                            getStyleClass().add("currently-optimizing");
+                        }
+                    } else {
+                        getStyleClass().remove("currently-optimizing");
+                    }
+
+                    if (flatParameters.contains(item.getName())) {
+                        if (!getStyleClass().contains("flat-parameter")) {
+                            getStyleClass().add("flat-parameter");
+                        }
+                    } else {
+                        getStyleClass().remove("flat-parameter");
+                    }
                 }
             }
         });
@@ -269,23 +297,35 @@ public class RobustnessView {
         TableColumn<EaParameter, String> valCol = new TableColumn<>("Value");
         valCol.setCellValueFactory(new PropertyValueFactory<>("value"));
         valCol.setCellFactory(javafx.scene.control.cell.TextFieldTableCell.forTableColumn());
-        valCol.setOnEditCommit(e -> e.getRowValue().setValue(e.getNewValue()));
+        valCol.setOnEditCommit(e -> {
+            e.getRowValue().setValue(e.getNewValue());
+            saveParametersOnDemand();
+        });
         valCol.setPrefWidth(100);
         
         TableColumn<EaParameter, String> startCol = new TableColumn<>("Start");
         startCol.setCellValueFactory(new PropertyValueFactory<>("optimizeStart"));
         startCol.setCellFactory(javafx.scene.control.cell.TextFieldTableCell.forTableColumn());
-        startCol.setOnEditCommit(e -> e.getRowValue().setOptimizeStart(e.getNewValue()));
+        startCol.setOnEditCommit(e -> {
+            e.getRowValue().setOptimizeStart(e.getNewValue());
+            saveParametersOnDemand();
+        });
         
         TableColumn<EaParameter, String> stepCol = new TableColumn<>("Step");
         stepCol.setCellValueFactory(new PropertyValueFactory<>("optimizeStep"));
         stepCol.setCellFactory(javafx.scene.control.cell.TextFieldTableCell.forTableColumn());
-        stepCol.setOnEditCommit(e -> e.getRowValue().setOptimizeStep(e.getNewValue()));
+        stepCol.setOnEditCommit(e -> {
+            e.getRowValue().setOptimizeStep(e.getNewValue());
+            saveParametersOnDemand();
+        });
         
         TableColumn<EaParameter, String> stopCol = new TableColumn<>("Stop");
         stopCol.setCellValueFactory(new PropertyValueFactory<>("optimizeEnd"));
         stopCol.setCellFactory(javafx.scene.control.cell.TextFieldTableCell.forTableColumn());
-        stopCol.setOnEditCommit(e -> e.getRowValue().setOptimizeEnd(e.getNewValue()));
+        stopCol.setOnEditCommit(e -> {
+            e.getRowValue().setOptimizeEnd(e.getNewValue());
+            saveParametersOnDemand();
+        });
         
         paramTable.getColumns().addAll(optCol, nameCol, valCol, startCol, stepCol, stopCol);
         
@@ -384,6 +424,9 @@ public class RobustnessView {
         progress = new ProgressBar(0);
         progress.setPrefWidth(300);
 
+        progressLabel = new Label("Ready");
+        progressLabel.setStyle("-fx-text-fill: #e6e9f0; -fx-font-family: 'Consolas'; -fx-font-size: 13px;");
+
         Region spacer = new Region();
         HBox.setHgrow(spacer, Priority.ALWAYS);
 
@@ -393,7 +436,7 @@ public class RobustnessView {
         Button dbGetBtn = new Button("Get set from DB");
         dbGetBtn.getStyleClass().add("button");
 
-        box.getChildren().addAll(startBtn, cancelBtn, progress, spacer, dbStoreBtn, dbGetBtn);
+        box.getChildren().addAll(startBtn, cancelBtn, progress, progressLabel, spacer, dbStoreBtn, dbGetBtn);
         return box;
     }
 
@@ -429,6 +472,7 @@ public class RobustnessView {
     }
 
     private void loadParameters() {
+        flatParameters.clear();
         String expert = expertField.getText().trim();
         if (expert.isEmpty()) return;
         
@@ -510,6 +554,15 @@ public class RobustnessView {
         
         shiftsSpinner.getValueFactory().setValue(config.getInt("robustness.shifts", 10));
         shiftDaysSpinner.getValueFactory().setValue(config.getInt("robustness.shiftdays", 7));
+
+        String optModeStr = config.get("robustness.optimization.mode", "Slow Complete Algorithm");
+        if (optModeStr.contains("Slow") || optModeStr.contains("Complete")) {
+            optModeCombo.getSelectionModel().select(0); // Slow Complete (index 0)
+        } else if (optModeStr.contains("Genetic") || optModeStr.contains("Fast")) {
+            optModeCombo.getSelectionModel().select(1); // Fast Genetic (index 1)
+        } else {
+            optModeCombo.setValue(optModeStr);
+        }
     }
 
     private void savePreferences() {
@@ -525,6 +578,7 @@ public class RobustnessView {
         config.set("robustness.leverage", leverageField.getText().trim());
         config.set("robustness.shifts", String.valueOf(shiftsSpinner.getValue()));
         config.set("robustness.shiftdays", String.valueOf(shiftDaysSpinner.getValue()));
+        if (optModeCombo.getValue() != null) config.set("robustness.optimization.mode", optModeCombo.getValue());
         config.save();
     }
 
@@ -571,6 +625,7 @@ public class RobustnessView {
         }
         paramTable.refresh();
         logView.log("INFO", "AutoConfig applied: " + activated + " enabled, " + skipped + " skipped.");
+        saveParametersOnDemand();
     }
 
     private boolean isExcludedParameterName(String name) {
@@ -647,6 +702,7 @@ public class RobustnessView {
             if (params != null && !params.isEmpty()) {
                 paramTable.getItems().setAll(params);
                 logView.log("INFO", "Loaded parameters from " + file.getName());
+                saveParametersOnDemand();
             } else {
                 logView.log("ERROR", "Failed to load parameters or file is empty.");
             }
@@ -707,6 +763,9 @@ public class RobustnessView {
             optConfig.setCurrency(currencyField.getText().trim());
             optConfig.setLeverage(leverageField.getText().trim());
             optConfig.setUseLocal(true);
+            int selectedIdx = optModeCombo.getSelectionModel().getSelectedIndex();
+            int optMode = (selectedIdx == 0) ? 1 : 2; // 0 -> Complete (1), 1 -> Genetic (2)
+            optConfig.setOptimizationMode(optMode);
 
             java.util.List<EaParameter> params = new java.util.ArrayList<>(paramTable.getItems());
             if (params.isEmpty()) {
@@ -739,6 +798,8 @@ public class RobustnessView {
 
             setUIState(true);
             progress.setProgress(-1); // Indeterminate
+            progressLabel.setText("Initializing...");
+            flatParameters.clear();
             resultsList.getItems().clear();
 
             String targetMetric = metricCombo.getValue() != null ? metricCombo.getValue() : "Profit";
@@ -765,6 +826,7 @@ public class RobustnessView {
                             copy.setOptimizeStep(p.getOptimizeStep());
                             copy.setOptimizeEnd(p.getOptimizeEnd());
                             copy.setOptimizeEnabled(p.isOptimizeEnabled());
+                            copy.setStringType(p.isStringType());
                             runParams.add(copy);
                         }
                         
@@ -781,10 +843,32 @@ public class RobustnessView {
                             continue;
                         }
 
+                        final int stratIndex = i + 1;
+                        final int totalStrats = stratsToRun.size();
                         currentRunner = new RobustnessRunner(config);
                         currentRunner.setLogCallback(msg -> logView.log("ROBUST", msg));
                         currentRunner.setProgressCallback(percent -> {
                             Platform.runLater(() -> progress.setProgress(percent / 100.0));
+                        });
+                        currentRunner.setProgressCountCallback((current, total) -> {
+                            Platform.runLater(() -> {
+                                int percent = total > 0 ? (int) (((double) current / total) * 100) : 0;
+                                progress.setProgress((double) current / total);
+                                String prefix = totalStrats > 1 ? String.format("[%d/%d] ", stratIndex, totalStrats) : "";
+                                progressLabel.setText(String.format("%sProgress: %d / %d Backtests (%d%%)", prefix, current, total, percent));
+                            });
+                        });
+                        currentRunner.setCurrentParamCallback(paramName -> {
+                            Platform.runLater(() -> {
+                                currentlyOptimizingParamName = paramName;
+                                paramTable.refresh();
+                                for (EaParameter p : paramTable.getItems()) {
+                                    if (p.getName().equals(paramName)) {
+                                        paramTable.scrollTo(p);
+                                        break;
+                                    }
+                                }
+                            });
                         });
                         
                         com.backtester.report.RobustnessResult res = currentRunner.runRobustnessScan(optConfig, runParams, shifts, shiftDays);
@@ -792,8 +876,11 @@ public class RobustnessView {
                     }
                     
                     Platform.runLater(() -> {
+                        currentlyOptimizingParamName = null;
+                        paramTable.refresh();
                         setUIState(false);
                         progress.setProgress(1.0);
+                        progressLabel.setText("Scan completed.");
                         logView.log("INFO", "All robustness scans completed.");
                     });
                     return null;
@@ -801,11 +888,14 @@ public class RobustnessView {
             };
 
             currentTask.setOnFailed(e -> {
+                currentlyOptimizingParamName = null;
+                paramTable.refresh();
                 Throwable ex = currentTask.getException();
                 logView.log("ERROR", "Robustness Scan failed: " + (ex != null ? ex.getMessage() : "Unknown Error"));
                 if (ex != null) ex.printStackTrace();
                 setUIState(false);
                 progress.setProgress(0);
+                progressLabel.setText("Scan failed.");
             });
 
             Thread t = new Thread(currentTask);
@@ -820,6 +910,45 @@ public class RobustnessView {
     private void handleSingleScanResult(com.backtester.report.RobustnessResult res, OptimizationConfig optConfig, String targetMetric, java.util.List<EaParameter> params, int shifts, int shiftDays, String runName) {
         if (res != null && res.isSuccess()) {
             resultsList.getItems().add("SUCCESS: " + runName + " - " + res.getMessage());
+            
+            // Detect flat parameters (where all optimization passes yielded identical profit values)
+            try {
+                for (java.util.Map.Entry<String, java.util.Map<String, com.backtester.report.OptimizationResult>> sweepEntry : res.getParameterSweeps().entrySet()) {
+                    String paramName = sweepEntry.getKey();
+                    java.util.Map<String, com.backtester.report.OptimizationResult> periodMap = sweepEntry.getValue();
+                    if (periodMap == null || periodMap.isEmpty()) continue;
+                    
+                    boolean allPeriodsFlat = true;
+                    int validPeriods = 0;
+                    for (com.backtester.report.OptimizationResult optRes : periodMap.values()) {
+                        if (optRes == null || optRes.getPasses() == null || optRes.getPasses().isEmpty()) continue;
+                        validPeriods++;
+                        
+                        if (optRes.getPasses().size() < 2) {
+                            continue;
+                        }
+                        double firstProfit = optRes.getPasses().get(0).getProfit();
+                        boolean periodFlat = true;
+                        for (com.backtester.report.OptimizationResult.Pass pass : optRes.getPasses()) {
+                            if (Math.abs(pass.getProfit() - firstProfit) > 0.00001) {
+                                periodFlat = false;
+                                break;
+                            }
+                        }
+                        if (!periodFlat) {
+                            allPeriodsFlat = false;
+                            break;
+                        }
+                    }
+                    if (allPeriodsFlat && validPeriods > 0) {
+                        flatParameters.add(paramName);
+                    }
+                }
+                paramTable.refresh();
+            } catch (Exception ex) {
+                logView.log("ERROR", "Error detecting flat parameters: " + ex.getMessage());
+            }
+
             try {
                 String reportTitle = targetMetric + " (Strategy " + runName + ")";
                 com.backtester.report.RobustnessHtmlGenerator.generateReport(res, optConfig, targetMetric, reportTitle, params);
@@ -858,10 +987,13 @@ public class RobustnessView {
     }
 
     private void cancelScan() {
+        currentlyOptimizingParamName = null;
+        paramTable.refresh();
         if (currentRunner != null) currentRunner.cancel();
         if (currentTask != null) currentTask.cancel(true);
         setUIState(false);
         progress.setProgress(0.0);
+        progressLabel.setText("Scan cancelled.");
         logView.log("WARN", "Robustness scan cancelled.");
     }
 

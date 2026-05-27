@@ -15,6 +15,7 @@
 9. [Bereich: Log (Protokoll & Ueberwachung)](#9-bereich-log-protokoll--ueberwachung)
 10. [MT5-Prozessschutz (Process Guard)](#10-mt5-prozessschutz-process-guard)
 11. [Claude Desktop Integration (MCP Server)](#11-claude-desktop-integration-mcp-server)
+12. [Bereich: Workflow Automator (🔄 Workflow Automator)](#12-bereich-workflow-automator)
 
 ---
 
@@ -280,3 +281,30 @@ Der MT5 Backtester bringt einen integrierten Model Context Protocol (MCP) Server
 
 **Einrichtung:**
 Der MCP-Server ist vorkonfiguriert und muss in der Claude Desktop Konfigurationsdatei verlinkt werden (siehe Anleitung im Ordner `mcp-server/README.md`). Nach einem Neustart von Claude taucht der Backtester als Tool auf.
+
+---
+
+### 12. Bereich: Workflow Automator (🔄 Workflow Automator)
+Der **Workflow Automator** ist ein mächtiges, geführtes Assistenz-System, das den gesamten Lebenszyklus einer Trading-Strategie von der ersten Optimierung bis hin zur Portfolio-Auswahl strukturiert und automatisiert. Jede Phase des Prozesses wird durch eine eigene Box visualisiert, die sich per Klick konfigurieren lässt und den aktuellen Status anzeigt.
+
+Der Zustand des gesamten Workflows wird kontinuierlich in der SQLite-Datenbank unter `WORKFLOW_STATE` gesichert, sodass er auch nach einem Neustart des Programms exakt dort fortgesetzt werden kann, wo er unterbrochen wurde.
+
+#### Die 6 Phasen des Workflows:
+1. **Schritt 1: Konfiguration (Config)**: Auswählen des Expert Advisors, Handelssymbols, der Periode, des Datumsbereichs sowie des Startkapitals und Hebels. Zudem werden die Parameter definiert, die in Schritt 2 optimiert werden sollen.
+2. **Schritt 2: MT5 Optimierung (Optimizer)**: Startet die Metatrader-Optimierung direkt aus der Java-App. Hierbei kann zwischen dem schnellen genetischen Algorithmus ("Fast Genetic Algorithm") und der vollständigen Suche ("Slow Complete Algorithm") gewählt werden.
+3. **Schritt 3: Diversitäts-Filter (Diversity Filter)**: Wählt vollautomatisch aus allen Optimierungsdurchläufen die 5 besten, aber gleichzeitig **diversesten** Strategien aus (sodass sich Parameterwerte und Tradeanzahlen unterscheiden, um Klumpenrisiken zu vermeiden).
+4. **Schritt 4: Stresstest (CV / Robustheit)**: Führt eine automatische Sensitivitätsanalyse (Verschiebungen um ±10 %) für alle Parameter der Top-Strategien über zeitlich verschobene Marktphasen hinweg aus. Es wird der Variationskoeffizient (CV%) berechnet.
+5. **Schritt 5: KI-Bewertung (AI Evaluation)**: Die Backtest- und Stresstest-Ergebnisse werden via OpenRouter an ein Large Language Model übertragen. Die KI erstellt einen detaillierten Textbericht (HTML Markdown) und vergibt einen normalisierten **Stabilitäts-Score (0-100)**.
+6. **Schritt 6: Portfolio-Auswahl**: Ermöglicht die finale Staging-Auswahl von 3-5 hochgradig robusten Strategien.
+
+#### Unified Strategy Details Dialog (Mega-Report)
+Wenn Sie im Results-Table auf eine Strategie doppelklicken, öffnet sich der neue, umfassende Details-Dialog:
+- **KPI-Metrik-Karten**: Direkter, nebeneinander liegender Vergleich von Backtest- und Forward-Metriken (Profit, Trades, Drawdown, Profit Factor, Sharpe, etc.) sowie der KI-Bewertung.
+- **Kombinierter Equity-Chart**: Renders eine zusammenhängende Linie für Backtest (In-Sample) und Forward (Out-of-Sample), um den Performance-Verlauf visuell zu erfassen.
+- **CV-Breakdown-Tabelle & Sparklines**: Listet den Schwankungskoeffizienten (CV%) für jeden einzelnen Parameter auf. In jeder Zeile wird direkt in die Tabellenzelle ein kleiner, organischer Parameter-Verlaufschart (Sparkline) gerendert, der die Sensitivitätskurve darstellt, wobei der genutzte Basiswert als roter Punkt hervorgehoben ist.
+- **Fazit-Box**: Farblich kodiertes (Grün, Gelb, Rot) Stabilitäts-Feedback basierend auf dem schlechtesten berechneten CV%.
+
+#### Interaktiver KI-Bericht & WebView-Bridge
+Der in Schritt 5 generierte KI-Bericht wird in einem eigenen WebView-Tab visualisiert. Über eine integrierte Java-zu-JavaScript-Brücke (`JavaBridge`) sind die HTML-Tabellen interaktiv:
+- Wenn Sie mit der Maus über die Zeilen einer Strategietabelle im Bericht fahren, ändert sich der Cursor in eine Hand (Pointer) und die Zeile wird farblich hervorgehoben (`clickable-row`).
+- **Ein einfacher Klick** auf eine solche Zeile ruft intern `window.app.showPass(passNumber)` auf. Der Backtester sucht den passenden Durchlauf und öffnet sofort den oben beschriebenen detaillierten Mega-Report für diesen Pass.

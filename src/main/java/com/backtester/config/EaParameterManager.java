@@ -487,7 +487,19 @@ public class EaParameterManager {
                 String content = new String(bytes, MT5_CHARSET);
                 return Arrays.asList(content.split("\\r?\\n"));
             }
-            // No BOM - try UTF-8
+            // No BOM - check for UTF-16 LE without BOM (lots of null bytes for standard text)
+            boolean hasNulls = false;
+            for (byte b : bytes) {
+                if (b == 0) {
+                    hasNulls = true;
+                    break;
+                }
+            }
+            if (hasNulls) {
+                String content = new String(bytes, MT5_CHARSET);
+                return Arrays.asList(content.split("\\r?\\n"));
+            }
+            // No BOM and no nulls - try UTF-8
             String content = new String(bytes, StandardCharsets.UTF_8);
             return Arrays.asList(content.split("\\r?\\n"));
         } catch (Exception e) {

@@ -37,6 +37,23 @@ But it goes far beyond simple batch testing — it includes a full **Strategy Op
 | **📚 Run History** | Persistent SQLite-backed history browser across all run types |
 | **⬇ Dukascopy Data** | Direct tick-data downloads from Dukascopy for independent offline testing |
 | **⚙ EA Config Manager** | Full `.set` file lifecycle with DB-backed parameter snapshot storage |
+| **🔄 Workflow Automator** | Guided 6-step strategy optimization and stress-test pipeline with AI scoring and interactive report bridging |
+
+---
+
+## 🔄 Workflow Automator
+
+A fully automated, guided pipeline that orchestrates the entire lifecycle of a strategy from raw optimization to portfolio selection.
+
+- **Guided 6-Step Pipeline**: Steers you through:
+  1. **Config**: Select Expert Advisor, symbol, period, dates, and parameters to optimize.
+  2. **MT5 Optimization**: Run MT5 optimization using configurable modes (Complete or Genetic).
+  3. **Diversity Filter**: Choose the top 5 diverse strategy profiles automatically.
+  4. **Stresstest (CV Analysis)**: Run time-shifted sensitivity checks to assess parameter vulnerability.
+  5. **AI Evaluation**: Feed equity and robustness curves to a local LLM to get a parsed Stability Score.
+  6. **Portfolio Selection**: Stage and select the final 3-5 best-performing, stable strategies.
+- **Unified Strategy Details Popup (Mega-Report)**: A beautiful scrollable modal that combines backtest/forward metric cards, a connected interactive equity chart, parameter variation coefficient (CV %) breakdown tables, and a safety verdict box.
+- **WebView JS Click Bridge**: Click on any strategy pass directly in the rendered HTML AI Report to instantly pop up its Mega-Report details.
 
 ---
 
