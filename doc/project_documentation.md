@@ -96,7 +96,11 @@ Comprehensive EA input parameter lifecycle management.
 
 ### 2.10. Workflow Automator (🔄 Workflow Automator)
 An automated pipeline framework that guides the user through strategy selection, batch optimization, filtering, robustness checks, and AI-assisted analysis.
-- **WorkflowEngine State Machine**: Coordinates a 6-step lifecycle that maintains current execution state (persisted to the local SQLite database in `WORKFLOW_STATE` to survive application restarts).
+- **WorkflowEngine State Machine**: Coordinates a 6-step lifecycle that maintains current execution state.
+- **Workflow Persistence Architecture**:
+  - **`WORKFLOW_STATE` Database Table (Active Session):** The ongoing in-progress pipeline progress (steps 1–5 configurations and results) is saved continuously at `id = 1` inside the `WORKFLOW_STATE` table. This allows the user to resume an unfinished session at any point, surviving application restarts.
+  - **`HISTORY_RUNS` Database Table (Completed History Snapshot):** When step 6 completes successfully, a snapshot of the entire workflow's final parameters, intermediate optimization results, and LLM text reports is serialized to JSON and saved permanently to `HISTORY_RUNS` with the `run_type = "Workflow"`.
+  - **Restore Menu Integration:** Restorable via `HistoryView`'s context menu. Right-clicking a workflow node in the tree and triggering the restore action calls `WorkflowEngine.restoreWorkflowState(String json)`, which deserializes the data, populates all workflow stages, saves it as the active session state, and switches the UI tabs to focus on the refreshed `WorkflowView`.
 - **Interactive Steps**:
   1. *Configuration*: Sets target EA, timeframe, and parameters.
   2. *MT5 Optimization*: Runs optimizations via configurable mode (Complete vs. Fast Genetic).

@@ -3,6 +3,8 @@ package com.backtester.ui.javafx;
 import com.backtester.config.AppConfig;
 import com.backtester.config.EaParameter;
 import com.backtester.engine.WorkflowEngine;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import com.backtester.report.OptimizationResult;
 import com.backtester.report.OptimizationResult.CombinedPass;
 import com.backtester.report.SensitivityResult;
@@ -57,6 +59,7 @@ import java.util.stream.Collectors;
  * User interface panel for the visual Automated multi-step Workflow.
  */
 public class WorkflowView {
+    private static final Logger log = LoggerFactory.getLogger(WorkflowView.class);
 
     private final BorderPane root;
     private final LogView globalLogView;
@@ -82,11 +85,19 @@ public class WorkflowView {
     private javafx.scene.web.WebView kiWebView;
     private Tab parametersTab;
     private TableView<EaParameter> parametersTable;
+    private Tab statisticsTab;
+    private TableView<OptimizationStatsRow> statsTable;
+    private Label noStatsLabel;
 
     // Visual boxes for the 6 stages
     private VBox step1Box, step2Box, step3Box, step4Box, step5Box, step6Box;
     private Label step1Status, step2Status, step3Status, step4Status, step5Status, step6Status;
     private Label step1Details, step2Details, step3Details, step4Details, step5Details, step6Details;
+    private ProgressIndicator step1Spinner, step2Spinner, step3Spinner, step4Spinner, step5Spinner, step6Spinner;
+    private int currentlyRunningStep = -1;
+    private volatile String currentRunningSymbol = "";
+    private volatile int currentSymbolIndex = 0;
+    private volatile int totalSymbolsCount = 0;
 
     private Task<Void> activeWorkflowTask;
     private final JavaBridge javaBridge = new JavaBridge(this);
@@ -154,8 +165,16 @@ public class WorkflowView {
         row.setPadding(new Insets(15, 5, 15, 5));
         row.getStyleClass().add("sci-fi-panel");
 
+        // Initialize spinners
+        step1Spinner = createSpinner();
+        step2Spinner = createSpinner();
+        step3Spinner = createSpinner();
+        step4Spinner = createSpinner();
+        step5Spinner = createSpinner();
+        step6Spinner = createSpinner();
+
         // Step 1 Box
-        step1Box = buildStepBox("1. Strategie-Auswahl", "Symbol & Parameterbereich festlegen");
+        step1Box = buildStepBox("1. Strategie-Auswahl", "Symbol & Parameterbereich festlegen", step1Spinner);
         step1Status = (Label) step1Box.getChildren().get(2);
         step1Details = (Label) step1Box.getChildren().get(3);
         Button btn1 = (Button) step1Box.getChildren().get(4);
@@ -169,7 +188,7 @@ public class WorkflowView {
         step1Box.setOnMouseClicked(e -> selectStep(1));
 
         // Step 2 Box
-        step2Box = buildStepBox("2. MT5 Optimizer", "Evolutionäre Parametersuche ausführen");
+        step2Box = buildStepBox("2. MT5 Optimizer", "Evolutionäre Parametersuche ausführen", step2Spinner);
         step2Status = (Label) step2Box.getChildren().get(2);
         step2Details = (Label) step2Box.getChildren().get(3);
         Button btn2 = (Button) step2Box.getChildren().get(4);
@@ -182,7 +201,7 @@ public class WorkflowView {
         step2Box.setOnMouseClicked(e -> selectStep(2));
 
         // Step 3 Box
-        step3Box = buildStepBox("3. Diversitäts-Filter", "Top-5 diverse Strategien selektieren");
+        step3Box = buildStepBox("3. Diversitäts-Filter", "Top-5 diverse Strategien selektieren", step3Spinner);
         step3Status = (Label) step3Box.getChildren().get(2);
         step3Details = (Label) step3Box.getChildren().get(3);
         Button btn3 = (Button) step3Box.getChildren().get(4);
@@ -195,7 +214,7 @@ public class WorkflowView {
         step3Box.setOnMouseClicked(e -> selectStep(3));
 
         // Step 4 Box
-        step4Box = buildStepBox("4. Robustness Test (CV)", "Robustheits sweeps für Parameter");
+        step4Box = buildStepBox("4. Robustness Test (CV)", "Robustheits sweeps für Parameter", step4Spinner);
         step4Status = (Label) step4Box.getChildren().get(2);
         step4Details = (Label) step4Box.getChildren().get(3);
         Button btn4 = (Button) step4Box.getChildren().get(4);
@@ -208,7 +227,7 @@ public class WorkflowView {
         step4Box.setOnMouseClicked(e -> selectStep(4));
 
         // Step 5 Box
-        step5Box = buildStepBox("5. KI-Bewertung", "LLM-gestützte Stabilitätseinstufung");
+        step5Box = buildStepBox("5. KI-Bewertung", "LLM-gestützte Stabilitätseinstufung", step5Spinner);
         step5Status = (Label) step5Box.getChildren().get(2);
         step5Details = (Label) step5Box.getChildren().get(3);
         Button btn5 = (Button) step5Box.getChildren().get(4);
@@ -221,7 +240,7 @@ public class WorkflowView {
         step5Box.setOnMouseClicked(e -> selectStep(5));
 
         // Step 6 Box
-        step6Box = buildStepBox("6. Portfolio Export", "Finale 3-5 Strategien speichern");
+        step6Box = buildStepBox("6. Portfolio Export", "Finale 3-5 Strategien speichern", step6Spinner);
         step6Status = (Label) step6Box.getChildren().get(2);
         step6Details = (Label) step6Box.getChildren().get(3);
         Button btn6 = (Button) step6Box.getChildren().get(4);
@@ -252,7 +271,18 @@ public class WorkflowView {
         return row;
     }
 
-    private VBox buildStepBox(String title, String subtitleText) {
+    private ProgressIndicator createSpinner() {
+        ProgressIndicator spinner = new ProgressIndicator();
+        spinner.setPrefSize(16, 16);
+        spinner.setMinSize(16, 16);
+        spinner.setMaxSize(16, 16);
+        spinner.setVisible(false);
+        spinner.setManaged(false);
+        spinner.setStyle("-fx-progress-color: #00e5ff;");
+        return spinner;
+    }
+
+    private VBox buildStepBox(String title, String subtitleText, ProgressIndicator spinner) {
         VBox box = new VBox(8);
         box.setPrefWidth(210);
         box.setMinHeight(200);
@@ -260,9 +290,22 @@ public class WorkflowView {
         box.setAlignment(Pos.TOP_CENTER);
         box.setStyle("-fx-background-color: rgba(26, 30, 40, 0.7); -fx-border-color: #3e4555; -fx-border-width: 1.5; -fx-border-radius: 6; -fx-background-radius: 6;");
 
+        HBox titleBox = new HBox(5);
+        titleBox.setAlignment(Pos.CENTER);
+
         Label numTitle = new Label(title);
         numTitle.setFont(Font.font("Segoe UI", FontWeight.BOLD, 14));
         numTitle.setTextFill(Color.web("#e6e9f0"));
+
+        Button infoBtn = new Button("ℹ");
+        infoBtn.setStyle("-fx-background-color: transparent; -fx-text-fill: #ffd740; -fx-padding: 0; -fx-font-weight: bold; -fx-cursor: hand; -fx-font-size: 13px;");
+        infoBtn.setTooltip(new Tooltip("Erklärung zu diesem Schritt anzeigen"));
+        infoBtn.setOnAction(e -> {
+            e.consume();
+            showStepExplanation(title);
+        });
+
+        titleBox.getChildren().addAll(spinner, numTitle, infoBtn);
 
         Label subtitle = new Label(subtitleText);
         subtitle.setStyle("-fx-text-fill: #7e889a; -fx-font-size: 11px;");
@@ -275,12 +318,121 @@ public class WorkflowView {
 
         Label details = new Label("Keine Daten");
         details.setStyle("-fx-text-fill: #b4bac8; -fx-font-size: 11px;");
+        details.setWrapText(true);
+        details.setAlignment(Pos.CENTER);
+        details.setTextAlignment(javafx.scene.text.TextAlignment.CENTER);
 
         Button btn = new Button("Konfigurieren");
         btn.setStyle("-fx-font-size: 11px; -fx-padding: 4 10;");
 
-        box.getChildren().addAll(numTitle, subtitle, status, details, btn);
+        box.getChildren().addAll(titleBox, subtitle, status, details, btn);
         return box;
+    }
+
+    private void showStepExplanation(String stepTitle) {
+        Stage infoStage = new Stage();
+        javafx.stage.Window owner = root.getScene() != null ? root.getScene().getWindow() : null;
+        if (owner != null) {
+            infoStage.initOwner(owner);
+        }
+        infoStage.initModality(Modality.APPLICATION_MODAL);
+        infoStage.setTitle("Schritt-Erklärung: " + stepTitle);
+
+        VBox layout = new VBox(15);
+        layout.setPadding(new Insets(25));
+        layout.setStyle("-fx-background-color: #11141d; -fx-border-color: #ffd740; -fx-border-width: 1px; -fx-border-radius: 5px;");
+
+        Label title = new Label("Pipeline-Schritt: " + stepTitle);
+        title.setFont(Font.font("Segoe UI", FontWeight.BOLD, 18));
+        title.setTextFill(Color.web("#ffd740"));
+
+        Label subtitle = new Label("Einfache Erklärung:");
+        subtitle.setFont(Font.font("Segoe UI", FontWeight.BOLD, 13));
+        subtitle.setTextFill(Color.web("#00e5ff"));
+
+        String text = "";
+        if (stepTitle.contains("1.")) {
+            text = "Hier wählen Sie den Handelsroboter (Expert Advisor), das Währungspaar (Symbol) und den Zeitraum für den Backtest aus. " +
+                   "Zudem bestimmen Sie, welche Einstellungen (z. B. Stop Loss oder Take Profit) optimiert und gesucht werden sollen.";
+        } else if (stepTitle.contains("2.")) {
+            text = "Der MetaTrader 5 (MT5) sucht vollautomatisch nach den besten Einstellungen für Ihren Roboter. " +
+                   "Durch ein intelligentes Suchverfahren (evolutionärer Algorithmus) werden tausende Einstellungskombinationen getestet, um die profitabelsten zu finden.";
+        } else if (stepTitle.contains("3.")) {
+            text = "Der Diversitäts-Filter wählt aus allen profitablen Durchgängen des Optimierers maximal 5 Strategien aus, die sich in ihren Einstellungen und ihrem Verhalten möglichst stark voneinander unterscheiden.\n\n" +
+                   "1. Das Problem: Klumpenrisiko & Überoptimierung\n" +
+                   "Nach einem Optimierungslauf liefert der MetaTrader oft hunderte profitable Varianten. Diese sind jedoch meist fast identisch. Sie nutzen z. B. nur einen minimal verschobenen Stop Loss (z. B. 52 statt 50 Pips) oder eine leicht geänderte Indikator-Periode. Würden Sie diese Strategien alle in ein Portfolio packen und parallel laufen lassen, hätten Sie ein massives Klumpenrisiko:\n" +
+                   "• Alle EAs eröffnen fast zeitgleich dieselben Trades.\n" +
+                   "• Läuft der Markt gegen Sie, verlieren alle EAs gleichzeitig.\n" +
+                   "• Ihr Drawdown multipliziert sich, während keine echte Risikostreuung stattfindet.\n\n" +
+                   "Der Diversitäts-Filter löst dieses Problem, indem er sicherstellt, dass nur Strategien kombiniert werden, die den Markt auf unterschiedliche Weise analysieren und handeln.\n\n" +
+                   "2. Der mathematische Ähnlichkeits-Check\n" +
+                   "Der Algorithmus prüft paarweise, ob eine neue Strategie zu ähnlich zu einer bereits ausgewählten Strategie ist. Dabei werden zwei Kriterien herangezogen:\n\n" +
+                   "A) Das Handelsverhalten (Trade-Abweichung):\n" +
+                   "Es wird die prozentuale Differenz der ausgeführten Trades im Backtest verglichen:\n" +
+                   "Differenz = |Trades_1 - Trades_2| / max(Trades_1, 1)\n" +
+                   "Liegt die Abweichung unter 10 %, gilt das Verhalten als ähnlich.\n\n" +
+                   "B) Die Parameter-Struktur (Normalisierung nach Suchraum):\n" +
+                   "Parameterwerte können nicht einfach absolut verglichen werden (ein Unterschied von 5 Pips bei einem Stop Loss von 10 ist riesig, bei einem Stop Loss von 500 minimal). Daher wird jede Parameter-Abweichung anhand des konfigurierten Suchraums (Bereich = |Endwert - Startwert|) normalisiert. Liegt die normalisierte Abweichung unter 5 %, gilt der Parameter als ähnlich.\n\n" +
+                   "Zwei Strategien gelten als ZU ÄHNLICH (und der Kandidat wird aussortiert), wenn:\n" +
+                   "• Die Tradeanzahl-Abweichung unter 10 % liegt UND\n" +
+                   "• die durchschnittliche Parameter-Abweichung unter 5 % liegt (oder weniger als 1 Parameter signifikant abweicht).\n\n" +
+                   "3. Detailliertes Rechenbeispiel:\n" +
+                   "Angenommen, der Suchraum für den Stop Loss liegt bei 10 bis 110 (Bereich = 100) und für die MA-Periode bei 10 bis 60 (Bereich = 50).\n\n" +
+                   "• Strategie A (bereits ausgewählt):\n" +
+                   "  - Stop Loss = 30\n" +
+                   "  - MA-Periode = 15\n" +
+                   "  - Trades = 80\n\n" +
+                   "• Strategie B (Kandidat 1):\n" +
+                   "  - Stop Loss = 35 (Abweichung = 5 -> normalisiert: 5 / 100 = 5 %)\n" +
+                   "  - MA-Periode = 15 (Abweichung = 0 -> normalisiert: 0 %)\n" +
+                   "  - Trades = 78 (Abweichung = |80 - 78| / 80 = 2,5 %)\n" +
+                   "  => Analyse: Die Trade-Abweichung (2,5 %) liegt unter 10 % und die durchschnittliche Parameter-Abweichung beträgt nur 2,5 % (unter 5 %). Strategie B ist zu ähnlich und wird AUSSORTIERT.\n\n" +
+                   "• Strategie C (Kandidat 2):\n" +
+                   "  - Stop Loss = 90 (Abweichung = 60 -> normalisiert: 60 / 100 = 60 %)\n" +
+                   "  - MA-Periode = 45 (Abweichung = 30 -> normalisiert: 30 / 50 = 60 %)\n" +
+                   "  - Trades = 40 (Abweichung = |80 - 40| / 80 = 50 %)\n" +
+                   "  => Analyse: Sowohl die Trade-Abweichung (50 %) als auch die Parameter-Abweichungen (60 %) liegen weit über den Grenzwerten. Strategie C handelt völlig andere Marktphasen und wird als DIVERS AKZEPTIERT.";
+        } else if (stepTitle.contains("4.")) {
+            text = "Hier wird geprüft, ob die gefundenen Einstellungen auch bei kleinen Marktveränderungen stabil bleiben (Stresstest). " +
+                   "Die Parameter werden minimal variiert (z. B. Spread oder Stop-Loss geringfügig verschoben). " +
+                   "Strategien, deren Gewinne dabei stark einbrechen, fliegen heraus, da sie wahrscheinlich überoptimiert (curve-fitted) sind.";
+        } else if (stepTitle.contains("5.")) {
+            text = "Eine künstliche Intelligenz (LLM) analysiert alle Ergebnisse, Kennzahlen und Stresstests der verbleibenden Strategien. " +
+                   "Sie vergibt eine Bewertung und gibt Ihnen eine Empfehlung, welche Strategien sich am besten für den echten handel eignen.";
+        } else if (stepTitle.contains("6.")) {
+            text = "Die verbleibenden, besten 3 bis 5 Strategien werden zu einem gemeinsamen Portfolio zusammengefasst und abgespeichert. " +
+                   "Dieses Portfolio können Sie direkt exportieren, um es auf Ihrem Live- oder Demokonto einzusetzen.";
+        } else {
+            text = "Keine Erklärung für diesen Schritt vorhanden.";
+        }
+
+        Label explanationText = new Label(text);
+        explanationText.setWrapText(true);
+        explanationText.setTextFill(Color.web("#e6e9f0"));
+        explanationText.setFont(Font.font("Segoe UI", 12));
+
+        Button closeBtn = new Button("Verstanden");
+        closeBtn.getStyleClass().add("button");
+        closeBtn.setOnAction(e -> infoStage.close());
+
+        HBox btnBox = new HBox(closeBtn);
+        btnBox.setAlignment(Pos.CENTER_RIGHT);
+
+        layout.getChildren().addAll(title, subtitle, explanationText, btnBox);
+
+        ScrollPane scrollPane = new ScrollPane(layout);
+        scrollPane.setFitToWidth(true);
+        scrollPane.setStyle("-fx-background-color: transparent; -fx-background: #11141d; -fx-border-color: transparent;");
+        scrollPane.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
+
+        Scene scene = new Scene(scrollPane, 700, 550);
+        try {
+            scene.getStylesheets().add(getClass().getResource("/css/antigravity.css").toExternalForm());
+        } catch (Exception e) {
+            // Ignore
+        }
+        infoStage.setScene(scene);
+        infoStage.showAndWait();
     }
 
     private Label createArrow() {
@@ -321,7 +473,11 @@ public class WorkflowView {
         progressLabel.setFont(Font.font("Segoe UI", FontWeight.BOLD, 13));
         progressLabel.setTextFill(Color.web("#cbd5e1"));
 
-        box.getChildren().addAll(runAllBtn, cancelBtn, resetBtn, clearResultsBtn, progressBar, progressLabel);
+        Button mainInfoBtn = DocHelper.createThickCircularInfoButton("Erklärung aller Indizes und Kennzahlen", () -> {
+            DocHelper.showAllIndicesDocDialog(clearResultsBtn.getScene() != null ? clearResultsBtn.getScene().getWindow() : null);
+        });
+
+        box.getChildren().addAll(runAllBtn, cancelBtn, resetBtn, clearResultsBtn, mainInfoBtn, progressBar, progressLabel);
         return box;
     }
 
@@ -432,76 +588,300 @@ public class WorkflowView {
         });
 
         TableColumn<CombinedPass, Integer> passCol = new TableColumn<>("Pass");
-        passCol.setCellValueFactory(new PropertyValueFactory<>("passNumber"));
-        passCol.setPrefWidth(60);
+        passCol.setCellValueFactory(c -> new javafx.beans.property.SimpleObjectProperty<>(c.getValue().getPassNumber()));
+        passCol.setPrefWidth(65);
+        passCol.setStyle("-fx-alignment: CENTER;");
 
-        TableColumn<CombinedPass, Double> scoreCol = new TableColumn<>("Komb. Score");
-        scoreCol.setCellValueFactory(new PropertyValueFactory<>("score"));
-        scoreCol.setPrefWidth(95);
+        TableColumn<CombinedPass, Double> scoreCol = new TableColumn<>("Score");
+        scoreCol.setCellValueFactory(c -> new javafx.beans.property.SimpleObjectProperty<>(c.getValue().getScore()));
+        scoreCol.setPrefWidth(75);
+        scoreCol.setStyle("-fx-alignment: CENTER;");
+        scoreCol.setCellFactory(col -> new TableCell<CombinedPass, Double>() {
+            @Override
+            protected void updateItem(Double item, boolean empty) {
+                super.updateItem(item, empty);
+                if (empty || item == null) {
+                    setText(null);
+                    setStyle("-fx-alignment: CENTER;");
+                } else {
+                    setText(String.format(Locale.US, "%.1f", item));
+                    setStyle("-fx-alignment: CENTER;");
+                }
+            }
+        });
+
+        TableColumn<CombinedPass, String> robScoreCol = new TableColumn<>("Rob. Scorecard");
+        robScoreCol.setCellValueFactory(c -> {
+            String fromDateStr = engine.getFromDate() != null ? engine.getFromDate().toString() : "Unbekannt";
+            String toDateStr = engine.getToDate() != null ? engine.getToDate().toString() : "Unbekannt";
+            double score = com.backtester.report.RobustnessScorecardGenerator.calculateOverallScore(c.getValue(), fromDateStr, toDateStr);
+            return new javafx.beans.property.SimpleStringProperty(String.format(Locale.US, "%.0f", score));
+        });
+        robScoreCol.setPrefWidth(115);
+        robScoreCol.setCellFactory(col -> new TableCell<CombinedPass, String>() {
+            @Override
+            protected void updateItem(String item, boolean empty) {
+                super.updateItem(item, empty);
+                if (empty || item == null) {
+                    setText(null);
+                    setStyle("");
+                } else {
+                    setText(item);
+                    try {
+                        double score = Double.parseDouble(item);
+                        String color;
+                        if (score >= 70) {
+                            color = "#00e676"; // Green
+                        } else if (score >= 55) {
+                            color = "#ffd740"; // Yellow
+                        } else {
+                            color = "#ff5252"; // Red
+                        }
+                        setStyle("-fx-alignment: CENTER; -fx-text-fill: " + color + "; -fx-font-weight: bold;");
+                    } catch (Exception e) {
+                        setStyle("-fx-alignment: CENTER;");
+                    }
+                }
+            }
+        });
 
         TableColumn<CombinedPass, Double> btProf = new TableColumn<>("BT Profit");
-        btProf.setCellValueFactory(new PropertyValueFactory<>("btProfit"));
+        btProf.setCellValueFactory(c -> new javafx.beans.property.SimpleObjectProperty<>(c.getValue().getBtProfit()));
+        btProf.setPrefWidth(95);
+        btProf.setCellFactory(col -> new TableCell<CombinedPass, Double>() {
+            @Override
+            protected void updateItem(Double item, boolean empty) {
+                super.updateItem(item, empty);
+                if (empty || item == null || Double.isNaN(item)) {
+                    setText("-");
+                    setStyle("-fx-alignment: CENTER;");
+                } else {
+                    setText(String.format(Locale.US, "%.2f", item));
+                    if (item >= 0) {
+                        setStyle("-fx-alignment: CENTER; -fx-text-fill: #00e676; -fx-font-weight: bold;");
+                    } else {
+                        setStyle("-fx-alignment: CENTER; -fx-text-fill: #ff5252; -fx-font-weight: bold;");
+                    }
+                }
+            }
+        });
 
         TableColumn<CombinedPass, Integer> btTr = new TableColumn<>("BT Trades");
-        btTr.setCellValueFactory(new PropertyValueFactory<>("btTrades"));
+        btTr.setCellValueFactory(c -> new javafx.beans.property.SimpleObjectProperty<>(c.getValue().getBtTrades()));
+        btTr.setPrefWidth(85);
+        btTr.setCellFactory(col -> new TableCell<CombinedPass, Integer>() {
+            @Override
+            protected void updateItem(Integer item, boolean empty) {
+                super.updateItem(item, empty);
+                if (empty || item == null) {
+                    setText("-");
+                    setStyle("-fx-alignment: CENTER;");
+                } else {
+                    setText(String.valueOf(item));
+                    setStyle("-fx-alignment: CENTER;");
+                }
+            }
+        });
 
-        TableColumn<CombinedPass, String> btPf = new TableColumn<>("BT PF");
-        btPf.setCellValueFactory(cellData -> {
-            double val = cellData.getValue().getBtPf();
-            return new javafx.beans.property.SimpleStringProperty(Double.isNaN(val) ? "-" : String.format(Locale.US, "%.2f", val));
+        TableColumn<CombinedPass, Double> btPf = new TableColumn<>("BT PF");
+        btPf.setCellValueFactory(c -> new javafx.beans.property.SimpleObjectProperty<>(c.getValue().getBtPf()));
+        btPf.setPrefWidth(75);
+        btPf.setCellFactory(col -> new TableCell<CombinedPass, Double>() {
+            @Override
+            protected void updateItem(Double item, boolean empty) {
+                super.updateItem(item, empty);
+                if (empty || item == null || Double.isNaN(item)) {
+                    setText("-");
+                    setStyle("-fx-alignment: CENTER;");
+                } else {
+                    setText(String.format(Locale.US, "%.2f", item));
+                    setStyle("-fx-alignment: CENTER;");
+                }
+            }
         });
 
         TableColumn<CombinedPass, Double> btDd = new TableColumn<>("BT DD%");
-        btDd.setCellValueFactory(new PropertyValueFactory<>("btDd"));
+        btDd.setCellValueFactory(c -> new javafx.beans.property.SimpleObjectProperty<>(c.getValue().getBtDd()));
+        btDd.setPrefWidth(85);
+        btDd.setCellFactory(col -> new TableCell<CombinedPass, Double>() {
+            @Override
+            protected void updateItem(Double item, boolean empty) {
+                super.updateItem(item, empty);
+                if (empty || item == null || Double.isNaN(item)) {
+                    setText("-");
+                    setStyle("-fx-alignment: CENTER;");
+                } else {
+                    setText(String.format(Locale.US, "%.2f %%", item));
+                    if (item > 25) {
+                        setStyle("-fx-alignment: CENTER; -fx-text-fill: #ff5252;");
+                    } else if (item > 15) {
+                        setStyle("-fx-alignment: CENTER; -fx-text-fill: #ffd740;");
+                    } else {
+                        setStyle("-fx-alignment: CENTER; -fx-text-fill: #00e676;");
+                    }
+                }
+            }
+        });
 
-        TableColumn<CombinedPass, String> btRec = new TableColumn<>("BT RF");
-        btRec.setCellValueFactory(cellData -> {
-            double val = cellData.getValue().getBtRecovery();
-            return new javafx.beans.property.SimpleStringProperty(Double.isNaN(val) ? "-" : String.format(Locale.US, "%.2f", val));
+        TableColumn<CombinedPass, Double> btRec = new TableColumn<>("BT RF");
+        btRec.setCellValueFactory(c -> new javafx.beans.property.SimpleObjectProperty<>(c.getValue().getBtRecovery()));
+        btRec.setPrefWidth(75);
+        btRec.setCellFactory(col -> new TableCell<CombinedPass, Double>() {
+            @Override
+            protected void updateItem(Double item, boolean empty) {
+                super.updateItem(item, empty);
+                if (empty || item == null || Double.isNaN(item)) {
+                    setText("-");
+                    setStyle("-fx-alignment: CENTER;");
+                } else {
+                    setText(String.format(Locale.US, "%.2f", item));
+                    setStyle("-fx-alignment: CENTER;");
+                }
+            }
         });
 
         TableColumn<CombinedPass, Double> fwProf = new TableColumn<>("FW Profit");
-        fwProf.setCellValueFactory(new PropertyValueFactory<>("fwProfit"));
+        fwProf.setCellValueFactory(c -> new javafx.beans.property.SimpleObjectProperty<>(c.getValue().getFwProfit()));
+        fwProf.setPrefWidth(95);
+        fwProf.setCellFactory(col -> new TableCell<CombinedPass, Double>() {
+            @Override
+            protected void updateItem(Double item, boolean empty) {
+                super.updateItem(item, empty);
+                if (empty || item == null || Double.isNaN(item)) {
+                    setText("-");
+                    setStyle("-fx-alignment: CENTER;");
+                } else {
+                    setText(String.format(Locale.US, "%.2f", item));
+                    if (item >= 0) {
+                        setStyle("-fx-alignment: CENTER; -fx-text-fill: #00e676; -fx-font-weight: bold;");
+                    } else {
+                        setStyle("-fx-alignment: CENTER; -fx-text-fill: #ff5252; -fx-font-weight: bold;");
+                    }
+                }
+            }
+        });
 
         TableColumn<CombinedPass, Integer> fwTr = new TableColumn<>("FW Trades");
-        fwTr.setCellValueFactory(new PropertyValueFactory<>("fwTrades"));
+        fwTr.setCellValueFactory(c -> new javafx.beans.property.SimpleObjectProperty<>(c.getValue().getFwTrades()));
+        fwTr.setPrefWidth(85);
+        fwTr.setCellFactory(col -> new TableCell<CombinedPass, Integer>() {
+            @Override
+            protected void updateItem(Integer item, boolean empty) {
+                super.updateItem(item, empty);
+                if (empty || item == null) {
+                    setText("-");
+                    setStyle("-fx-alignment: CENTER;");
+                } else {
+                    setText(String.valueOf(item));
+                    setStyle("-fx-alignment: CENTER;");
+                }
+            }
+        });
 
-        TableColumn<CombinedPass, String> fwPf = new TableColumn<>("FW PF");
-        fwPf.setCellValueFactory(cellData -> {
-            double val = cellData.getValue().getFwPf();
-            return new javafx.beans.property.SimpleStringProperty(Double.isNaN(val) ? "-" : String.format(Locale.US, "%.2f", val));
+        TableColumn<CombinedPass, Double> fwPf = new TableColumn<>("FW PF");
+        fwPf.setCellValueFactory(c -> new javafx.beans.property.SimpleObjectProperty<>(c.getValue().getFwPf()));
+        fwPf.setPrefWidth(75);
+        fwPf.setCellFactory(col -> new TableCell<CombinedPass, Double>() {
+            @Override
+            protected void updateItem(Double item, boolean empty) {
+                super.updateItem(item, empty);
+                if (empty || item == null || Double.isNaN(item)) {
+                    setText("-");
+                    setStyle("-fx-alignment: CENTER;");
+                } else {
+                    setText(String.format(Locale.US, "%.2f", item));
+                    setStyle("-fx-alignment: CENTER;");
+                }
+            }
         });
 
         TableColumn<CombinedPass, Double> fwDd = new TableColumn<>("FW DD%");
-        fwDd.setCellValueFactory(new PropertyValueFactory<>("fwDd"));
-
-        TableColumn<CombinedPass, String> fwRec = new TableColumn<>("FW RF");
-        fwRec.setCellValueFactory(cellData -> {
-            double val = cellData.getValue().getFwRecovery();
-            return new javafx.beans.property.SimpleStringProperty(Double.isNaN(val) ? "-" : String.format(Locale.US, "%.2f", val));
+        fwDd.setCellValueFactory(c -> new javafx.beans.property.SimpleObjectProperty<>(c.getValue().getFwDd()));
+        fwDd.setPrefWidth(85);
+        fwDd.setCellFactory(col -> new TableCell<CombinedPass, Double>() {
+            @Override
+            protected void updateItem(Double item, boolean empty) {
+                super.updateItem(item, empty);
+                if (empty || item == null || Double.isNaN(item)) {
+                    setText("-");
+                    setStyle("-fx-alignment: CENTER;");
+                } else {
+                    setText(String.format(Locale.US, "%.2f %%", item));
+                    if (item > 25) {
+                        setStyle("-fx-alignment: CENTER; -fx-text-fill: #ff5252;");
+                    } else if (item > 15) {
+                        setStyle("-fx-alignment: CENTER; -fx-text-fill: #ffd740;");
+                    } else {
+                        setStyle("-fx-alignment: CENTER; -fx-text-fill: #00e676;");
+                    }
+                }
+            }
         });
 
-        // Special columns for CV stress tests (Bt CV & Fw CV)
+        TableColumn<CombinedPass, Double> fwRec = new TableColumn<>("FW RF");
+        fwRec.setCellValueFactory(c -> new javafx.beans.property.SimpleObjectProperty<>(c.getValue().getFwRecovery()));
+        fwRec.setPrefWidth(75);
+        fwRec.setCellFactory(col -> new TableCell<CombinedPass, Double>() {
+            @Override
+            protected void updateItem(Double item, boolean empty) {
+                super.updateItem(item, empty);
+                if (empty || item == null || Double.isNaN(item)) {
+                    setText("-");
+                    setStyle("-fx-alignment: CENTER;");
+                } else {
+                    setText(String.format(Locale.US, "%.2f", item));
+                    setStyle("-fx-alignment: CENTER;");
+                }
+            }
+        });
+
         TableColumn<CombinedPass, String> btCvCol = new TableColumn<>("Worst BT CV");
         btCvCol.setCellValueFactory(cellData -> {
             CombinedPass cp = cellData.getValue();
             double cv = engine.getWorstCvForPass(cp.getPassNumber(), false);
-            return new javafx.beans.property.SimpleStringProperty(Double.isNaN(cv) || cv == 0 ? "-" : String.format("%.2f %%", cv));
+            return new javafx.beans.property.SimpleStringProperty(Double.isNaN(cv) || cv == 0 ? "-" : String.format(Locale.US, "%.2f %%", cv));
         });
+        btCvCol.setPrefWidth(110);
+        btCvCol.setStyle("-fx-alignment: CENTER;");
 
         TableColumn<CombinedPass, String> fwCvCol = new TableColumn<>("Worst FW CV");
         fwCvCol.setCellValueFactory(cellData -> {
             CombinedPass cp = cellData.getValue();
             double cv = engine.getWorstCvForPass(cp.getPassNumber(), true);
-            return new javafx.beans.property.SimpleStringProperty(Double.isNaN(cv) || cv == 0 ? "-" : String.format("%.2f %%", cv));
+            return new javafx.beans.property.SimpleStringProperty(Double.isNaN(cv) || cv == 0 ? "-" : String.format(Locale.US, "%.2f %%", cv));
         });
+        fwCvCol.setPrefWidth(110);
+        fwCvCol.setStyle("-fx-alignment: CENTER;");
 
-        // Special column for KI Rating stability
         TableColumn<CombinedPass, String> kiRatingCol = new TableColumn<>("KI Stabilität");
         kiRatingCol.setCellValueFactory(cellData -> {
             CombinedPass cp = cellData.getValue();
             int score = engine.getKiScoreForPass(cp.getPassNumber());
-            return new javafx.beans.property.SimpleStringProperty(score < 0 ? "-" : String.valueOf(score) + "/100");
+            return new javafx.beans.property.SimpleStringProperty(score < 0 ? "-" : String.valueOf(score) + " / 100");
+        });
+        kiRatingCol.setPrefWidth(110);
+        kiRatingCol.setCellFactory(col -> new TableCell<CombinedPass, String>() {
+            @Override
+            protected void updateItem(String item, boolean empty) {
+                super.updateItem(item, empty);
+                if (empty || item == null || item.equals("-")) {
+                    setText("-");
+                    setStyle("-fx-alignment: CENTER;");
+                } else {
+                    setText(item);
+                    try {
+                        int score = Integer.parseInt(item.split(" ")[0]);
+                        String color;
+                        if (score >= 80) color = "#00e676";
+                        else if (score >= 70) color = "#66bb6a";
+                        else if (score >= 50) color = "#ffd740";
+                        else color = "#ff3b30";
+                        setStyle("-fx-alignment: CENTER; -fx-text-fill: " + color + "; -fx-font-weight: bold;");
+                    } catch (Exception e) {
+                        setStyle("-fx-alignment: CENTER;");
+                    }
+                }
+            }
         });
 
         TableColumn<CombinedPass, String> paramsCol = new TableColumn<>("Parameter");
@@ -516,7 +896,7 @@ public class WorkflowView {
         });
         paramsCol.setPrefWidth(300);
 
-        resultsTable.getColumns().addAll(passCol, scoreCol, btProf, btTr, btPf, btDd, btRec, fwProf, fwTr, fwPf, fwDd, fwRec, btCvCol, fwCvCol, kiRatingCol, paramsCol);
+        resultsTable.getColumns().addAll(passCol, scoreCol, robScoreCol, btProf, btTr, btPf, btDd, btRec, fwProf, fwTr, fwPf, fwDd, fwRec, btCvCol, fwCvCol, kiRatingCol, paramsCol);
 
         noDataLabel = new Label("Klicke auf ein abgeschlossenes Workflow-Element oben, um dessen Strategieliste anzuzeigen.");
         noDataLabel.setStyle("-fx-text-fill: #7e889a; -fx-font-size: 13px;");
@@ -598,7 +978,106 @@ public class WorkflowView {
         VBox.setVgrow(consoleLog, Priority.ALWAYS);
         logTab.setContent(consoleLog);
 
-        tabPane.getTabs().addAll(resultsTab, parametersTab, kiReportTab, logTab);
+        // Tab 4: Statistik
+        statisticsTab = new Tab("Statistik");
+        statisticsTab.setClosable(false);
+
+        statsTable = new TableView<>();
+        statsTable.setStyle("-fx-background-color: transparent;");
+        VBox.setVgrow(statsTable, Priority.ALWAYS);
+
+        statsTable.setRowFactory(tv -> {
+            TableRow<OptimizationStatsRow> row = new TableRow<>();
+            row.setOnMouseClicked(event -> {
+                if (!row.isEmpty() && row.getItem() != null && event.getButton() == MouseButton.PRIMARY) {
+                    if (engine.getOptResult() != null) {
+                        OptimizationStatsDialog dialog = new OptimizationStatsDialog(engine.getOptResult());
+                        dialog.show();
+                    }
+                }
+            });
+            row.hoverProperty().addListener((obs, wasHovered, isNowHovered) -> {
+                if (isNowHovered && !row.isEmpty()) {
+                    row.setCursor(javafx.scene.Cursor.HAND);
+                } else {
+                    row.setCursor(javafx.scene.Cursor.DEFAULT);
+                }
+            });
+            return row;
+        });
+
+        TableColumn<OptimizationStatsRow, String> eaCol = new TableColumn<>("Expert Advisor");
+        eaCol.setCellValueFactory(new PropertyValueFactory<>("eaName"));
+        eaCol.setPrefWidth(220);
+
+        TableColumn<OptimizationStatsRow, String> symCol = new TableColumn<>("Symbol");
+        symCol.setCellValueFactory(new PropertyValueFactory<>("symbol"));
+        symCol.setPrefWidth(100);
+        symCol.setStyle("-fx-alignment: CENTER;");
+
+        TableColumn<OptimizationStatsRow, String> tfCol = new TableColumn<>("Timeframe");
+        tfCol.setCellValueFactory(new PropertyValueFactory<>("period"));
+        tfCol.setPrefWidth(100);
+        tfCol.setStyle("-fx-alignment: CENTER;");
+
+        TableColumn<OptimizationStatsRow, String> dateCol = new TableColumn<>("Zeitraum");
+        dateCol.setCellValueFactory(new PropertyValueFactory<>("periodDate"));
+        dateCol.setPrefWidth(220);
+        dateCol.setStyle("-fx-alignment: CENTER;");
+
+        TableColumn<OptimizationStatsRow, Integer> passesCol = new TableColumn<>("Durchgänge");
+        passesCol.setCellValueFactory(new PropertyValueFactory<>("totalPasses"));
+        passesCol.setPrefWidth(120);
+        passesCol.setStyle("-fx-alignment: CENTER;");
+
+        TableColumn<OptimizationStatsRow, Double> maxProfitCol = new TableColumn<>("Max. Profit");
+        maxProfitCol.setCellValueFactory(new PropertyValueFactory<>("maxProfit"));
+        maxProfitCol.setPrefWidth(120);
+        maxProfitCol.setCellFactory(col -> new TableCell<OptimizationStatsRow, Double>() {
+            @Override
+            protected void updateItem(Double item, boolean empty) {
+                super.updateItem(item, empty);
+                if (empty || item == null) {
+                    setText(null);
+                    setStyle("-fx-alignment: CENTER;");
+                } else {
+                    setText(String.format(Locale.US, "%.2f", item));
+                    if (item >= 0) {
+                        setStyle("-fx-alignment: CENTER; -fx-text-fill: #00e676; -fx-font-weight: bold;");
+                    } else {
+                        setStyle("-fx-alignment: CENTER; -fx-text-fill: #ff5252; -fx-font-weight: bold;");
+                    }
+                }
+            }
+        });
+
+        TableColumn<OptimizationStatsRow, String> statusCol = new TableColumn<>("Aktion");
+        statusCol.setCellValueFactory(new PropertyValueFactory<>("status"));
+        statusCol.setPrefWidth(250);
+        statusCol.setCellFactory(col -> new TableCell<OptimizationStatsRow, String>() {
+            @Override
+            protected void updateItem(String item, boolean empty) {
+                super.updateItem(item, empty);
+                if (empty || item == null) {
+                    setText(null);
+                    setStyle("");
+                } else {
+                    setText(item);
+                    setStyle("-fx-alignment: CENTER; -fx-text-fill: #00e5ff; -fx-font-weight: bold;");
+                }
+            }
+        });
+
+        statsTable.getColumns().addAll(eaCol, symCol, tfCol, dateCol, passesCol, maxProfitCol, statusCol);
+
+        noStatsLabel = new Label("Keine Optimierungsdaten vorhanden. Bitte Optimierung in Schritt 2 ausführen.");
+        noStatsLabel.setStyle("-fx-text-fill: #7e889a; -fx-font-size: 13px;");
+
+        StackPane statsStack = new StackPane(statsTable, noStatsLabel);
+        StackPane.setAlignment(noStatsLabel, Pos.CENTER);
+        statisticsTab.setContent(statsStack);
+
+        tabPane.getTabs().addAll(resultsTab, parametersTab, kiReportTab, statisticsTab, logTab);
         return tabPane;
     }
 
@@ -637,7 +1116,7 @@ public class WorkflowView {
                 break;
             case 2:
                 if (engine.getOptResult() != null) {
-                    listToShow = engine.getOptResult().buildCombinedPasses(engine.getForwardMode() > 0, OptimizationResult.ScoreWeights.defaults());
+                    listToShow = engine.getOptResult().buildCombinedPasses(engine.getForwardMode() > 0, engine.loadScoreWeightsFromDb());
                 } else {
                     noDataText = "Keine Optimierungsergebnisse vorhanden. Starten Sie den Workflow oder führen Sie die Optimierung aus.";
                 }
@@ -681,31 +1160,90 @@ public class WorkflowView {
         }
     }
 
+    private void setRunningStep(int stepNum) {
+        if (Platform.isFxApplicationThread()) {
+            this.currentlyRunningStep = stepNum;
+            if (stepNum == -1) {
+                this.currentRunningSymbol = "";
+                this.currentSymbolIndex = 0;
+                this.totalSymbolsCount = 0;
+            }
+            updateVisualStates();
+        } else {
+            Platform.runLater(() -> {
+                this.currentlyRunningStep = stepNum;
+                if (stepNum == -1) {
+                    this.currentRunningSymbol = "";
+                    this.currentSymbolIndex = 0;
+                    this.totalSymbolsCount = 0;
+                }
+                updateVisualStates();
+            });
+        }
+    }
+
     private void updateVisualStates() {
+        // Hide all spinners first
+        if (step1Spinner != null) { step1Spinner.setVisible(false); step1Spinner.setManaged(false); }
+        if (step2Spinner != null) { step2Spinner.setVisible(false); step2Spinner.setManaged(false); }
+        if (step3Spinner != null) { step3Spinner.setVisible(false); step3Spinner.setManaged(false); }
+        if (step4Spinner != null) { step4Spinner.setVisible(false); step4Spinner.setManaged(false); }
+        if (step5Spinner != null) { step5Spinner.setVisible(false); step5Spinner.setManaged(false); }
+        if (step6Spinner != null) { step6Spinner.setVisible(false); step6Spinner.setManaged(false); }
+
+        // Show active spinner
+        if (currentlyRunningStep == 1 && step1Spinner != null) { step1Spinner.setVisible(true); step1Spinner.setManaged(true); }
+        if (currentlyRunningStep == 2 && step2Spinner != null) { step2Spinner.setVisible(true); step2Spinner.setManaged(true); }
+        if (currentlyRunningStep == 3 && step3Spinner != null) { step3Spinner.setVisible(true); step3Spinner.setManaged(true); }
+        if (currentlyRunningStep == 4 && step4Spinner != null) { step4Spinner.setVisible(true); step4Spinner.setManaged(true); }
+        if (currentlyRunningStep == 5 && step5Spinner != null) { step5Spinner.setVisible(true); step5Spinner.setManaged(true); }
+        if (currentlyRunningStep == 6 && step6Spinner != null) { step6Spinner.setVisible(true); step6Spinner.setManaged(true); }
+
+        String runningInfo = "";
+        if (currentlyRunningStep != -1 && currentRunningSymbol != null && !currentRunningSymbol.isEmpty()) {
+            runningInfo = currentRunningSymbol + (totalSymbolsCount > 1 ? " (" + currentSymbolIndex + "/" + totalSymbolsCount + ")" : "");
+        }
+
         // Step 1
-        if (engine.getExpert() == null || engine.getExpert().isEmpty()) {
+        if (currentlyRunningStep == 1) {
+            setStepBoxState(step1Box, step1Status, step1Details, "LÄUFT...", "Analysiere: " + runningInfo, "#00e5ff", selectedStep == 1);
+        } else if (engine.getExpert() == null || engine.getExpert().isEmpty()) {
             setStepBoxState(step1Box, step1Status, step1Details, "PENDING", "Kein EA geladen", "#ff3b30", selectedStep == 1);
         } else {
-            String eaName = engine.getExpert().substring(engine.getExpert().lastIndexOf("\\") + 1);
-            setStepBoxState(step1Box, step1Status, step1Details, "BEREIT", eaName + " (" + engine.getSymbol() + ")", "#00e676", selectedStep == 1);
+            String expertPath = engine.getExpert();
+            String eaName = expertPath.substring(Math.max(expertPath.lastIndexOf("\\"), expertPath.lastIndexOf("/")) + 1);
+            String symbolDisplay = engine.getSymbol();
+            if (symbolDisplay != null && symbolDisplay.contains(",")) {
+                String[] syms = symbolDisplay.split(",");
+                if (syms.length > 2) {
+                    symbolDisplay = syms[0].trim() + ", " + syms[1].trim() + "... (" + syms.length + " Pairs)";
+                }
+            }
+            setStepBoxState(step1Box, step1Status, step1Details, "BEREIT", eaName + " (" + symbolDisplay + ")", "#00e676", selectedStep == 1);
         }
 
         // Step 2
-        if (engine.getOptResult() == null) {
+        if (currentlyRunningStep == 2) {
+            setStepBoxState(step2Box, step2Status, step2Details, "LÄUFT...", "Optimierung: " + runningInfo, "#00e5ff", selectedStep == 2);
+        } else if (engine.getOptResult() == null) {
             setStepBoxState(step2Box, step2Status, step2Details, "WARTEND", "Keine Ergebnisse", "#ffb300", selectedStep == 2);
         } else {
             setStepBoxState(step2Box, step2Status, step2Details, "FERTIG", engine.getOptResult().getPasses().size() + " Strategien gefunden", "#00e676", selectedStep == 2);
         }
 
         // Step 3
-        if (engine.getSelectedDiversePasses().isEmpty()) {
+        if (currentlyRunningStep == 3) {
+            setStepBoxState(step3Box, step3Status, step3Details, "LÄUFT...", "Filtere: " + runningInfo, "#00e5ff", selectedStep == 3);
+        } else if (engine.getSelectedDiversePasses().isEmpty()) {
             setStepBoxState(step3Box, step3Status, step3Details, "WARTEND", "Keine Selektion", "#ffb300", selectedStep == 3);
         } else {
             setStepBoxState(step3Box, step3Status, step3Details, "SELEKTIERT", engine.getSelectedDiversePasses().size() + " diverse Strategien", "#00e676", selectedStep == 3);
         }
 
         // Step 4
-        if (engine.getSensitivityResults().isEmpty()) {
+        if (currentlyRunningStep == 4) {
+            setStepBoxState(step4Box, step4Status, step4Details, "LÄUFT...", "Stresstest: " + runningInfo, "#00e5ff", selectedStep == 4);
+        } else if (engine.getSensitivityResults().isEmpty()) {
             setStepBoxState(step4Box, step4Status, step4Details, "WARTEND", "Keine Analysen", "#ffb300", selectedStep == 4);
         } else {
             long completed = engine.getSensitivityResults().stream().filter(r -> "Completed".equals(r.getStatus())).count();
@@ -713,18 +1251,23 @@ public class WorkflowView {
         }
 
         // Step 5
-        if (engine.getKiReportText() == null || engine.getKiReportText().isEmpty()) {
+        if (currentlyRunningStep == 5) {
+            setStepBoxState(step5Box, step5Status, step5Details, "LÄUFT...", "KI-Analyse: " + runningInfo, "#00e5ff", selectedStep == 5);
+        } else if (engine.getKiReportText() == null || engine.getKiReportText().isEmpty()) {
             setStepBoxState(step5Box, step5Status, step5Details, "WARTEND", "Kein Bericht", "#ffb300", selectedStep == 5);
         } else {
             setStepBoxState(step5Box, step5Status, step5Details, "BEWERTET", engine.getSelectedDiversePasses().size() + " Strategien bewertet", "#00e676", selectedStep == 5);
         }
 
         // Step 6
-        if (engine.getFinalSelectedPasses().isEmpty()) {
+        if (currentlyRunningStep == 6) {
+            setStepBoxState(step6Box, step6Status, step6Details, "LÄUFT...", "Portfolio: " + runningInfo, "#00e5ff", selectedStep == 6);
+        } else if (engine.getFinalSelectedPasses().isEmpty()) {
             setStepBoxState(step6Box, step6Status, step6Details, "WARTEND", "Kein Export", "#ffb300", selectedStep == 6);
         } else {
             setStepBoxState(step6Box, step6Status, step6Details, "BEREIT", engine.getFinalSelectedPasses().size() + " Best-Strategien exportiert", "#00e676", selectedStep == 6);
         }
+        updateStatsTab();
     }
 
     private void setStepBoxState(VBox box, Label status, Label details, String statusText, String detailsText, String hexColor, boolean isSelected) {
@@ -764,85 +1307,126 @@ public class WorkflowView {
         activeWorkflowTask = new Task<Void>() {
             @Override
             protected Void call() throws Exception {
-                // Step 1: Validate Setup
-                updateProgressUI(0.05, "Schritt 1: Validiere Einstellungen...");
-                logToConsole("WORKFLOW", "Schritt 1: Initialisiere Parameter...");
-                engine.runStep1();
-                Platform.runLater(() -> {
-                    updateVisualStates();
-                    if (selectedStep == 1) selectStep(1);
-                });
-                if (isCancelled()) return null;
+                String rawSymbols = engine.getSymbol();
+                if (rawSymbols == null || rawSymbols.isEmpty()) {
+                    rawSymbols = "EURUSD";
+                }
+                String[] symbols = rawSymbols.split(",\\s*");
+                totalSymbolsCount = symbols.length;
 
-                // Step 2: Optimization
-                updateProgressUI(0.10, "Schritt 2: Starte MT5 Optimierung...");
-                logToConsole("WORKFLOW", "Schritt 2: Rufe MT5 genetic optimizer auf...");
-                
-                // Temporary listener to dump MT5 logs to our console
-                engine.runStep2(
-                    logMsg -> logToConsole("MT5-OPT", logMsg),
-                    (curr, tot) -> updateProgressUI(0.10 + 0.40 * ((double) curr / Math.max(tot, 1)), "Optimierung: Pass " + curr + " / " + tot)
-                );
-                
-                Platform.runLater(() -> {
-                    updateVisualStates();
-                    selectStep(2);
-                });
-                if (isCancelled()) return null;
+                for (int i = 0; i < symbols.length; i++) {
+                    String currentSym = symbols[i].trim();
+                    if (currentSym.isEmpty()) continue;
+                    
+                    currentRunningSymbol = currentSym;
+                    currentSymbolIndex = i + 1;
+                    
+                    logToConsole("WORKFLOW", "=== STARTE WORKFLOW FÜR SYMBOL " + (i + 1) + " VON " + symbols.length + ": " + currentSym + " ===");
+                    engine.setSymbol(currentSym);
 
-                // Step 3: Diverse Strategy Filter
-                updateProgressUI(0.55, "Schritt 3: Filtere diverse Strategien...");
-                logToConsole("WORKFLOW", "Schritt 3: Wende Ähnlichkeits-Clustering auf Ergebnisse an...");
-                engine.runStep3();
-                Platform.runLater(() -> {
-                    updateVisualStates();
-                    selectStep(3);
-                });
-                if (isCancelled()) return null;
+                    // Step 1: Validate Setup
+                    setRunningStep(1);
+                    updateProgressUI(((double) i / symbols.length) + (0.05 / symbols.length), "[" + currentSym + "] Schritt 1: Validiere Einstellungen...");
+                    logToConsole("WORKFLOW", "[" + currentSym + "] Schritt 1: Initialisiere Parameter...");
+                    engine.runStep1();
+                    Platform.runLater(() -> {
+                        updateVisualStates();
+                        if (selectedStep == 1) selectStep(1);
+                    });
+                    if (isCancelled()) return null;
 
-                // Step 4: Sensitivity analysis
-                updateProgressUI(0.60, "Schritt 4: Starte Robustheits-Tests...");
-                logToConsole("WORKFLOW", "Schritt 4: Sweepe optimierte Parameter zur Sensitivitäts-Prüfung...");
-                
-                engine.runStep4(
-                    logMsg -> logToConsole("STRESS", logMsg),
-                    pct -> updateProgressUI(0.60 + 0.25 * ((double) pct / 100.0), "Robustheits-Tests: " + pct + "% abgeschlossen")
-                );
+                    // Step 2: Optimization
+                    setRunningStep(2);
+                    updateProgressUI(((double) i / symbols.length) + (0.10 / symbols.length), "[" + currentSym + "] Schritt 2: Starte MT5 Optimierung...");
+                    logToConsole("WORKFLOW", "[" + currentSym + "] Schritt 2: Rufe MT5 genetic optimizer auf...");
+                    
+                    final String symPrefix = currentSym;
+                    final double baseProgress = (double) i / symbols.length;
+                    engine.runStep2(
+                        logMsg -> logToConsole("MT5-OPT [" + symPrefix + "]", logMsg),
+                        (curr, tot) -> updateProgressUI(baseProgress + (0.10 / symbols.length) + (0.45 / symbols.length) * ((double) curr / Math.max(tot, 1)), "[" + symPrefix + "] Optimierung: Pass " + curr + " / " + tot)
+                    );
+                    
+                    Platform.runLater(() -> {
+                        updateVisualStates();
+                        selectStep(2);
+                    });
+                    if (isCancelled()) return null;
 
-                Platform.runLater(() -> {
-                    updateVisualStates();
-                    selectStep(4);
-                });
-                if (isCancelled()) return null;
+                    // Step 3: Diverse Strategy Filter
+                    setRunningStep(3);
+                    updateProgressUI(baseProgress + (0.55 / symbols.length), "[" + currentSym + "] Schritt 3: Filtere diverse Strategien...");
+                    logToConsole("WORKFLOW", "[" + currentSym + "] Schritt 3: Wende Ähnlichkeits-Clustering auf Ergebnisse an...");
+                    engine.runStep3();
+                    Platform.runLater(() -> {
+                        updateVisualStates();
+                        selectStep(3);
+                    });
+                    if (isCancelled()) return null;
 
-                // Step 5: LLM Scoring
-                updateProgressUI(0.88, "Schritt 5: KI Bewertung der Stabilität...");
-                logToConsole("WORKFLOW", "Schritt 5: Sende Sensitivitätsdaten an OpenRouter...");
-                
-                engine.runStep5(logMsg -> logToConsole("KI-EVAL", logMsg));
+                    // Step 4: Sensitivity analysis
+                    setRunningStep(4);
+                    updateProgressUI(baseProgress + (0.60 / symbols.length), "[" + currentSym + "] Schritt 4: Starte Robustheits-Tests...");
+                    logToConsole("WORKFLOW", "[" + currentSym + "] Schritt 4: Sweepe optimierte Parameter zur Sensitivitäts-Prüfung...");
+                    
+                    engine.runStep4(
+                        logMsg -> logToConsole("STRESS [" + symPrefix + "]", logMsg),
+                        pct -> updateProgressUI(baseProgress + (0.60 / symbols.length) + (0.28 / symbols.length) * ((double) pct / 100.0), "[" + symPrefix + "] Robustheits-Tests: " + pct + "% abgeschlossen")
+                    );
 
-                Platform.runLater(() -> {
-                    updateVisualStates();
-                    selectStep(5);
-                });
-                if (isCancelled()) return null;
+                    Platform.runLater(() -> {
+                        updateVisualStates();
+                        selectStep(4);
+                    });
+                    if (isCancelled()) return null;
 
-                // Step 6: Final Portfolio selection
-                updateProgressUI(0.95, "Schritt 6: Generiere finales Portfolio...");
-                logToConsole("WORKFLOW", "Schritt 6: Wähle die 3-5 stabilsten, unkorrelierten Strategien...");
-                engine.runStep6();
-                Platform.runLater(() -> {
-                    updateVisualStates();
-                    selectStep(6);
-                });
+                    // Step 5: LLM Scoring
+                    setRunningStep(5);
+                    updateProgressUI(baseProgress + (0.88 / symbols.length), "[" + currentSym + "] Schritt 5: KI Bewertung der Stabilität...");
+                    logToConsole("WORKFLOW", "[" + currentSym + "] Schritt 5: Sende Sensitivitätsdaten an OpenRouter...");
+                    
+                    engine.runStep5(logMsg -> logToConsole("KI-EVAL [" + symPrefix + "]", logMsg));
 
-                updateProgressUI(1.0, "Workflow erfolgreich abgeschlossen!");
-                logToConsole("WORKFLOW", "=== AUTOMATION ABGESCHLOSSEN ===");
+                    Platform.runLater(() -> {
+                        updateVisualStates();
+                        selectStep(5);
+                    });
+                    if (isCancelled()) return null;
+
+                    // Step 6: Final Portfolio selection
+                    setRunningStep(6);
+                    updateProgressUI(baseProgress + (0.95 / symbols.length), "[" + currentSym + "] Schritt 6: Generiere finales Portfolio...");
+                    logToConsole("WORKFLOW", "[" + currentSym + "] Schritt 6: Wähle die 3-5 stabilsten, unkorrelierten Strategien...");
+                    engine.runStep6();
+                    Platform.runLater(() -> {
+                        updateVisualStates();
+                        selectStep(6);
+                    });
+                    
+                    logToConsole("WORKFLOW", "=== SYMBOL " + currentSym + " ERFOLGREICH BEENDET ===");
+
+                    if (i < symbols.length - 1) {
+                        logToConsole("WORKFLOW", "Bereinige temporäre Daten für den nächsten Durchlauf...");
+                        engine.clearResults();
+                        Platform.runLater(() -> {
+                            updateVisualStates();
+                            selectStep(1);
+                        });
+                    }
+                }
+
+                // Restore the original symbols list in the engine's symbol state variable
+                engine.setSymbol(rawSymbols);
+                engine.saveState();
+
+                updateProgressUI(1.0, "Workflow erfolgreich für alle Währungspaare abgeschlossen!");
+                logToConsole("WORKFLOW", "=== BATCH-WORKFLOW AUTOMATION ABGESCHLOSSEN ===");
                 return null;
             }
 
             @Override
             protected void succeeded() {
+                setRunningStep(-1);
                 cleanupTaskState();
                 Platform.runLater(() -> {
                     new Alert(Alert.AlertType.INFORMATION, "Workflow erfolgreich abgeschlossen!").show();
@@ -853,6 +1437,7 @@ public class WorkflowView {
 
             @Override
             protected void failed() {
+                setRunningStep(-1);
                 cleanupTaskState();
                 Throwable ex = getException();
                 logToConsole("ERROR", "Fehler im Workflow: " + ex.getMessage());
@@ -864,6 +1449,7 @@ public class WorkflowView {
 
             @Override
             protected void cancelled() {
+                setRunningStep(-1);
                 cleanupTaskState();
                 logToConsole("WORKFLOW", "Workflow vom Benutzer abgebrochen.");
                 Platform.runLater(() -> {
@@ -937,6 +1523,14 @@ public class WorkflowView {
             new Alert(Alert.AlertType.WARNING, "Bitte wähle in Schritt 1 einen Expert Advisor aus!").show();
             return;
         }
+        if (engine.getSymbol() != null && engine.getSymbol().contains(",")) {
+            new Alert(Alert.AlertType.WARNING, "Einzelschritte können bei mehreren Währungspaaren nicht ausgeführt werden. Bitte starten Sie den gesamten Workflow.").show();
+            return;
+        }
+
+        currentRunningSymbol = engine.getSymbol();
+        currentSymbolIndex = 1;
+        totalSymbolsCount = 1;
 
         runAllBtn.setDisable(true);
         cancelBtn.setDisable(false);
@@ -949,6 +1543,7 @@ public class WorkflowView {
         activeWorkflowTask = new Task<Void>() {
             @Override
             protected Void call() throws Exception {
+                setRunningStep(stepNum);
                 switch (stepNum) {
                     case 1:
                         updateProgressUI(0.05, "Führe Schritt 1: Konfiguration aus...");
@@ -988,6 +1583,7 @@ public class WorkflowView {
 
             @Override
             protected void succeeded() {
+                setRunningStep(-1);
                 cleanupTaskState();
                 Platform.runLater(() -> {
                     updateVisualStates();
@@ -998,6 +1594,7 @@ public class WorkflowView {
 
             @Override
             protected void failed() {
+                setRunningStep(-1);
                 cleanupTaskState();
                 Throwable ex = getException();
                 logToConsole("ERROR", "Fehler in Schritt " + stepNum + ": " + ex.getMessage());
@@ -1388,15 +1985,71 @@ public class WorkflowView {
         closeBtn.getStyleClass().add("button");
         closeBtn.setOnAction(e -> stage.close());
 
-        HBox btnBox = new HBox(closeBtn);
+        HBox btnBox = new HBox(10, closeBtn);
         btnBox.setAlignment(Pos.CENTER_RIGHT);
         box.getChildren().add(btnBox);
 
         javafx.scene.control.ScrollPane scroll = new javafx.scene.control.ScrollPane(box);
         scroll.setFitToWidth(true);
-        scroll.setStyle("-fx-background-color: #0b0d13;");
-        
-        Scene scene = new Scene(scroll, 1300, 950);
+        scroll.setStyle("-fx-background-color: transparent; -fx-background: #0b0d13; -fx-box-border: transparent;");
+
+        // --- Scorecard WebView (Right Side) ---
+        String symbolStr = engine.getSymbol() != null ? engine.getSymbol() : "EURUSD";
+        String periodStr = engine.getPeriod() != null ? engine.getPeriod() : "H1";
+        String expertStr = engine.getExpert() != null ? engine.getExpert() : "";
+
+        // --- Compute Sensitiv + KI Scores for the scorecard circles ---
+        double sensitivScoreVal = -1.0;
+        double kiScoreVal = -1.0;
+        if (match != null) {
+            double worstCv = Math.max(match.getOverallCV(), match.getOverallCVFw());
+            sensitivScoreVal = Math.max(0, Math.min(100, 100.0 - worstCv));
+            String kiText = match.getKiResult();
+            if (kiText != null && !kiText.isEmpty()) {
+                try {
+                    java.util.regex.Matcher m = java.util.regex.Pattern.compile("(\\d{1,3})\\s*/\\s*100").matcher(kiText);
+                    if (m.find()) {
+                        kiScoreVal = Double.parseDouble(m.group(1));
+                    } else {
+                        kiScoreVal = Double.parseDouble(kiText.trim());
+                    }
+                } catch (Exception ignored) {}
+            }
+        }
+
+        String htmlContent = com.backtester.report.RobustnessScorecardGenerator.generateHtml(
+            cp, expertStr, symbolStr, periodStr, fromDateStr, toDateStr, sensitivScoreVal, kiScoreVal
+        );
+
+        javafx.scene.web.WebView webView = new javafx.scene.web.WebView();
+        webView.getEngine().setOnAlert(event -> log.info("JS ALERT: " + event.getData()));
+        webView.getEngine().getLoadWorker().stateProperty().addListener((obs, oldState, newState) -> {
+            if (newState == javafx.concurrent.Worker.State.RUNNING || newState == javafx.concurrent.Worker.State.SUCCEEDED) {
+                try {
+                    netscape.javascript.JSObject window = (netscape.javascript.JSObject) webView.getEngine().executeScript("window");
+                    window.setMember("consoleBridge", new ConsoleLoggerBridge());
+                } catch (Exception ex) {
+                    // Ignore
+                }
+            }
+        });
+        webView.getEngine().getLoadWorker().exceptionProperty().addListener((obs, oldExc, newExc) -> {
+            if (newExc != null) {
+                log.error("WebView LoadWorker Exception: ", newExc);
+            }
+        });
+        webView.getEngine().loadContent(htmlContent);
+
+        VBox rightPane = new VBox(webView);
+        VBox.setVgrow(webView, Priority.ALWAYS);
+        rightPane.setStyle("-fx-background-color: #0b0d13;");
+
+        SplitPane splitPane = new SplitPane();
+        splitPane.getItems().addAll(scroll, rightPane);
+        splitPane.setDividerPositions(0.55);
+        splitPane.setStyle("-fx-background-color: #0b0d13; -fx-box-border: transparent;");
+
+        Scene scene = new Scene(splitPane, 1500, 950);
         stage.setScene(scene);
 
         // Inherit styling from main screen
@@ -1420,6 +2073,75 @@ public class WorkflowView {
         });
 
         stage.showAndWait();
+    }
+
+    private void showRobustnessScorecardWebView(CombinedPass cp) {
+        Stage stage = new Stage();
+        stage.setTitle("🛡️ Robustness Scorecard: Pass #" + cp.getPassNumber());
+        if (root.getScene() != null && root.getScene().getWindow() != null) {
+            stage.initOwner(root.getScene().getWindow());
+        }
+        stage.initModality(Modality.APPLICATION_MODAL);
+
+        String fromDateStr = engine.getFromDate() != null ? engine.getFromDate().toString() : "Unbekannt";
+        String toDateStr = engine.getToDate() != null ? engine.getToDate().toString() : "Unbekannt";
+        String symbolStr = engine.getSymbol() != null ? engine.getSymbol() : "EURUSD";
+        String periodStr = engine.getPeriod() != null ? engine.getPeriod() : "H1";
+        String expertStr = engine.getExpert() != null ? engine.getExpert() : "";
+
+        // --- Compute Sensitiv + KI Scores for the scorecard circles ---
+        double sensitivScoreVal2 = -1.0;
+        double kiScoreVal2 = -1.0;
+        if (engine.getSensitivityResults() != null) {
+            for (SensitivityResult sr : engine.getSensitivityResults()) {
+                if (sr.getOriginalPass() != null && sr.getOriginalPass().getPassNumber() == cp.getPassNumber()) {
+                    double worstCv = Math.max(sr.getOverallCV(), sr.getOverallCVFw());
+                    sensitivScoreVal2 = Math.max(0, Math.min(100, 100.0 - worstCv));
+                    String kiText = sr.getKiResult();
+                    if (kiText != null && !kiText.isEmpty()) {
+                        try {
+                            java.util.regex.Matcher m = java.util.regex.Pattern.compile("(\\d{1,3})\\s*/\\s*100").matcher(kiText);
+                            if (m.find()) {
+                                kiScoreVal2 = Double.parseDouble(m.group(1));
+                            } else {
+                                kiScoreVal2 = Double.parseDouble(kiText.trim());
+                            }
+                        } catch (Exception ignored) {}
+                    }
+                    break;
+                }
+            }
+        }
+
+        String htmlContent = com.backtester.report.RobustnessScorecardGenerator.generateHtml(
+            cp, expertStr, symbolStr, periodStr, fromDateStr, toDateStr, sensitivScoreVal2, kiScoreVal2
+        );
+
+        javafx.scene.web.WebView webView = new javafx.scene.web.WebView();
+        webView.getEngine().setOnAlert(event -> log.info("JS ALERT: " + event.getData()));
+        webView.getEngine().getLoadWorker().stateProperty().addListener((obs, oldState, newState) -> {
+            if (newState == javafx.concurrent.Worker.State.RUNNING || newState == javafx.concurrent.Worker.State.SUCCEEDED) {
+                try {
+                    netscape.javascript.JSObject window = (netscape.javascript.JSObject) webView.getEngine().executeScript("window");
+                    window.setMember("consoleBridge", new ConsoleLoggerBridge());
+                } catch (Exception e) {
+                    // Ignore if window is not ready yet
+                }
+            }
+        });
+        webView.getEngine().getLoadWorker().exceptionProperty().addListener((obs, oldExc, newExc) -> {
+            if (newExc != null) {
+                log.error("WebView LoadWorker Exception: ", newExc);
+            }
+        });
+        webView.getEngine().loadContent(htmlContent);
+
+        VBox box = new VBox(webView);
+        VBox.setVgrow(webView, Priority.ALWAYS);
+        
+        Scene scene = new Scene(box, 750, 750);
+        stage.setScene(scene);
+        stage.show();
     }
 
     private Label addDetailMetricRow(GridPane grid, int row, String labelText, String valueText) {
@@ -1670,7 +2392,7 @@ public class WorkflowView {
         }
         // 3. Check all optimization passes (step 2)
         if (engine.getOptResult() != null) {
-            List<CombinedPass> allPasses = engine.getOptResult().buildCombinedPasses(engine.getForwardMode() > 0, OptimizationResult.ScoreWeights.defaults());
+            List<CombinedPass> allPasses = engine.getOptResult().buildCombinedPasses(engine.getForwardMode() > 0, engine.loadScoreWeightsFromDb());
             for (CombinedPass cp : allPasses) {
                 if (cp.getPassNumber() == passNum) {
                     return cp;
@@ -1874,5 +2596,78 @@ public class WorkflowView {
                 }
             });
         }
+    }
+
+    public static class ConsoleLoggerBridge {
+        public void log(String text) { log.info("JS CONSOLE: " + text); }
+        public void error(String text) { log.error("JS ERROR: " + text); }
+    }
+
+    private void updateStatsTab() {
+        if (statsTable == null || noStatsLabel == null) return;
+        if (engine.getOptResult() != null && !engine.getOptResult().getPasses().isEmpty()) {
+            String ea = engine.getExpert() != null ? engine.getExpert() : "";
+            if (ea.contains("\\")) {
+                ea = ea.substring(ea.lastIndexOf("\\") + 1);
+            } else if (ea.contains("/")) {
+                ea = ea.substring(ea.lastIndexOf("/") + 1);
+            }
+            String sym = engine.getSymbol() != null ? engine.getSymbol() : "-";
+            String tf = engine.getPeriod() != null ? engine.getPeriod() : "-";
+            String dates = (engine.getFromDate() != null ? engine.getFromDate() : "?") + " bis " + (engine.getToDate() != null ? engine.getToDate() : "?");
+            int passesCount = engine.getOptResult().getPasses().size();
+            double maxProf = engine.getOptResult().getBestByProfit() != null ? engine.getOptResult().getBestByProfit().getProfit() : 0.0;
+
+            OptimizationStatsRow row = new OptimizationStatsRow(
+                ea, sym, tf, dates, passesCount, maxProf, "▶ Klicke für Statistik-Grafiken"
+            );
+            statsTable.getItems().setAll(row);
+            statsTable.setVisible(true);
+            noStatsLabel.setVisible(false);
+        } else {
+            statsTable.getItems().clear();
+            statsTable.setVisible(false);
+            noStatsLabel.setVisible(true);
+        }
+    }
+
+    public WorkflowEngine getEngine() {
+        return engine;
+    }
+
+    public void refreshUI() {
+        Platform.runLater(() -> {
+            updateVisualStates();
+            int lastStep = engine.getLastActiveStep();
+            selectStep(lastStep > 0 ? lastStep : 1);
+        });
+    }
+
+    public static class OptimizationStatsRow {
+        private final String eaName;
+        private final String symbol;
+        private final String period;
+        private final String periodDate;
+        private final int totalPasses;
+        private final double maxProfit;
+        private final String status;
+
+        public OptimizationStatsRow(String eaName, String symbol, String period, String periodDate, int totalPasses, double maxProfit, String status) {
+            this.eaName = eaName;
+            this.symbol = symbol;
+            this.period = period;
+            this.periodDate = periodDate;
+            this.totalPasses = totalPasses;
+            this.maxProfit = maxProfit;
+            this.status = status;
+        }
+
+        public String getEaName() { return eaName; }
+        public String getSymbol() { return symbol; }
+        public String getPeriod() { return period; }
+        public String getPeriodDate() { return periodDate; }
+        public int getTotalPasses() { return totalPasses; }
+        public double getMaxProfit() { return maxProfit; }
+        public String getStatus() { return status; }
     }
 }

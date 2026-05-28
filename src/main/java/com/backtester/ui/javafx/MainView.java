@@ -75,7 +75,7 @@ public class MainView {
         tabPane.getSelectionModel().select(workflowTab);
         workflowView.bindTab(workflowTab);
         
-        HistoryView historyView = new HistoryView();
+        HistoryView historyView = new HistoryView(workflowView);
         Tab databaseTab = new Tab("Database", historyView.getView());
         tabPane.getTabs().add(databaseTab);
         historyView.bindTab(databaseTab);

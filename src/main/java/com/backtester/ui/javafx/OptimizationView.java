@@ -154,14 +154,17 @@ public class OptimizationView {
     private CheckBox onlyMatchedCheck;
     private Label combinedCountLabel;
 
-    // Score-Gewichtungs-Spinner
+    // Unified Score-Gewichtungs-Spinner (10 Säulen)
     private Spinner<Integer> wBtProfitSpin;
     private Spinner<Integer> wFwProfitSpin;
     private Spinner<Integer> wConsistSpin;
-    private Spinner<Integer> wFwPfSpin;
-    private Spinner<Integer> wDdSpin;
+    private Spinner<Integer> wRiskSpin;
+    private Spinner<Integer> wEquityConsistSpin;
+    private Spinner<Integer> wSampleSizeSpin;
+    private Spinner<Integer> wSymmetrySpin;
+    private Spinner<Integer> wTailRiskSpin;
     private Spinner<Integer> wFwTradesSpin;
-    private Spinner<Integer> wRecSpin;
+    private Spinner<Integer> wRecoverySpin;
     private Label weightSumLabel;
 
     public OptimizationView(LogView logView) {
@@ -1069,6 +1072,23 @@ public class OptimizationView {
         String savedPrompt = db.getSetting(com.backtester.engine.LlmAnalysisService.SETTING_PROMPT, com.backtester.engine.LlmAnalysisService.DEFAULT_PROMPT);
         promptField.setText(savedPrompt);
 
+        // Performance & Stability Weights
+        Label perfWeightLabel = new Label("Gewichtung Performance (0.0 - 1.0):");
+        perfWeightLabel.setTextFill(Color.web("#c8cddc"));
+        perfWeightLabel.setFont(Font.font("Segoe UI", 16));
+        javafx.scene.control.TextField perfWeightField = new javafx.scene.control.TextField();
+        perfWeightField.setStyle("-fx-control-inner-background: #1a1d27; -fx-text-fill: white; -fx-font-size: 15px;");
+        String savedPerfW = db.getSetting(com.backtester.engine.LlmAnalysisService.SETTING_PERFORMANCE_WEIGHT);
+        perfWeightField.setText(savedPerfW != null && !savedPerfW.isBlank() ? savedPerfW : String.valueOf(com.backtester.engine.LlmAnalysisService.DEFAULT_PERFORMANCE_WEIGHT));
+
+        Label stabWeightLabel = new Label("Gewichtung Stabilität (0.0 - 1.0):");
+        stabWeightLabel.setTextFill(Color.web("#c8cddc"));
+        stabWeightLabel.setFont(Font.font("Segoe UI", 16));
+        javafx.scene.control.TextField stabWeightField = new javafx.scene.control.TextField();
+        stabWeightField.setStyle("-fx-control-inner-background: #1a1d27; -fx-text-fill: white; -fx-font-size: 15px;");
+        String savedStabW = db.getSetting(com.backtester.engine.LlmAnalysisService.SETTING_STABILITY_WEIGHT);
+        stabWeightField.setText(savedStabW != null && !savedStabW.isBlank() ? savedStabW : String.valueOf(com.backtester.engine.LlmAnalysisService.DEFAULT_STABILITY_WEIGHT));
+
         // Save Button
         Button saveBtn = new Button("Speichern");
         saveBtn.setStyle("-fx-background-color: #10b981; -fx-text-fill: white; -fx-font-weight: bold; -fx-font-size: 16px; -fx-padding: 8 24;");
@@ -1082,18 +1102,30 @@ public class OptimizationView {
             db.saveSetting(com.backtester.engine.LlmAnalysisService.SETTING_MODEL, selectedModel);
             db.saveSetting(com.backtester.engine.LlmAnalysisService.SETTING_MAX_TOKENS, maxTokensField.getText().trim());
             db.saveSetting(com.backtester.engine.LlmAnalysisService.SETTING_PROMPT, promptField.getText().trim());
+            
+            double perfW = com.backtester.engine.LlmAnalysisService.DEFAULT_PERFORMANCE_WEIGHT;
+            double stabW = com.backtester.engine.LlmAnalysisService.DEFAULT_STABILITY_WEIGHT;
+            try {
+                perfW = Double.parseDouble(perfWeightField.getText().trim());
+                stabW = Double.parseDouble(stabWeightField.getText().trim());
+            } catch (Exception ignored) {}
+            db.saveSetting(com.backtester.engine.LlmAnalysisService.SETTING_PERFORMANCE_WEIGHT, String.valueOf(perfW));
+            db.saveSetting(com.backtester.engine.LlmAnalysisService.SETTING_STABILITY_WEIGHT, String.valueOf(stabW));
+
             stage.close();
             logView.log("INFO", "KI-Einstellungen gespeichert.");
         });
 
-        box.getChildren().addAll(titleLabel, keyLabel, keyField, modelLabel, modelCombo, hintLabel, maxTokensLabel, maxTokensField, maxTokensHint, promptLabel, promptField, saveBtn);
+        box.getChildren().addAll(titleLabel, keyLabel, keyField, modelLabel, modelCombo, hintLabel, 
+            perfWeightLabel, perfWeightField, stabWeightLabel, stabWeightField,
+            maxTokensLabel, maxTokensField, maxTokensHint, promptLabel, promptField, saveBtn);
 
         javafx.scene.control.ScrollPane scrollPane = new javafx.scene.control.ScrollPane(box);
         scrollPane.setFitToWidth(true);
         scrollPane.setFitToHeight(true);
         scrollPane.setStyle("-fx-background: #0b0d13; -fx-background-color: #0b0d13;");
 
-        javafx.scene.Scene scene = new javafx.scene.Scene(scrollPane, 650, 700);
+        javafx.scene.Scene scene = new javafx.scene.Scene(scrollPane, 650, 750);
         scene.setFill(Color.web("#0b0d13"));
         if (root.getScene() != null && !root.getScene().getStylesheets().isEmpty()) {
             scene.getStylesheets().addAll(root.getScene().getStylesheets());
@@ -1351,20 +1383,27 @@ public class OptimizationView {
             onlyMatchedCheck, applyFilterBtn
         );
 
+        Button mainInfoBtn = DocHelper.createThickCircularInfoButton("Erklärung aller Indizes und Kennzahlen", () -> {
+            DocHelper.showAllIndicesDocDialog(evaluatorBtn.getScene() != null ? evaluatorBtn.getScene().getWindow() : null);
+        });
+
         actionRow.getChildren().addAll(
-            selectStrategiesBtn, evaluatorBtn, delPassBtn, searchLabel, combinedSearchField, combinedCountLabel
+            selectStrategiesBtn, evaluatorBtn, mainInfoBtn, delPassBtn, searchLabel, combinedSearchField, combinedCountLabel
         );
 
         toolbarContainer.getChildren().addAll(filterRow, actionRow);
 
-        // Spinner werden lazy initialisiert (defaults) und im Dialog angezeigt
-        wBtProfitSpin = makeWeightSpinner(20);
-        wFwProfitSpin = makeWeightSpinner(30);
-        wConsistSpin  = makeWeightSpinner(10);
-        wFwPfSpin     = makeWeightSpinner(10);
-        wDdSpin       = makeWeightSpinner(20);
-        wFwTradesSpin = makeWeightSpinner(50);
-        wRecSpin      = makeWeightSpinner(20);
+        // Unified Score: 10 Säulen-Spinner (defaults matching ScoreWeights)
+        wBtProfitSpin     = makeWeightSpinner(10);
+        wFwProfitSpin     = makeWeightSpinner(15);
+        wConsistSpin      = makeWeightSpinner(15);
+        wRiskSpin         = makeWeightSpinner(15);
+        wEquityConsistSpin = makeWeightSpinner(10);
+        wSampleSizeSpin   = makeWeightSpinner(10);
+        wSymmetrySpin     = makeWeightSpinner(5);
+        wTailRiskSpin     = makeWeightSpinner(10);
+        wFwTradesSpin     = makeWeightSpinner(5);
+        wRecoverySpin     = makeWeightSpinner(5);
 
         // ── Combined Table ────────────────────────────────────────────────────
         combinedTable = createCombinedTable();
@@ -1377,17 +1416,21 @@ public class OptimizationView {
 
     private OptimizationResult.ScoreWeights getScoreWeightsFromUI() {
         OptimizationResult.ScoreWeights weights = new OptimizationResult.ScoreWeights();
-        weights.wBtProfit    = wBtProfitSpin.getValue() / 100.0;
-        weights.wFwProfit    = wFwProfitSpin.getValue() / 100.0;
-        weights.wConsistency = wConsistSpin.getValue()  / 100.0;
-        weights.wFwPf        = wFwPfSpin.getValue()     / 100.0;
-        weights.wFwTrades    = wFwTradesSpin.getValue() / 100.0;
-        double ddHalf        = wDdSpin.getValue() / 200.0;
-        weights.wBtDd        = ddHalf;
-        weights.wFwDd        = ddHalf;
-        double recHalf       = wRecSpin.getValue() / 200.0;
-        weights.wBtRec       = recHalf;
-        weights.wFwRec       = recHalf;
+        weights.wBtProfit      = wBtProfitSpin.getValue();
+        weights.wFwProfit      = wFwProfitSpin.getValue();
+        weights.wConsistency   = wConsistSpin.getValue();
+        weights.wRisk          = wRiskSpin.getValue();
+        weights.wEquityConsist = wEquityConsistSpin.getValue();
+        weights.wSampleSize    = wSampleSizeSpin.getValue();
+        weights.wSymmetry      = wSymmetrySpin.getValue();
+        weights.wTailRisk      = wTailRiskSpin.getValue();
+        weights.wFwTrades      = wFwTradesSpin.getValue();
+        weights.wRecovery      = wRecoverySpin.getValue();
+
+        com.backtester.database.DatabaseManager db = com.backtester.database.DatabaseManager.getInstance();
+        weights.recoveryMin    = Double.parseDouble(db.getSetting("opt.weight.recovery.min", "1.0"));
+        weights.recoveryMax    = Double.parseDouble(db.getSetting("opt.weight.recovery.max", "5.0"));
+
         return weights;
     }
 
@@ -1432,11 +1475,7 @@ public class OptimizationView {
         // Score (highlight column)
         javafx.scene.control.Label lblScore = new javafx.scene.control.Label("Score");
         lblScore.setStyle("-fx-text-fill: #00e5ff; -fx-font-weight: bold;");
-        javafx.scene.layout.HBox scoreHeader = new javafx.scene.layout.HBox(4, lblScore, 
-            createSmallInfoButton(this::showScoreDoc));
-        scoreHeader.setAlignment(javafx.geometry.Pos.CENTER);
-        TableColumn<CombinedPass, String> scoreCol = new TableColumn<>();
-        scoreCol.setGraphic(scoreHeader);
+        TableColumn<CombinedPass, String> scoreCol = new TableColumn<>("Score");
         scoreCol.setCellValueFactory(c -> new SimpleStringProperty(
                 String.format("%.2f", c.getValue().getScore())));
         scoreCol.setStyle("-fx-alignment: CENTER;");
@@ -1451,16 +1490,10 @@ public class OptimizationView {
                 else setStyle("-fx-text-fill: #ff5252;");
             }
         });
-        scoreCol.setPrefWidth(60);
+        scoreCol.setPrefWidth(75);
         scoreCol.setComparator(numericStringComparator());
 
-        javafx.scene.control.Label lblConsist = new javafx.scene.control.Label("Konsistenz");
-        lblConsist.setStyle("-fx-text-fill: #00e5ff; -fx-font-weight: bold;");
-        javafx.scene.layout.HBox consistHeader = new javafx.scene.layout.HBox(4, lblConsist, 
-            createSmallInfoButton(this::showConsistencyDoc));
-        consistHeader.setAlignment(javafx.geometry.Pos.CENTER);
-        TableColumn<CombinedPass, String> consistCol = new TableColumn<>();
-        consistCol.setGraphic(consistHeader);
+        TableColumn<CombinedPass, String> consistCol = new TableColumn<>("Konsistenz");
         consistCol.setCellValueFactory(c -> new SimpleStringProperty(
                 String.format("%.2f", c.getValue().getConsistency())));
         consistCol.setStyle("-fx-alignment: CENTER;");
@@ -1479,13 +1512,13 @@ public class OptimizationView {
                 }
             }
         });
-        consistCol.setPrefWidth(75);
+        consistCol.setPrefWidth(95);
         consistCol.setComparator(numericStringComparator());
 
 
 
         TableColumn<CombinedPass, Number> passCol = new TableColumn<>("Pass");
-        passCol.setCellValueFactory(new PropertyValueFactory<>("passNumber"));
+        passCol.setCellValueFactory(c -> new javafx.beans.property.SimpleObjectProperty<>(c.getValue().getPassNumber()));
         passCol.setPrefWidth(50);
 
         // ── Backtest columns (blue tint header) ──
@@ -1565,19 +1598,7 @@ public class OptimizationView {
 
         fwGroup.getColumns().addAll(fwProfit, fwTrades, fwPf, fwDd, fwRecovery);
 
-        // KI Stability Score column (from LLM analysis)
-        javafx.scene.control.Label lblKI = new javafx.scene.control.Label("KI");
-        lblKI.setStyle("-fx-text-fill: #00e5ff; -fx-font-weight: bold;");
-        javafx.scene.layout.HBox kiHeader = new javafx.scene.layout.HBox(4, lblKI, 
-            DocHelper.createSmallInfoButton("KI Stabilitäts-Rating", 
-            "Ein innovatives Rating durch ein lokales Large Language Model.", 
-            "Eine lokale KI analysiert die rohe Equity-Kurve auf Muster, Crash-Gefahren und Überanpassungen (Curve-Fitting).\n\n" +
-            "• > 70: Die KI vertraut dem Backtest.\n" +
-            "• 50 - 70: Warnsignale, genauer prüfen.\n" +
-            "• < 50: Warnung vor Instabilität, auch wenn Profit/Drawdown auf den ersten Blick gut aussehen."));
-        kiHeader.setAlignment(javafx.geometry.Pos.CENTER);
-        TableColumn<CombinedPass, String> kiCol = new TableColumn<>();
-        kiCol.setGraphic(kiHeader);
+        TableColumn<CombinedPass, String> kiCol = new TableColumn<>("KI");
         kiCol.setCellValueFactory(c -> {
             int pn = c.getValue().getPassNumber();
             String kiScore = "";
@@ -1609,10 +1630,69 @@ public class OptimizationView {
                 }
             }
         });
-        kiCol.setPrefWidth(70);
+        kiCol.setPrefWidth(60);
         kiCol.setComparator(numericStringComparator());
 
-        t.getColumns().addAll(scoreCol, consistCol, kiCol, passCol, btGroup, fwGroup);
+        TableColumn<CombinedPass, String> robScoreCol = new TableColumn<>("Rob. Scorecard");
+        robScoreCol.setCellValueFactory(c -> {
+            String fromDateStr = "Unbekannt";
+            String toDateStr = "Unbekannt";
+            if (lastOptResult != null) {
+                if (lastOptResult.getFromDate() != null && !lastOptResult.getFromDate().isEmpty()) {
+                    fromDateStr = lastOptResult.getFromDate();
+                }
+                if (lastOptResult.getToDate() != null && !lastOptResult.getToDate().isEmpty()) {
+                    toDateStr = lastOptResult.getToDate();
+                }
+            } else if (fromDatePicker != null && fromDatePicker.getValue() != null) {
+                fromDateStr = fromDatePicker.getValue().toString();
+                if (toDatePicker != null && toDatePicker.getValue() != null) {
+                    toDateStr = toDatePicker.getValue().toString();
+                }
+            }
+            double score = com.backtester.report.RobustnessScorecardGenerator.calculateOverallScore(c.getValue(), fromDateStr, toDateStr);
+            return new SimpleStringProperty(String.format(java.util.Locale.US, "%.0f", score));
+        });
+        robScoreCol.setStyle("-fx-alignment: CENTER;");
+        robScoreCol.setCellFactory(col -> new TableCell<CombinedPass, String>() {
+            @Override
+            protected void updateItem(String item, boolean empty) {
+                super.updateItem(item, empty);
+                if (empty || item == null) {
+                    setText(null);
+                    setStyle("-fx-alignment: CENTER;");
+                } else {
+                    setText(item);
+                    try {
+                        double score = Double.parseDouble(item);
+                        String color;
+                        if (score >= 70) {
+                            color = "#00e676"; // Green
+                        } else if (score >= 55) {
+                            color = "#ffd740"; // Yellow
+                        } else {
+                            color = "#ff5252"; // Red
+                        }
+                        setStyle("-fx-alignment: CENTER; -fx-text-fill: " + color + "; -fx-font-weight: bold;");
+                    } catch (Exception e) {
+                        setStyle("-fx-alignment: CENTER;");
+                    }
+                }
+            }
+        });
+        robScoreCol.setPrefWidth(115);
+        robScoreCol.setComparator(numericStringComparator());
+
+        TableColumn<CombinedPass, String> riCol = new TableColumn<>("RI");
+        riCol.setCellValueFactory(c -> {
+            double ri = StrategyEvaluatorDialog.calculateRobustnessIndex(c.getValue());
+            return new SimpleStringProperty(String.format(java.util.Locale.US, "%.2f", ri));
+        });
+        riCol.setStyle("-fx-alignment: CENTER;");
+        riCol.setPrefWidth(60);
+        riCol.setComparator(numericStringComparator());
+
+        t.getColumns().addAll(scoreCol, consistCol, robScoreCol, kiCol, riCol, passCol, btGroup, fwGroup);
 
         Label placeholder = new Label("Noch keine Daten.\nStarte eine Optimierung mit Forward Test, dann hier Filter anwenden.");
         placeholder.setStyle("-fx-text-fill: #7e889a;");
@@ -1761,6 +1841,8 @@ public class OptimizationView {
         
         String scoreCalc = "Was bedeutet dieser Wert?\n" +
                            "Der Gesamt-Score (0-100) bewertet auf einen Blick, wie ausgewogen und robust eine Strategie im Vergleich zu allen anderen Durchgängen dieser Optimierung abschneidet. Ein hoher Score zeigt, dass die Strategie nicht nur hohen Profit erzielt, sondern auch ein gesundes Verhältnis von Risiko (geringer Drawdown), Stabilität (hoher Profit Factor) und Konsistenz zwischen Backtest und Forward-Phase aufweist. Er schützt vor Überoptimierung, indem er reine Gewinn-Ausreißer abwertet, wenn diese bei Marktveränderungen einbrechen. Kurz gesagt: Er filtert die stabilsten Allrounder heraus.\n\n" +
+                           "⚠️ HINWEIS ZUR KENNLINIE:\n" +
+                           "Dieser Gesamt-Score bewertet ausschließlich die endgültigen Kennzahlen am Schluss. Er betrachtet NICHT den Verlauf der Kennlinie (Equity-Kurve). Nur der Robustness Score analysiert den tatsächlichen Verlauf der Kennlinie per linearer Regression (R²-Stabilität), um Glückstreffer oder instabile Verläufe aufzudecken.\n\n" +
                            "Berechnung & Details:\n" +
                            "Er bewertet Profit, Drawdown, PF und Konsistenz gemeinsam basierend auf deinen Filter-Gewichtungen.\n\n" + scoreDesc + "\n\n" +
                            "--- GENAUE BERECHNUNG ---\n" + sel.getScoreDetails();
@@ -2000,7 +2082,11 @@ public class OptimizationView {
         selectedSearchField.getStyleClass().add("text-input");
         selectedSearchField.textProperty().addListener((obs, oldVal, newVal) -> applySelectedFilter());
 
-        topBar.getChildren().addAll(removeBtn, clearAllBtn, searchLabel, selectedSearchField);
+        Button selectedInfoBtn = DocHelper.createThickCircularInfoButton("Erklärung aller Indizes und Kennzahlen", () -> {
+            DocHelper.showAllIndicesDocDialog(clearAllBtn.getScene() != null ? clearAllBtn.getScene().getWindow() : null);
+        });
+
+        topBar.getChildren().addAll(removeBtn, clearAllBtn, selectedInfoBtn, searchLabel, selectedSearchField);
 
         selectedTable = createCombinedTable();
         VBox.setVgrow(selectedTable, Priority.ALWAYS);
@@ -2659,25 +2745,10 @@ public class OptimizationView {
         double maxFwDd        = filterMaxFwDd;
         boolean onlyMatched   = onlyMatchedCheck.isSelected();
 
-        // ── Score-Gewichte aus Spinnern lesen
-        OptimizationResult.ScoreWeights weights = new OptimizationResult.ScoreWeights();
-        weights.wBtProfit    = wBtProfitSpin.getValue() / 100.0;
-        weights.wFwProfit    = wFwProfitSpin.getValue() / 100.0;
-        weights.wConsistency = wConsistSpin.getValue()  / 100.0;
-        weights.wFwPf        = wFwPfSpin.getValue()     / 100.0;
-        weights.wFwTrades    = wFwTradesSpin.getValue() / 100.0;
-        // Drawdown-Strafe gilt für BT und FW gleich (halber Wert je)
-        double ddHalf        = wDdSpin.getValue() / 200.0;
-        weights.wBtDd        = ddHalf;
-        weights.wFwDd        = ddHalf;
-        double recHalf       = wRecSpin.getValue() / 200.0;
-        weights.wBtRec       = recHalf;
-        weights.wFwRec       = recHalf;
+        // ── Unified Score-Gewichte aus Spinnern lesen
+        OptimizationResult.ScoreWeights weights = getScoreWeightsFromUI();
 
         List<CombinedPass> all = lastOptResult.buildCombinedPasses(onlyMatched, weights);
-        System.out.println("DEBUG: BT passes: " + lastOptResult.getPasses().size());
-        System.out.println("DEBUG: FW passes: " + lastOptResult.getForwardPasses().size());
-        System.out.println("DEBUG: Combined passes: " + all.size());
 
         List<CombinedPass> filtered = all;
         if (filterEnabledCheck != null && filterEnabledCheck.isSelected()) {
@@ -2714,10 +2785,7 @@ public class OptimizationView {
 
         combinedTable.getItems().setAll(filtered);
         combinedCountLabel.setText(filtered.size() + " von " + all.size() + " Passes");
-        logView.log("INFO", "Combined Analysis: " + filtered.size() + " Passes | Gewichte BT=" +
-            wBtProfitSpin.getValue() + "% FW=" + wFwProfitSpin.getValue() + "% Konsi=" +
-            wConsistSpin.getValue() + "% FWpf=" + wFwPfSpin.getValue() + "% DD=" + wDdSpin.getValue() +
-            "% FWtr=" + wFwTradesSpin.getValue() + "% Rec=" + wRecSpin.getValue() + "%");
+        logView.log("INFO", "Unified Score: " + filtered.size() + " Passes (10 Säulen)");
     }
 
     private Comparator<CombinedPass> buildCombinedComparator() {
@@ -2758,45 +2826,62 @@ public class OptimizationView {
         root.setStyle("-fx-background-color: #1a1d27;");
 
         // \u2500\u2500 Title
-        Label title = new Label("\u2699\ufe0f  Score-Gewichtung");
+        Label title = new Label("\u2699\ufe0f  Unified Score-Gewichtung");
         title.setFont(Font.font("Segoe UI", FontWeight.BOLD, 16));
         title.setTextFill(Color.web("#ffd740"));
 
         Label hint = new Label("Jeder Parameter wird relativ zum anderen gewichtet.\n" +
-                "Die Summe muss nicht genau 100 ergeben \u2014 sie wird automatisch normalisiert.");
+                "Die Summe muss nicht genau 100 ergeben \u2014 sie wird automatisch normalisiert.\n" +
+                "Unified Score = Performance + Robustheit in einem Score.");
         hint.setWrapText(true);
         hint.setStyle("-fx-text-fill: #7e889a; -fx-font-size: 11px;");
 
-        // \u2500\u2500 Slider rows
+        // \u2500\u2500 Slider rows (10 S\u00e4ulen)
         GridPane grid = new GridPane();
         grid.setHgap(14);
-        grid.setVgap(12);
+        grid.setVgap(10);
 
-        // For each weight we need: label, slider, value-label
         Label[] labels = {
-            dialogLabel("BT Profit"),
-            dialogLabel("FW Profit"),
+            dialogLabel("BT Profitabilit\u00e4t"),
+            dialogLabel("FW Profitabilit\u00e4t"),
             dialogLabel("Konsistenz FW/BT"),
-            dialogLabel("FW Profit Factor"),
-            dialogLabel("Drawdown-Strafe"),
+            dialogLabel("Risiko-Verh\u00e4ltnis"),
+            dialogLabel("Equity-Konsistenz"),
+            dialogLabel("Stichprobengr\u00f6\u00dfe"),
+            dialogLabel("Symmetrie L/S"),
+            dialogLabel("Tail-Risk"),
             dialogLabel("FW Trade Count"),
             dialogLabel("Erholungsfaktor")
         };
         String[] tooltips = {
-            "Gewinn im Backtest-Zeitraum",
-            "Gewinn im Forward-Zeitraum (Out-of-Sample) \u2014 h\u00f6chste Priorit\u00e4t",
-            "Verh\u00e4ltnis FW/BT: 1.0 = perfekte Reproduzierbarkeit",
-            "Profit Factor im Forward-Test (Handelsqualit\u00e4t)",
-            "Straf-Faktor f\u00fcr hohen Drawdown (BT und FW je zur H\u00e4lfte)",
-            "Mehr Trades = statistisch belastbarer (kein Cap). Zus\u00e4tzlich automatische Strafe wenn FW-Trades < median/2.",
-            "Erholungsfaktor (Recovery Factor): Net Profit / Max Drawdown (BT und FW je zur H\u00e4lfte)"
+            "Backtest ROI + Profit Factor \u2014 Wie profitabel ist die Strategie im In-Sample?",
+            "Forward ROI + Profit Factor \u2014 Wie profitabel ist die Strategie Out-of-Sample?",
+            "Verh\u00e4ltnis FW/BT: 1.0 = perfekte Reproduzierbarkeit der Ergebnisse",
+            "Return/Drawdown + Calmar Ratio \u2014 Gewinn im Verh\u00e4ltnis zum Risiko",
+            "R\u00b2 Stability + SQN \u2014 Wie gleichm\u00e4\u00dfig steigt die Equity-Kurve?",
+            "Anzahl Trades + Testjahre \u2014 Statistische Signifikanz der Ergebnisse",
+            "Long/Short Balance \u2014 Funktioniert die Strategie in beide Richtungen?",
+            "MaxLoss/AvgLoss + MaxLoss/Profit \u2014 Risiko seltener Extremverluste",
+            "Mehr FW-Trades = statistisch belastbarer. Zus\u00e4tzlich automatische Strafe wenn FW-Trades < median/2.",
+            "Recovery Factor: Net Profit / Max Drawdown (BT und FW gemittelt)"
         };
         Spinner<Integer>[] spinners = new Spinner[]{
-                wBtProfitSpin, wFwProfitSpin, wConsistSpin, wFwPfSpin, wDdSpin, wFwTradesSpin, wRecSpin};
+                wBtProfitSpin, wFwProfitSpin, wConsistSpin, wRiskSpin,
+                wEquityConsistSpin, wSampleSizeSpin, wSymmetrySpin, wTailRiskSpin,
+                wFwTradesSpin, wRecoverySpin};
 
         final int N = spinners.length;
         Slider[] sliders = new Slider[N];
         Label[] valLabels = new Label[N];
+
+        com.backtester.database.DatabaseManager db = com.backtester.database.DatabaseManager.getInstance();
+        TextField tfMin = new TextField(db.getSetting("opt.weight.recovery.min", "1.0"));
+        tfMin.setPrefWidth(50);
+        tfMin.setStyle("-fx-background-color: #2a2d3a; -fx-text-fill: #fff; -fx-border-color: #444; -fx-border-width: 1; -fx-font-size: 11px;");
+
+        TextField tfMax = new TextField(db.getSetting("opt.weight.recovery.max", "5.0"));
+        tfMax.setPrefWidth(50);
+        tfMax.setStyle("-fx-background-color: #2a2d3a; -fx-text-fill: #fff; -fx-border-color: #444; -fx-border-width: 1; -fx-font-size: 11px;");
 
         for (int i = 0; i < N; i++) {
             Slider sl = new Slider(0, 100, spinners[i].getValue());
@@ -2824,7 +2909,55 @@ public class OptimizationView {
 
             labels[i].setTooltip(new Tooltip(tooltips[i]));
             grid.add(labels[i],  0, i);
-            grid.add(sl,         1, i);
+
+            if (i == 9) {
+                HBox scaleBox = new HBox(6);
+                scaleBox.setAlignment(Pos.CENTER_LEFT);
+                scaleBox.setPadding(new Insets(4, 0, 0, 0));
+
+                Label scaleLabel = new Label("Skalierung: Min");
+                scaleLabel.setStyle("-fx-text-fill: #7e889a; -fx-font-size: 11px;");
+
+                Label scaleToLabel = new Label("bis Max");
+                scaleToLabel.setStyle("-fx-text-fill: #7e889a; -fx-font-size: 11px;");
+
+                Button infoBtn = new Button("ℹ");
+                infoBtn.setStyle("-fx-background-color: transparent; -fx-text-fill: #ffd740; -fx-cursor: hand; -fx-font-size: 12px; -fx-padding: 0 4 0 4;");
+                Tooltip infoTooltip = new Tooltip(
+                    "Grenzwerte für die lineare Skalierung des Erholungsfaktors auf 0-100 Punkte.\n" +
+                    "Werte unter Min geben 0 Punkte, über Max geben 100 Punkte."
+                );
+                infoTooltip.setShowDelay(javafx.util.Duration.millis(100));
+                Tooltip.install(infoBtn, infoTooltip);
+                infoBtn.setOnAction(evt -> {
+                    Alert alert = new Alert(Alert.AlertType.INFORMATION);
+                    alert.setTitle("Erholungsfaktor Skalierung");
+                    alert.setHeaderText("Wie funktioniert die Skalierung des Erholungsfaktors?");
+                    alert.setContentText(
+                        "Der Erholungsfaktor (Net Profit / Max Drawdown) wird anhand dieser Grenzwerte linear auf 0-100 Punkte skaliert.\n\n" +
+                        "• Ein Wert kleiner oder gleich Min erhält 0 Punkte.\n" +
+                        "• Ein Wert größer oder gleich Max erhält 100 Punkte.\n" +
+                        "• Dazwischen wird linear interpoliert.\n\n" +
+                        "Wenn Sie z.B. Min=1.0 und Max=2.0 einstellen, hat eine Strategie mit Recovery Factor = 1.5 genau 50 Punkte."
+                    );
+                    alert.getDialogPane().setStyle("-fx-background-color: #1a1d27;");
+                    alert.getDialogPane().lookup(".content.label").setStyle("-fx-text-fill: #b4bac8;");
+                    alert.getDialogPane().lookup(".header-panel").setStyle("-fx-background-color: #1a1d27;");
+                    if (alert.getDialogPane().lookup(".header-panel").lookup(".label") != null) {
+                        alert.getDialogPane().lookup(".header-panel").lookup(".label").setStyle("-fx-text-fill: #ffd740;");
+                    }
+                    alert.initOwner(dialog);
+                    alert.showAndWait();
+                });
+
+                scaleBox.getChildren().addAll(scaleLabel, tfMin, scaleToLabel, tfMax, infoBtn);
+
+                VBox sliderContainer = new VBox(4);
+                sliderContainer.getChildren().addAll(sl, scaleBox);
+                grid.add(sliderContainer, 1, i);
+            } else {
+                grid.add(sl,             1, i);
+            }
             grid.add(vl,         2, i);
         }
 
@@ -2842,26 +2975,27 @@ public class OptimizationView {
         }
         refreshSum.run();
 
-        // Hint about the automatic trade-count safety net (cannot be configured)
         Label autoPenaltyHint = new Label(
             "Automatische Schutzschwelle: FW-Trades unter median/2 erhalten zus\u00e4tzlich " +
-            "eine multiplikative Strafe (max. \u221250 %), damit zu wenig Trades nicht " +
-            "ungestraft bleiben.");
+            "eine multiplikative Strafe (max. \u221250 %).\n" +
+            "Hinweis: Symmetrie + Tail-Risk werden gesch\u00e4tzt, da MT5 keine L/S-Aufschl\u00fcsselung liefert.");
         autoPenaltyHint.setWrapText(true);
         autoPenaltyHint.setStyle("-fx-text-fill: #7e889a; -fx-font-size: 10px; -fx-font-style: italic;");
 
         // \u2500\u2500 Buttons
-        Button resetBtn = new Button("\u21ba Zurücksetzen");
+        Button resetBtn = new Button("\u21ba Zur\u00fccksetzen");
         resetBtn.setStyle("-fx-background-color: #2a2d3a; -fx-text-fill: #b4bac8; -fx-border-color: #444; -fx-border-width: 1;");
         resetBtn.setOnAction(e -> {
-            int[] defaults = {20, 30, 10, 10, 20, 50, 20};
+            int[] defaults = {10, 15, 15, 15, 10, 10, 5, 10, 5, 5};
             for (int i = 0; i < N; i++) {
                 sliders[i].setValue(defaults[i]);
             }
+            tfMin.setText("1.0");
+            tfMax.setText("5.0");
         });
 
         boolean[] applied = {false};
-        Button applyBtn = new Button("\u2714 Übernehmen & Schließen");
+        Button applyBtn = new Button("\u2714 \u00dcbernehmen & Schlie\u00dfen");
         applyBtn.setStyle("-fx-background-color: #00e5ff; -fx-text-fill: #0d0f17; -fx-font-weight: bold;");
         applyBtn.setOnAction(e -> {
             applied[0] = true;
@@ -2871,38 +3005,32 @@ public class OptimizationView {
         Button cancelBtn2 = new Button("Abbrechen");
         cancelBtn2.setStyle("-fx-background-color: #2a2d3a; -fx-text-fill: #b4bac8; -fx-border-color: #444; -fx-border-width: 1;");
         cancelBtn2.setOnAction(e -> {
-            // Restore original values from spinners (no change)
             for (int i = 0; i < N; i++) {
                 sliders[i].setValue(spinners[i].getValue());
             }
             dialog.close();
         });
 
+        // Presets: Low = Performance-fokussiert, Med = ausgewogen, High = Robustheit-fokussiert
         Button btnPresetLow = new Button("Low / Zahm");
         btnPresetLow.setStyle("-fx-background-color: #2a2d3a; -fx-text-fill: #a7f3d0; -fx-border-color: #10b981; -fx-border-width: 1; -fx-cursor: hand;");
         btnPresetLow.setOnAction(e -> {
-            int[] lowWeights = {30, 30, 10, 10, 10, 10, 10};
-            for (int i = 0; i < N; i++) {
-                sliders[i].setValue(lowWeights[i]);
-            }
+            int[] lowWeights = {20, 20, 10, 10, 5, 5, 3, 5, 10, 5};
+            for (int i = 0; i < N; i++) sliders[i].setValue(lowWeights[i]);
         });
 
         Button btnPresetMed = new Button("Med / Ausgewogen");
         btnPresetMed.setStyle("-fx-background-color: #2a2d3a; -fx-text-fill: #fde047; -fx-border-color: #eab308; -fx-border-width: 1; -fx-cursor: hand;");
         btnPresetMed.setOnAction(e -> {
-            int[] medWeights = {20, 30, 10, 10, 20, 50, 20};
-            for (int i = 0; i < N; i++) {
-                sliders[i].setValue(medWeights[i]);
-            }
+            int[] medWeights = {10, 15, 15, 15, 10, 10, 5, 10, 5, 5};
+            for (int i = 0; i < N; i++) sliders[i].setValue(medWeights[i]);
         });
 
         Button btnPresetHigh = new Button("High / Streng");
         btnPresetHigh.setStyle("-fx-background-color: #2a2d3a; -fx-text-fill: #fca5a5; -fx-border-color: #ef4444; -fx-border-width: 1; -fx-cursor: hand;");
         btnPresetHigh.setOnAction(e -> {
-            int[] highWeights = {10, 20, 20, 20, 30, 80, 20};
-            for (int i = 0; i < N; i++) {
-                sliders[i].setValue(highWeights[i]);
-            }
+            int[] highWeights = {5, 10, 15, 20, 15, 15, 5, 15, 3, 5};
+            for (int i = 0; i < N; i++) sliders[i].setValue(highWeights[i]);
         });
 
         HBox presetRow = new HBox(8, styledLabel("Voreinstellungen:"), btnPresetLow, btnPresetMed, btnPresetHigh);
@@ -2919,19 +3047,32 @@ public class OptimizationView {
 
         root.getChildren().addAll(title, hint, grid, sep, sumLabel, autoPenaltyHint, presetRow, sep2, btnRow);
 
-        javafx.scene.Scene scene = new javafx.scene.Scene(root, 520, 560);
+        javafx.scene.Scene scene = new javafx.scene.Scene(root, 540, 710);
         dialog.setScene(scene);
         dialog.showAndWait();
 
         if (applied[0]) {
-            com.backtester.database.DatabaseManager db = com.backtester.database.DatabaseManager.getInstance();
+            double rMin = 1.0;
+            double rMax = 5.0;
+            try {
+                rMin = Double.parseDouble(tfMin.getText().trim().replace(',', '.'));
+            } catch (Exception ex) {}
+            try {
+                rMax = Double.parseDouble(tfMax.getText().trim().replace(',', '.'));
+            } catch (Exception ex) {}
+            db.saveSetting("opt.weight.recovery.min", String.valueOf(rMin));
+            db.saveSetting("opt.weight.recovery.max", String.valueOf(rMax));
+
             db.saveSetting("opt.weight.btProfit", String.valueOf(wBtProfitSpin.getValue()));
             db.saveSetting("opt.weight.fwProfit", String.valueOf(wFwProfitSpin.getValue()));
             db.saveSetting("opt.weight.consistency", String.valueOf(wConsistSpin.getValue()));
-            db.saveSetting("opt.weight.fwPf", String.valueOf(wFwPfSpin.getValue()));
-            db.saveSetting("opt.weight.dd", String.valueOf(wDdSpin.getValue()));
+            db.saveSetting("opt.weight.risk", String.valueOf(wRiskSpin.getValue()));
+            db.saveSetting("opt.weight.equityConsist", String.valueOf(wEquityConsistSpin.getValue()));
+            db.saveSetting("opt.weight.sampleSize", String.valueOf(wSampleSizeSpin.getValue()));
+            db.saveSetting("opt.weight.symmetry", String.valueOf(wSymmetrySpin.getValue()));
+            db.saveSetting("opt.weight.tailRisk", String.valueOf(wTailRiskSpin.getValue()));
             db.saveSetting("opt.weight.fwTrades", String.valueOf(wFwTradesSpin.getValue()));
-            db.saveSetting("opt.weight.rec", String.valueOf(wRecSpin.getValue()));
+            db.saveSetting("opt.weight.recovery", String.valueOf(wRecoverySpin.getValue()));
             applyCombinedFilter();
         }
     }
@@ -3130,7 +3271,7 @@ public class OptimizationView {
         table.setStyle("-fx-background-color: transparent;");
         
         TableColumn<com.backtester.report.OptimizationResult.Pass, Integer> passCol = new TableColumn<>("Pass");
-        passCol.setCellValueFactory(new PropertyValueFactory<>("passNumber"));
+        passCol.setCellValueFactory(cellData -> new javafx.beans.property.SimpleObjectProperty<>(cellData.getValue().getPassNumber()));
         passCol.setPrefWidth(60);
         
         TableColumn<com.backtester.report.OptimizationResult.Pass, String> profitCol = new TableColumn<>("Profit");
@@ -3138,7 +3279,7 @@ public class OptimizationView {
         profitCol.setPrefWidth(100);
         
         TableColumn<com.backtester.report.OptimizationResult.Pass, Integer> tradesCol = new TableColumn<>("Trades");
-        tradesCol.setCellValueFactory(new PropertyValueFactory<>("totalTrades"));
+        tradesCol.setCellValueFactory(cellData -> new javafx.beans.property.SimpleObjectProperty<>(cellData.getValue().getTotalTrades()));
         tradesCol.setPrefWidth(70);
         
         TableColumn<com.backtester.report.OptimizationResult.Pass, String> pfCol = new TableColumn<>("Profit Factor");
@@ -3333,13 +3474,16 @@ public class OptimizationView {
             boolean onlyMatched = Boolean.parseBoolean(db.getSetting("opt.filter.onlyMatched", "true"));
             if (onlyMatchedCheck != null) onlyMatchedCheck.setSelected(onlyMatched);
             
-            if (wBtProfitSpin != null) wBtProfitSpin.getValueFactory().setValue(Integer.parseInt(db.getSetting("opt.weight.btProfit", "20")));
-            if (wFwProfitSpin != null) wFwProfitSpin.getValueFactory().setValue(Integer.parseInt(db.getSetting("opt.weight.fwProfit", "30")));
-            if (wConsistSpin != null) wConsistSpin.getValueFactory().setValue(Integer.parseInt(db.getSetting("opt.weight.consistency", "10")));
-            if (wFwPfSpin != null) wFwPfSpin.getValueFactory().setValue(Integer.parseInt(db.getSetting("opt.weight.fwPf", "10")));
-            if (wDdSpin != null) wDdSpin.getValueFactory().setValue(Integer.parseInt(db.getSetting("opt.weight.dd", "20")));
-            if (wFwTradesSpin != null) wFwTradesSpin.getValueFactory().setValue(Integer.parseInt(db.getSetting("opt.weight.fwTrades", "50")));
-            if (wRecSpin != null) wRecSpin.getValueFactory().setValue(Integer.parseInt(db.getSetting("opt.weight.rec", "20")));
+            if (wBtProfitSpin != null) wBtProfitSpin.getValueFactory().setValue(Integer.parseInt(db.getSetting("opt.weight.btProfit", "10")));
+            if (wFwProfitSpin != null) wFwProfitSpin.getValueFactory().setValue(Integer.parseInt(db.getSetting("opt.weight.fwProfit", "15")));
+            if (wConsistSpin != null) wConsistSpin.getValueFactory().setValue(Integer.parseInt(db.getSetting("opt.weight.consistency", "15")));
+            if (wRiskSpin != null) wRiskSpin.getValueFactory().setValue(Integer.parseInt(db.getSetting("opt.weight.risk", "15")));
+            if (wEquityConsistSpin != null) wEquityConsistSpin.getValueFactory().setValue(Integer.parseInt(db.getSetting("opt.weight.equityConsist", "10")));
+            if (wSampleSizeSpin != null) wSampleSizeSpin.getValueFactory().setValue(Integer.parseInt(db.getSetting("opt.weight.sampleSize", "10")));
+            if (wSymmetrySpin != null) wSymmetrySpin.getValueFactory().setValue(Integer.parseInt(db.getSetting("opt.weight.symmetry", "5")));
+            if (wTailRiskSpin != null) wTailRiskSpin.getValueFactory().setValue(Integer.parseInt(db.getSetting("opt.weight.tailRisk", "10")));
+            if (wFwTradesSpin != null) wFwTradesSpin.getValueFactory().setValue(Integer.parseInt(db.getSetting("opt.weight.fwTrades", "5")));
+            if (wRecoverySpin != null) wRecoverySpin.getValueFactory().setValue(Integer.parseInt(db.getSetting("opt.weight.recovery", "5")));
         } catch (Exception e) {
             log.error("Failed to load weights and filters from DB", e);
         }
@@ -3871,20 +4015,6 @@ public class OptimizationView {
         return lastOptResult;
     }
 
-    private Button createSmallInfoButton(Runnable action) {
-        Button infoBtn = new Button("ℹ");
-        String normalStyle = "-fx-font-size: 11px; -fx-font-weight: bold; -fx-background-radius: 50%; -fx-min-width: 18px; -fx-min-height: 18px; -fx-max-width: 18px; -fx-max-height: 18px; -fx-text-fill: #00e5ff; -fx-background-color: transparent; -fx-border-color: #00e5ff; -fx-border-radius: 50%; -fx-cursor: hand; -fx-padding: 0;";
-        String hoverStyle = "-fx-font-size: 11px; -fx-font-weight: bold; -fx-background-radius: 50%; -fx-min-width: 18px; -fx-min-height: 18px; -fx-max-width: 18px; -fx-max-height: 18px; -fx-text-fill: #111111; -fx-background-color: #00e5ff; -fx-border-color: #00e5ff; -fx-border-radius: 50%; -fx-cursor: hand; -fx-padding: 0;";
-        
-        infoBtn.setStyle(normalStyle);
-        infoBtn.setOnAction(e -> action.run());
-        
-        infoBtn.setOnMouseEntered(e -> infoBtn.setStyle(hoverStyle));
-        infoBtn.setOnMouseExited(e -> infoBtn.setStyle(normalStyle));
-
-        return infoBtn;
-    }
-
     private void showScoreDoc() {
         javafx.stage.Stage stage = new javafx.stage.Stage();
         stage.setTitle("Strategie-Score - Dokumentation & Filter");
@@ -3907,103 +4037,7 @@ public class OptimizationView {
         webView.setPrefSize(950, 500);
         webView.setStyle("-fx-background-color: #161821;");
         
-        String htmlContent = "<html><head><style>"
-            + "body { background-color:#161821; color:#c8cddc; font-family:\"Segoe UI\", sans-serif; font-size:16px; line-height:1.7; margin:20px; }"
-            + "h3 { color:#00e5ff; font-size:20px; margin-top:20px; border-bottom: 1px solid #3e4555; padding-bottom: 5px; font-weight: bold; }"
-            + "h4 { color:#e2e8f0; font-size:17px; margin-top:15px; font-weight: bold; }"
-            + "table { width:100%; border-collapse: collapse; margin: 15px 0; color:#c8cddc; font-size:15px; }"
-            + "th { background-color: #1f2937; color: #00e5ff; font-weight: bold; padding: 10px; text-align: left; border: 1px solid #3e4555; }"
-            + "td { padding: 10px; border: 1px solid #3e4555; }"
-            + "tr:nth-child(even) { background-color: #1d202f; }"
-            + "code { background-color:#1f2937; padding:4px 8px; border-radius:4px; color:#38bdf8; font-family:Consolas, monospace; font-size:14px; }"
-            + "ul, ol { margin-left: 20px; padding-left: 0; }"
-            + "li { margin-bottom: 8px; }"
-            + "</style></head><body>"
-            + "<h3>Wie wird der Strategie-Score berechnet? (Absolutes Bewertungssystem)</h3>"
-            + "<p>Der <b>kombinierte Score (0 - 100)</b> bewertet die Qualität und Robustheit einer Strategie anhand von festen, absoluten Qualitätskriterien. Dadurch wird verhindert, dass eine mittelmäßige Strategie nur deshalb gut bewertet wird, weil alle anderen in diesem Durchlauf noch schlechter sind. Gleichzeitig können exzellente Strategien problemlos hohe, grüne Scores (70 bis 100) erreichen.</p>"
-            + "<table>"
-            + "  <tr>"
-            + "    <th>Kriterium</th>"
-            + "    <th>Bewertung & absolute Grenzen für den Teil-Score (0.0 bis 1.0)</th>"
-            + "  </tr>"
-            + "  <tr>"
-            + "    <td><b>BT Profit (ROI)</b></td>"
-            + "    <td>Netto-Rendite bezogen auf das Startguthaben im Backtest-Zeitraum.<br>"
-            + "        Formel: <code>BT ROI = Gewinn / Startguthaben</code><br>"
-            + "        <span style='color:#00e676; font-weight:bold;'>ROI &ge; 30% &rarr; volle 1.0 Punkte</span>. ROI &le; 0% &rarr; 0.0 Punkte.<br>"
-            + "        Lineare Skalierung dazwischen: <code>Teil-Score = BT ROI / 0.30</code>.</td>"
-            + "  </tr>"
-            + "  <tr>"
-            + "    <td><b>FW Profit (ROI)</b></td>"
-            + "    <td>Netto-Rendite bezogen auf das Startguthaben im Out-of-Sample Forward-Zeitraum.<br>"
-            + "        Formel: <code>FW ROI = Gewinn / Startguthaben</code><br>"
-            + "        <span style='color:#00e676; font-weight:bold;'>ROI &ge; 10% &rarr; volle 1.0 Punkte</span>. ROI &le; 0% &rarr; 0.0 Punkte.<br>"
-            + "        Lineare Skalierung dazwischen: <code>Teil-Score = FW ROI / 0.10</code>.</td>"
-            + "  </tr>"
-            + "  <tr>"
-            + "    <td><b>Konsistenz FW/BT</b></td>"
-            + "    <td>Das Verhältnis des Forward-Gewinns zum Backtest-Gewinn.<br>"
-            + "        Formel: <code>Konsistenz = Forward-Gewinn / Backtest-Gewinn</code> (begrenzt auf max. 2.0).<br>"
-            + "        <span style='color:#00e676; font-weight:bold;'>Verhältnis &ge; 1.0 &rarr; volle 1.0 Punkte</span>. Verhältnis &le; 0.2 &rarr; 0.0 Punkte.<br>"
-            + "        Lineare Skalierung dazwischen: <code>Teil-Score = (Konsistenz - 0.2) / 0.8</code>.</td>"
-            + "  </tr>"
-            + "  <tr>"
-            + "    <td><b>Profit Factor (PF)</b></td>"
-            + "    <td>Verhältnis von Bruttogewinn zu Bruttoverlust (separat für Backtest und Forward).<br>"
-            + "        <span style='color:#00e676; font-weight:bold;'>PF &ge; 2.0 &rarr; volle 1.0 Punkte</span>. PF &le; 1.0 (Verlustzone) &rarr; 0.0 Punkte.<br>"
-            + "        Lineare Skalierung dazwischen: <code>Teil-Score = (PF - 1.0) / 1.0</code>.</td>"
-            + "  </tr>"
-            + "  <tr>"
-            + "    <td><b>Drawdown-Strafe (DD)</b></td>"
-            + "    <td>Maximaler prozentualer Kontorückgang (separat für Backtest und Forward).<br>"
-            + "        <span style='color:#00e676; font-weight:bold;'>DD &le; 5% &rarr; keine Abzüge (1.0 Punkte)</span>. DD &ge; 25% &rarr; maximaler Abzug (0.0 Punkte).<br>"
-            + "        Lineare Skalierung dazwischen: <code>Teil-Score = 1.0 - (DD% - 5.0) / 20.0</code>.</td>"
-            + "  </tr>"
-            + "  <tr>"
-            + "    <td><b>Forward Trade Count</b></td>"
-            + "    <td>Anzahl ausgeführter Trades im Forward-Testzeitraum.<br>"
-            + "        <span style='color:#00e676; font-weight:bold;'>&ge; 30 Trades &rarr; volle 1.0 Punkte</span>. &le; 5 Trades &rarr; 0.0 Punkte.<br>"
-            + "        Lineare Skalierung dazwischen: <code>Teil-Score = (Trades - 5.0) / 25.0</code>.</td>"
-            + "  </tr>"
-            + "</table>"
-            
-            + "<h3>Gewichtete Zusammenführung & Formel</h3>"
-            + "<p>Der Gesamt-Score (0 bis 100) berechnet sich als gewichteter Durchschnitt dieser einzelnen Teil-Scores:</p>"
-            + "<div style='background-color:#1f2937; padding:12px; border-radius:6px; color:#38bdf8; font-family:Consolas, monospace; font-size:14px; line-height:1.5; border: 1px solid #3e4555;'>"
-            + "Raw Score = (w_BT_Profit * BT_Profit_Score + w_FW_Profit * FW_Profit_Score + w_Konsistenz * Konsistenz_Score<br>"
-            + "            + w_BT_PF * BT_PF_Score + w_FW_PF * FW_PF_Score + w_BT_DD * BT_DD_Score + w_FW_DD * FW_DD_Score<br>"
-            + "            + w_FW_Trades * FW_Trades_Score) / Gesamtgewicht * 100"
-            + "</div>"
-            + "<p><i>Hinweis: Die Gewichtungen können Sie im Hauptfenster unter 'Parameter & Optimierungs-Gewichte' individuell einstellen.</i></p>"
-            
-            + "<h3>Konkretes Rechenbeispiel</h3>"
-            + "<p>Nehmen wir eine Strategie mit folgenden Werten bei einem Startguthaben von 10.000 €:</p>"
-            + "<ul>"
-            + "  <li><b>BT Gewinn:</b> 2.000 € (ROI = 20%) &rarr; Teil-Score: 20% / 30% = <b>0.67</b></li>"
-            + "  <li><b>FW Gewinn:</b> 800 € (ROI = 8%) &rarr; Teil-Score: 8% / 10% = <b>0.80</b></li>"
-            + "  <li><b>Konsistenz:</b> 800 € / 2.000 € = 0.40 &rarr; Teil-Score: (0.40 - 0.2) / 0.8 = <b>0.25</b></li>"
-            + "  <li><b>BT Profit Factor:</b> 1.80 &rarr; Teil-Score: (1.8 - 1.0) / 1.0 = <b>0.80</b></li>"
-            + "  <li><b>FW Profit Factor:</b> 1.50 &rarr; Teil-Score: (1.5 - 1.0) / 1.0 = <b>0.50</b></li>"
-            + "  <li><b>BT Drawdown:</b> 8.0% &rarr; Teil-Score: 1.0 - (8.0 - 5.0) / 20.0 = <b>0.85</b></li>"
-            + "  <li><b>FW Drawdown:</b> 12.0% &rarr; Teil-Score: 1.0 - (12.0 - 5.0) / 20.0 = <b>0.65</b></li>"
-            + "  <li><b>FW Trades:</b> 20 &rarr; Teil-Score: (20 - 5) / 25 = <b>0.60</b></li>"
-            + "</ul>"
-            + "<p>Unter Annahme der Standard-Gewichte (BT Profit: 25%, FW Profit: 35%, Konsistenz: 20%, BT PF: 5%, FW PF: 10%, BT DD: 2.5%, FW DD: 2.5%, FW Trades: 5% &rarr; Gesamtgewicht = 105%):</p>"
-            + "<div style='background-color:#1f2937; padding:12px; border-radius:6px; color:#38bdf8; font-family:Consolas, monospace; font-size:14px; border: 1px solid #3e4555;'>"
-            + "Zähler = 0.25*0.67 + 0.35*0.80 + 0.20*0.25 + 0.05*0.80 + 0.10*0.50 + 0.025*0.85 + 0.025*0.65 + 0.05*0.60<br>"
-            + "       = 0.1675 + 0.2800 + 0.0500 + 0.0400 + 0.0500 + 0.02125 + 0.01625 + 0.0300 = 0.655<br>"
-            + "Raw Score = (0.655 / 1.05) * 100 = <b>62.4</b>"
-            + "</div>"
-            
-            + "<h3>Dämpfung bei zu geringer Tradeanzahl (Malus)</h3>"
-            + "<p>Um zufällige Ausreißer auszuschließen, erhält jede Strategie, deren Forward-Trade-Anzahl unter einer dynamischen Schwelle liegt (definiert als <b>die Hälfte des Medians aller Forward-Trades dieser Optimierung</b>), eine Strafe (Malus):</p>"
-            + "<div style='background-color:#1f2937; padding:12px; border-radius:6px; color:#38bdf8; font-family:Consolas, monospace; font-size:14px; border: 1px solid #3e4555;'>"
-            + "Dämpfungsfaktor = Max(0.5, Forward Trades / Schwelle)"
-            + "</div>"
-            + "<p>Der berechnete Score wird mit diesem Faktor multipliziert. Ein minimaler Dämpfungsfaktor von 0.50 sorgt dafür, dass die anderen Qualitätsmetriken bei extrem trade-armen, aber ansonsten guten Strategien nicht vollständig entwertet werden.</p>"
-            + "</body></html>";
-            
-        webView.getEngine().loadContent(htmlContent);
+        webView.getEngine().loadContent(DocHelper.getScoreDocHtml());
 
         // Filter Controls Area (Glassmorphic style panel)
         VBox filterBox = new VBox(10);
@@ -4114,77 +4148,7 @@ public class OptimizationView {
         webView.setPrefSize(950, 500);
         webView.setStyle("-fx-background-color: #161821;");
         
-        String htmlContent = "<html><head><style>"
-            + "body { background-color:#161821; color:#c8cddc; font-family:\"Segoe UI\", sans-serif; font-size:16px; line-height:1.7; margin:20px; }"
-            + "h3 { color:#00e5ff; font-size:20px; margin-top:20px; border-bottom: 1px solid #3e4555; padding-bottom: 5px; font-weight: bold; }"
-            + "h4 { color:#e2e8f0; font-size:17px; margin-top:15px; font-weight: bold; }"
-            + "table { width:100%; border-collapse: collapse; margin: 15px 0; color:#c8cddc; font-size:15px; }"
-            + "th { background-color: #1f2937; color: #00e5ff; font-weight: bold; padding: 10px; text-align: left; border: 1px solid #3e4555; }"
-            + "td { padding: 10px; border: 1px solid #3e4555; }"
-            + "tr:nth-child(even) { background-color: #1d202f; }"
-            + "code { background-color:#1f2937; padding:4px 8px; border-radius:4px; color:#38bdf8; font-family:Consolas, monospace; font-size:14px; }"
-            + "ul, ol { margin-left: 20px; padding-left: 0; }"
-            + "li { margin-bottom: 8px; }"
-            + "</style></head><body>"
-            + "<h3>Was bedeutet Konsistenz?</h3>"
-            + "<p>Die <b>Konsistenz (0.0 - 1.0+)</b> misst die Stabilität deiner Strategie beim Übergang von bekannten historischen Daten (Backtest / In-Sample) auf ungesehene Zukunft-Daten (Forward / Out-of-Sample). Sie ist einer der wichtigsten Indikatoren für den Schutz vor Überoptimierung (Curve-Fitting).</p>"
-            + "<h3>Berechnung & Bewertung:</h3>"
-            + "<div style='background-color:#1f2937; padding:12px; border-radius:6px; color:#38bdf8; font-family:Consolas, monospace; font-size:14px; border: 1px solid #3e4555;'>"
-            + "Konsistenz = Forward Net Profit / Backtest Net Profit"
-            + "</div>"
-            + "<p>Der berechnete Konsistenzwert wird auf den Bereich [0.0, 2.0] begrenzt. Daraus ergibt sich der normierte Teil-Score für die Gesamtbewertung:</p>"
-            + "<ul>"
-            + "  <li><span style='color:#00e676; font-weight:bold;'>Konsistenz &ge; 1.0 (Teil-Score = 1.0):</span> Der Gewinn in der Forward-Phase ist mindestens so hoch wie im Backtest. Exzellentes Ergebnis!</li>"
-            + "  <li><span style='color:#ffd740; font-weight:bold;'>Konsistenz 0.2 bis 1.0 (Linear abfallend):</span> Typisches Verhalten. Die Performance schwächt sich auf ungesehenen Daten ab. Ein Konsistenzwert von 0.60 ergibt z.B. einen Teil-Score von <code>(0.60 - 0.2) / 0.8 = 0.50</code>.</li>"
-            + "  <li><span style='color:#ff5252; font-weight:bold;'>Konsistenz &le; 0.2 (Teil-Score = 0.0):</span> Die Strategie bricht im Forward-Test massiv ein oder erzeugt sogar Verluste (Konsistenz &le; 0.0).</li>"
-            + "</ul>"
-            + "<h3>Konkrete Anwendungsbeispiele:</h3>"
-            + "<table>"
-            + "  <tr>"
-            + "    <th>Szenario</th>"
-            + "    <th>Backtest Profit</th>"
-            + "    <th>Forward Profit</th>"
-            + "    <th>Konsistenz (Ratio)</th>"
-            + "    <th>Normierter Teil-Score</th>"
-            + "    <th>Bedeutung</th>"
-            + "  </tr>"
-            + "  <tr>"
-            + "    <td><b>A (Stabil)</b></td>"
-            + "    <td>2.000 €</td>"
-            + "    <td>1.600 €</td>"
-            + "    <td>1.600 / 2.000 = <b>0.80</b></td>"
-            + "    <td>(0.80-0.2)/0.8 = <b>0.75</b></td>"
-            + "    <td><span style='color:#00e676;'>Geringer Rückgang. Sehr solide!</span></td>"
-            + "  </tr>"
-            + "  <tr>"
-            + "    <td><b>B (Überoptimiert)</b></td>"
-            + "    <td>4.000 €</td>"
-            + "    <td>600 €</td>"
-            + "    <td>600 / 4.000 = <b>0.15</b></td>"
-            + "    <td>Unter Grenze 0.2 = <b>0.00</b></td>"
-            + "    <td><span style='color:#ff5252;'>Achtung: Curve-Fitting! Bricht live ein.</span></td>"
-            + "  </tr>"
-            + "  <tr>"
-            + "    <td><b>C (Ausnahmslos gut)</b></td>"
-            + "    <td>1.500 €</td>"
-            + "    <td>1.800 €</td>"
-            + "    <td>1.800 / 1.500 = <b>1.20</b></td>"
-            + "    <td>Gedeckelt bei 1.0 = <b>1.00</b></td>"
-            + "    <td><span style='color:#00e676;'>Mehr Profit live als im Test! Perfekt.</span></td>"
-            + "  </tr>"
-            + "  <tr>"
-            + "    <td><b>D (Verlustreich)</b></td>"
-            + "    <td>2.500 €</td>"
-            + "    <td>-300 €</td>"
-            + "    <td>Unter Grenze 0.0 = <b>0.00</b></td>"
-            + "    <td>Verlust live = <b>0.00</b></td>"
-            + "    <td><span style='color:#ff5252;'>Unbrauchbar. Erzeugt Verluste.</span></td>"
-            + "  </tr>"
-            + "</table>"
-            + "<h3>Wichtige Faustregel für Ihre Optimierung:</h3>"
-            + "<p><b>Robustheit schlägt Maximalprofit!</b> Bevorzugen Sie im Zweifel eine Strategie mit einem moderaten Backtest-Profit (z. B. 1.500 €) und hoher Konsistenz (z. B. 0.85) gegenüber einer extrem profitablen Backtest-Strategie (z. B. 5.000 €) mit mangelhafter Konsistenz (z. B. 0.15). Letztere wird im Live-Handel mit hoher Wahrscheinlichkeit scheitern.</p>"
-            + "</body></html>";
-        webView.getEngine().loadContent(htmlContent);
+        webView.getEngine().loadContent(DocHelper.getConsistencyDocHtml());
 
         // Filter Controls Area (Glassmorphic style panel)
         VBox filterBox = new VBox(10);
@@ -4398,6 +4362,10 @@ public class OptimizationView {
 
     public BorderPane getView() {
         return root;
+    }
+
+    public List<com.backtester.report.SensitivityResult> getSensitivityResults() {
+        return sensitivityTable != null ? new java.util.ArrayList<>(sensitivityTable.getItems()) : new java.util.ArrayList<>();
     }
 
     private void saveParametersOnDemand() {

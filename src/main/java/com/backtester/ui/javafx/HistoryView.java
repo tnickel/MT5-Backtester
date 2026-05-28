@@ -33,8 +33,14 @@ public class HistoryView {
     private final LocalDate today = LocalDate.now();
     private final Label countLabel;
     private Tab tab;
+    private final WorkflowView workflowView;
 
     public HistoryView() {
+        this(null);
+    }
+
+    public HistoryView(WorkflowView workflowView) {
+        this.workflowView = workflowView;
         this.dbManager = DatabaseManager.getInstance();
         
         root = new BorderPane();
@@ -88,7 +94,7 @@ public class HistoryView {
             }
         });
 
-        // Custom TreeCell to highlight today's runs
+        // Custom TreeCell to highlight today's runs and add right-click restore for Workflows
         treeView.setCellFactory(tv -> new TreeCell<RunNodeData>() {
             @Override
             protected void updateItem(RunNodeData item, boolean empty) {
@@ -96,12 +102,24 @@ public class HistoryView {
                 if (empty || item == null) {
                     setText(null);
                     setStyle("");
+                    setContextMenu(null);
                 } else {
                     setText(item.label);
                     if (item.isToday) {
                         setStyle("-fx-background-color: rgba(0, 229, 255, 0.12); -fx-text-fill: #00e5ff; -fx-font-weight: bold;");
                     } else {
                         setStyle("");
+                    }
+
+                    // Attach context menu to Workflow runs
+                    if (item.run != null && "Workflow".equals(item.run.getRunType())) {
+                        ContextMenu menu = new ContextMenu();
+                        MenuItem restoreItem = new MenuItem("🔄 Workflow wiederherstellen (Restore)");
+                        restoreItem.setOnAction(evt -> restoreWorkflow(item.run));
+                        menu.getItems().add(restoreItem);
+                        setContextMenu(menu);
+                    } else {
+                        setContextMenu(null);
                     }
                 }
             }
@@ -294,6 +312,45 @@ public class HistoryView {
                 reloadTree();
             }
         });
+    }
+
+    private void restoreWorkflow(HistoryRun run) {
+        if (workflowView == null) {
+            Alert alert = new Alert(Alert.AlertType.ERROR, "Workflow Automator View ist nicht verfügbar.");
+            alert.show();
+            return;
+        }
+
+        try {
+            com.backtester.engine.WorkflowEngine engine = workflowView.getEngine();
+            engine.restoreWorkflowState(run.getResultJson());
+
+            // UI aktualisieren
+            workflowView.refreshUI();
+
+            Alert alert = new Alert(Alert.AlertType.INFORMATION, "Workflow-Zustand erfolgreich aus der Datenbank wiederhergestellt!");
+            alert.show();
+
+            // Umschalten auf das Workflow Automator Tab
+            if (treeView.getScene() != null) {
+                javafx.scene.Node parent = treeView.getParent();
+                while (parent != null && !(parent instanceof TabPane)) {
+                    parent = parent.getParent();
+                }
+                if (parent instanceof TabPane) {
+                    TabPane tp = (TabPane) parent;
+                    for (Tab t : tp.getTabs()) {
+                        if (t.getText() != null && t.getText().contains("Workflow")) {
+                            tp.getSelectionModel().select(t);
+                            break;
+                        }
+                    }
+                }
+            }
+        } catch (Exception e) {
+            Alert alert = new Alert(Alert.AlertType.ERROR, "Fehler beim Wiederherstellen des Workflows:\n" + e.getMessage());
+            alert.show();
+        }
     }
 
     private static class RunNodeData {

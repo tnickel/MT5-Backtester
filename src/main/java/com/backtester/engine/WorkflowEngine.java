@@ -7,6 +7,7 @@ import com.backtester.database.DatabaseManager;
 import com.backtester.report.OptimizationResult;
 import com.backtester.report.OptimizationResult.CombinedPass;
 import com.backtester.report.SensitivityResult;
+import com.backtester.report.PdfReportGenerator;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -66,6 +67,8 @@ public class WorkflowEngine {
     private String openRouterModel = LlmAnalysisService.DEFAULT_MODEL;
     private String openRouterPrompt = LlmAnalysisService.DEFAULT_PROMPT;
     private String kiReportText = "";
+    private double performanceWeight = LlmAnalysisService.DEFAULT_PERFORMANCE_WEIGHT;
+    private double stabilityWeight = LlmAnalysisService.DEFAULT_STABILITY_WEIGHT;
 
     // Step 6 State
     private List<CombinedPass> finalSelectedPasses = new ArrayList<>();
@@ -86,6 +89,19 @@ public class WorkflowEngine {
         this.openRouterApiKey = db.getSetting(LlmAnalysisService.SETTING_API_KEY, "");
         this.openRouterModel = db.getSetting(LlmAnalysisService.SETTING_MODEL, LlmAnalysisService.DEFAULT_MODEL);
         this.openRouterPrompt = db.getSetting(LlmAnalysisService.SETTING_PROMPT, LlmAnalysisService.DEFAULT_PROMPT);
+
+        try {
+            String pwStr = db.getSetting(LlmAnalysisService.SETTING_PERFORMANCE_WEIGHT);
+            this.performanceWeight = pwStr != null && !pwStr.isEmpty() ? Double.parseDouble(pwStr) : LlmAnalysisService.DEFAULT_PERFORMANCE_WEIGHT;
+        } catch (Exception e) {
+            this.performanceWeight = LlmAnalysisService.DEFAULT_PERFORMANCE_WEIGHT;
+        }
+        try {
+            String swStr = db.getSetting(LlmAnalysisService.SETTING_STABILITY_WEIGHT);
+            this.stabilityWeight = swStr != null && !swStr.isEmpty() ? Double.parseDouble(swStr) : LlmAnalysisService.DEFAULT_STABILITY_WEIGHT;
+        } catch (Exception e) {
+            this.stabilityWeight = LlmAnalysisService.DEFAULT_STABILITY_WEIGHT;
+        }
 
         // Load some defaults from global config if available
         if (config != null) {
@@ -113,6 +129,8 @@ public class WorkflowEngine {
         }
         db.saveSetting(LlmAnalysisService.SETTING_MODEL, openRouterModel);
         db.saveSetting(LlmAnalysisService.SETTING_PROMPT, openRouterPrompt);
+        db.saveSetting(LlmAnalysisService.SETTING_PERFORMANCE_WEIGHT, String.valueOf(performanceWeight));
+        db.saveSetting(LlmAnalysisService.SETTING_STABILITY_WEIGHT, String.valueOf(stabilityWeight));
     }
 
     // --- State Serialization & Database Persistence ---
@@ -483,13 +501,35 @@ public class WorkflowEngine {
         return optResult;
     }
 
+    public OptimizationResult.ScoreWeights loadScoreWeightsFromDb() {
+        OptimizationResult.ScoreWeights w = new OptimizationResult.ScoreWeights();
+        com.backtester.database.DatabaseManager db = com.backtester.database.DatabaseManager.getInstance();
+        try {
+            w.wBtProfit = Double.parseDouble(db.getSetting("opt.weight.btProfit", "10"));
+            w.wFwProfit = Double.parseDouble(db.getSetting("opt.weight.fwProfit", "15"));
+            w.wConsistency = Double.parseDouble(db.getSetting("opt.weight.consistency", "15"));
+            w.wRisk = Double.parseDouble(db.getSetting("opt.weight.risk", "15"));
+            w.wEquityConsist = Double.parseDouble(db.getSetting("opt.weight.equityConsist", "10"));
+            w.wSampleSize = Double.parseDouble(db.getSetting("opt.weight.sampleSize", "10"));
+            w.wSymmetry = Double.parseDouble(db.getSetting("opt.weight.symmetry", "5"));
+            w.wTailRisk = Double.parseDouble(db.getSetting("opt.weight.tailRisk", "10"));
+            w.wFwTrades = Double.parseDouble(db.getSetting("opt.weight.fwTrades", "5"));
+            w.wRecovery = Double.parseDouble(db.getSetting("opt.weight.recovery", "5"));
+            w.recoveryMin = Double.parseDouble(db.getSetting("opt.weight.recovery.min", "1.0"));
+            w.recoveryMax = Double.parseDouble(db.getSetting("opt.weight.recovery.max", "5.0"));
+        } catch (Exception e) {
+            log.warn("Fehler beim Laden der Unified Score-Gewichtung aus der DB: {}", e.getMessage());
+        }
+        return w;
+    }
+
     public List<CombinedPass> runStep3() {
         if (optResult == null) {
             throw new IllegalStateException("Kein Optimierungsergebnis vorhanden. Bitte führe zuerst Schritt 2 aus.");
         }
         
         // Build combined passes from optResult
-        List<CombinedPass> allPasses = optResult.buildCombinedPasses(forwardMode > 0, OptimizationResult.ScoreWeights.defaults());
+        List<CombinedPass> allPasses = optResult.buildCombinedPasses(forwardMode > 0, loadScoreWeightsFromDb());
         selectedDiversePasses = filterDiversePasses(allPasses);
         this.lastActiveStep = Math.max(this.lastActiveStep, 3);
         saveState();
@@ -548,8 +588,17 @@ public class WorkflowEngine {
 
         savePreferences(); // Save openrouter credentials if any
 
+        // Build performance data map from selected diverse passes for the LLM
+        Map<Integer, LlmAnalysisService.PassPerformance> performanceData = new HashMap<>();
+        for (SensitivityResult sr : sensitivityResults) {
+            if (sr.getOriginalPass() != null) {
+                performanceData.put(sr.getOriginalPass().getPassNumber(),
+                        new LlmAnalysisService.PassPerformance(sr.getOriginalPass()));
+            }
+        }
+
         LlmAnalysisService llmService = new LlmAnalysisService();
-        kiReportText = llmService.analyzeStrategies(activePasses, expert, symbol);
+        kiReportText = llmService.analyzeStrategies(activePasses, expert, symbol, performanceData);
 
         if (kiReportText.startsWith("ERROR")) {
             throw new RuntimeException(kiReportText);
@@ -586,25 +635,26 @@ public class WorkflowEngine {
             throw new IllegalStateException("Keine ausgewählten Strategien vorhanden. Bitte führe zuerst Schritt 3 aus.");
         }
 
-        // Filter and compile final 3-5 strategies based on KI stability results
+        // Compile final 3-5 strategies using a WEIGHTED combination of
+        // Combined Score (performance) and KI Stability Score.
+        // This prevents the KI score from completely dominating — a high-performing
+        // strategy with acceptable stability should beat a mediocre but "robust" one.
         List<CombinedPass> candidates = new ArrayList<>(selectedDiversePasses);
-        
-        // Sort candidates based on KI stability score if available, otherwise fallback to standard combined score
+
+        // Sort candidates by weighted final score (descending)
         candidates.sort((cp1, cp2) -> {
-            int score1 = getKiScore(cp1.getPassNumber());
-            int score2 = getKiScore(cp2.getPassNumber());
-            if (score1 != score2) {
-                return Integer.compare(score2, score1); // descending stability score
-            }
-            return Double.compare(cp2.getScore(), cp1.getScore()); // descending combined score
+            double finalScore1 = computeWeightedFinalScore(cp1);
+            double finalScore2 = computeWeightedFinalScore(cp2);
+            return Double.compare(finalScore2, finalScore1);
         });
 
-        // Filter out fragile ones (KI score < 50) if we have enough strategies
+        // Filter out clearly fragile strategies (KI score < 30) if we have enough
+        // The threshold is lower than before (was 50) because the weighted score
+        // already dampens fragile strategies — no need for a harsh cutoff.
         List<CombinedPass> finalFiltered = new ArrayList<>();
         for (CombinedPass cp : candidates) {
             int kiScore = getKiScore(cp.getPassNumber());
-            // If we have KI scores, require score >= 50, otherwise keep it
-            if (kiScore >= 0 && kiScore < 50) {
+            if (kiScore >= 0 && kiScore < 30) {
                 continue;
             }
             finalFiltered.add(cp);
@@ -621,7 +671,212 @@ public class WorkflowEngine {
         
         this.lastActiveStep = Math.max(this.lastActiveStep, 6);
         saveState();
+
+        // Automatic export when step 6 executes
+        try {
+            String expDir = config.getExportDirectory().toString();
+            exportPortfolio(expDir);
+        } catch (Exception ex) {
+            log.error("Automatic step 6 portfolio export failed: " + ex.getMessage(), ex);
+        }
+
+        // Save this completed workflow run to HISTORY_RUNS database
+        saveWorkflowToHistory();
+
         return finalSelectedPasses;
+    }
+
+    /**
+     * Exports all final selected strategies (sets + PDF reports) to the target directory.
+     */
+    public void exportPortfolio(String exportDirStr) {
+        if (finalSelectedPasses == null || finalSelectedPasses.isEmpty()) {
+            log.warn("No final selected passes to export.");
+            return;
+        }
+
+        try {
+            String eaName = com.backtester.config.EaParameterManager.extractEaBaseName(getExpert());
+            String dateStr = java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd_HH-mm").format(java.time.LocalDateTime.now());
+            String subDirName = String.format("%s_%s", eaName, dateStr);
+            
+            java.nio.file.Path exportPath = java.nio.file.Paths.get(exportDirStr).resolve(subDirName);
+            java.nio.file.Files.createDirectories(exportPath);
+
+            String symbol = getSymbol();
+            String timeframe = getPeriod();
+
+            // 1. Export individual set files & detailed PDF reports
+            for (CombinedPass cp : finalSelectedPasses) {
+                int passNum = cp.getPassNumber();
+                String baseFileName = String.format("%s_%s_%s_Pass%d", eaName, symbol, timeframe, passNum);
+
+                // Set file
+                java.nio.file.Path setFile = exportPath.resolve(baseFileName + ".set");
+                List<EaParameter> finalParams = new ArrayList<>();
+                for (EaParameter base : getEaParameters()) {
+                    EaParameter p = new EaParameter();
+                    p.setName(base.getName());
+                    p.setStringType(base.isStringType());
+                    String passVal = cp.getBacktestPass().getParameter(base.getName());
+                    if (passVal != null && !passVal.isEmpty()) {
+                        p.setValue(passVal);
+                    } else {
+                        p.setValue(base.getValue());
+                    }
+                    p.setOptimizeEnabled(false);
+                    finalParams.add(p);
+                }
+                eaParamManager.writeSetFile(setFile, finalParams, eaName);
+                log.info("Exported preset file to {}", setFile);
+
+                // PDF file
+                java.io.File pdfFile = exportPath.resolve(baseFileName + "_Report.pdf").toFile();
+                com.backtester.report.PdfReportGenerator.generateReport(this, cp, pdfFile);
+                log.info("Exported detailed report to {}", pdfFile);
+            }
+
+            // 2. Export combined portfolio PDF report
+            String combinedReportName = String.format("Portfolio_Report_%s_%s_%s.pdf", eaName, symbol, timeframe);
+            java.io.File combinedPdfFile = exportPath.resolve(combinedReportName).toFile();
+            com.backtester.report.PdfReportGenerator.generatePortfolioReport(this, finalSelectedPasses, combinedPdfFile);
+            log.info("Exported combined portfolio report to {}", combinedPdfFile);
+
+        } catch (Exception e) {
+            log.error("Failed to export portfolio to " + exportDirStr, e);
+            throw new RuntimeException("Export failed: " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Serializes the current complete workflow state and saves it in the history database under type "Workflow".
+     */
+    public void saveWorkflowToHistory() {
+        try {
+            com.google.gson.Gson gson = buildGson();
+            Map<String, Object> stateMap = new HashMap<>();
+            stateMap.put("expert_name", expert);
+            stateMap.put("symbol", symbol);
+            stateMap.put("period", period);
+            stateMap.put("from_date", fromDate != null ? fromDate.toString() : null);
+            stateMap.put("to_date", toDate != null ? toDate.toString() : null);
+            stateMap.put("deposit", deposit);
+            stateMap.put("currency", currency);
+            stateMap.put("leverage", leverage);
+            stateMap.put("tick_model", tickModel);
+            stateMap.put("ea_parameters_json", gson.toJson(eaParameters));
+            stateMap.put("opt_result_json", gson.toJson(optResult));
+            stateMap.put("selected_diverse_passes_json", gson.toJson(selectedDiversePasses));
+            stateMap.put("sensitivity_results_json", gson.toJson(sensitivityResults));
+            stateMap.put("ki_report_text", kiReportText);
+            stateMap.put("final_selected_passes_json", gson.toJson(finalSelectedPasses));
+            stateMap.put("last_active_step", lastActiveStep);
+
+            String stateJson = gson.toJson(stateMap);
+            DatabaseManager.getInstance().saveRun("Workflow", expert, System.currentTimeMillis(), stateJson, "");
+            log.info("Workflow run successfully saved to HISTORY_RUNS database.");
+        } catch (Exception e) {
+            log.error("Failed to save workflow run to history database", e);
+        }
+    }
+
+    /**
+     * Restores the workflow state from a serialized JSON string and saves it as the active state.
+     */
+    @SuppressWarnings("unchecked")
+    public void restoreWorkflowState(String stateJson) {
+        try {
+            com.google.gson.Gson gson = buildGson();
+            Map<String, Object> stateMap = gson.fromJson(stateJson, Map.class);
+            if (stateMap == null) return;
+
+            this.expert = (String) stateMap.get("expert_name");
+            this.symbol = (String) stateMap.get("symbol");
+            this.period = (String) stateMap.get("period");
+            if (stateMap.get("from_date") != null) this.fromDate = LocalDate.parse((String) stateMap.get("from_date"));
+            if (stateMap.get("to_date") != null) this.toDate = LocalDate.parse((String) stateMap.get("to_date"));
+            if (stateMap.get("deposit") != null) this.deposit = ((Double) stateMap.get("deposit")).intValue();
+            this.currency = (String) stateMap.get("currency");
+            this.leverage = (String) stateMap.get("leverage");
+            if (stateMap.get("tick_model") != null) this.tickModel = ((Double) stateMap.get("tick_model")).intValue();
+
+            // ea parameters
+            java.lang.reflect.Type paramType = new com.google.gson.reflect.TypeToken<List<EaParameter>>(){}.getType();
+            String eaParamsJson = (String) stateMap.get("ea_parameters_json");
+            if (eaParamsJson != null && !eaParamsJson.isEmpty()) {
+                this.eaParameters = gson.fromJson(eaParamsJson, paramType);
+            } else {
+                this.eaParameters = new ArrayList<>();
+            }
+
+            // opt result
+            String optResultJson = (String) stateMap.get("opt_result_json");
+            if (optResultJson != null && !optResultJson.isEmpty()) {
+                this.optResult = gson.fromJson(optResultJson, OptimizationResult.class);
+            } else {
+                this.optResult = null;
+            }
+
+            // selected diverse passes
+            java.lang.reflect.Type cpListType = new com.google.gson.reflect.TypeToken<List<CombinedPass>>(){}.getType();
+            String selectedDiverseJson = (String) stateMap.get("selected_diverse_passes_json");
+            if (selectedDiverseJson != null && !selectedDiverseJson.isEmpty()) {
+                this.selectedDiversePasses = gson.fromJson(selectedDiverseJson, cpListType);
+            } else {
+                this.selectedDiversePasses = new ArrayList<>();
+            }
+
+            // sensitivity results
+            java.lang.reflect.Type sensListType = new com.google.gson.reflect.TypeToken<List<SensitivityResult>>(){}.getType();
+            String sensitivityJson = (String) stateMap.get("sensitivity_results_json");
+            if (sensitivityJson != null && !sensitivityJson.isEmpty()) {
+                this.sensitivityResults = gson.fromJson(sensitivityJson, sensListType);
+            } else {
+                this.sensitivityResults = new ArrayList<>();
+            }
+
+            this.kiReportText = (String) stateMap.get("ki_report_text");
+            if (this.kiReportText == null) this.kiReportText = "";
+
+            // final selected passes
+            String finalSelectedJson = (String) stateMap.get("final_selected_passes_json");
+            if (finalSelectedJson != null && !finalSelectedJson.isEmpty()) {
+                this.finalSelectedPasses = gson.fromJson(finalSelectedJson, cpListType);
+            } else {
+                this.finalSelectedPasses = new ArrayList<>();
+            }
+
+            if (stateMap.get("last_active_step") != null) {
+                this.lastActiveStep = ((Double) stateMap.get("last_active_step")).intValue();
+            } else {
+                this.lastActiveStep = 0;
+            }
+
+            // Save this restored state as the current active one in WORKFLOW_STATE table
+            saveState();
+            log.info("Successfully restored workflow state from database history.");
+        } catch (Exception e) {
+            log.error("Failed to restore workflow state", e);
+            throw new RuntimeException("Restaurierung fehlgeschlagen: " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Computes a weighted final score combining performance (Combined Score) and
+     * stability (KI Score). Both scores are on a 0-100 scale.
+     *
+     * If no KI score is available, falls back to Combined Score only.
+     */
+    private double computeWeightedFinalScore(CombinedPass cp) {
+        double combinedScore = cp.getScore(); // 0-100 scale
+        int kiScore = getKiScore(cp.getPassNumber());
+
+        if (kiScore < 0) {
+            // No KI score available — use Combined Score only
+            return combinedScore;
+        }
+
+        return performanceWeight * combinedScore + stabilityWeight * kiScore;
     }
 
     public double getWorstCvForPass(int passNum, boolean forward) {
@@ -919,4 +1174,10 @@ public class WorkflowEngine {
 
     public int getLastActiveStep() { return lastActiveStep; }
     public void setLastActiveStep(int lastActiveStep) { this.lastActiveStep = lastActiveStep; }
+
+    public double getPerformanceWeight() { return performanceWeight; }
+    public void setPerformanceWeight(double performanceWeight) { this.performanceWeight = performanceWeight; }
+
+    public double getStabilityWeight() { return stabilityWeight; }
+    public void setStabilityWeight(double stabilityWeight) { this.stabilityWeight = stabilityWeight; }
 }
