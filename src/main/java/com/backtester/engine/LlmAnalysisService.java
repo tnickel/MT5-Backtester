@@ -1,6 +1,7 @@
 package com.backtester.engine;
 
 import com.backtester.database.DatabaseManager;
+import com.backtester.report.OptimizationResult;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -25,46 +26,97 @@ public class LlmAnalysisService {
     public static final String SETTING_MODEL = "openrouter_model";
     public static final String SETTING_PROMPT = "openrouter_prompt";
     public static final String SETTING_MAX_TOKENS = "openrouter_max_tokens";
+    public static final String SETTING_PERFORMANCE_WEIGHT = "openrouter_performance_weight";
+    public static final String SETTING_STABILITY_WEIGHT = "openrouter_stability_weight";
+    public static final double DEFAULT_PERFORMANCE_WEIGHT = 0.6;
+    public static final double DEFAULT_STABILITY_WEIGHT = 0.4;
     public static final String DEFAULT_MODEL = "openai/gpt-4o-mini";
     public static final int DEFAULT_MAX_TOKENS = 16384;
-    public static final String DEFAULT_PROMPT = "Du bekommst Sensitivitätsdaten von N Strategien (Passes).\n" +
+    public static final String DEFAULT_PROMPT = "Du bekommst Sensitivitätsdaten und Performance-Metriken von N Strategien (Passes).\n" +
+            "Du hast MEHR Daten als eine simple Formel: Kennlinien-Datenpunkte, Kurvenformen, Performance-Werte.\n" +
+            "Nutze diese Informationen für eine TIEFERE Analyse als eine Formel liefern könnte!\n\n" +
             "Deine Antwort hat EXAKT 3 Teile:\n\n" +
             "TEIL 1: Eine einzige Markdown-Tabelle mit GENAU N Zeilen (eine pro Pass):\n" +
-            "| Pass | Status | Score | CV worst | Fragile | Fazit |\n" +
+            "| Pass | Status | Score | Profit (BT/FW) | Trades (BT/FW) | CV worst | Fragile | Kurvenform | Fazit |\n" +
             "Status = ✅ Robust / ⚠️ Fragil / ❌ Überoptimiert\n" +
             "Score = Stabilitäts-Score 0-100 (Ganzzahl)\n" +
+            "Profit (BT/FW) = Nettogewinn im Backtest und Forward, z.B. \"5200 / 1800\"\n" +
+            "Trades (BT/FW) = Anzahl der Trades im Backtest und Forward, z.B. \"120 / 45\"\n" +
+            "Kurvenform = dominante Form über alle Parameter: Plateau / Glocke / Peak / Cliff / Chaotisch\n" +
             "Fazit = MAX 5 Wörter\n\n" +
             "TEIL 2: GENAU N Zeilen in diesem Format (eine pro Pass):\n" +
             "STABILITY_SCORE|PassNummer|Score\n\n" +
-            "TEIL 3: Kurze Begründung pro Strategie (JEDE auf EIGENER Zeile, getrennt durch Leerzeile!):\n" +
-            "Format pro Zeile: **Pass XXXXX (Score):** 1-2 kurze Sätze.\n\n" +
-            "Score-Berechnung (RELATIV bewerten, volle Bandbreite 0-100 nutzen!):\n" +
-            "- avg_cv (40%): <15%=exzellent(80-100), 15-25%=gut(60-79), 25-40%=ok(40-59), >40%=schlecht(<40)\n" +
-            "- Fragile Parameter (25%): 0=ideal, je fragiler desto weniger Punkte\n" +
-            "- worst_cv (15%): >100% = starker Abzug\n" +
-            "- BT/FW Konsistenz (20%): ähnliche Performance = Bonus\n\n" +
-            "Beispiel bei 3 Strategien:\n" +
-            "| 22244 | ✅ Robust | 82 | 70.40% | 1 | Stabil, konsistent |\n" +
-            "| 22228 | ⚠️ Fragil | 55 | 82.83% | 2 | Akzeptabel, FW schwach |\n" +
-            "| 27450 | ❌ Überoptimiert | 18 | 186.30% | 3 | Sehr instabil |\n\n" +
-            "STABILITY_SCORE|22244|82\n" +
-            "STABILITY_SCORE|22228|55\n" +
-            "STABILITY_SCORE|27450|18\n\n" +
-            "**Pass 22244 (82):** Niedriger avg_cv, nur 1 fragiler Parameter. BT/FW konsistent.\n\n" +
-            "**Pass 22228 (55):** Akzeptabler avg_cv, 2 fragile Parameter. FW schwächer als BT.\n\n" +
-            "**Pass 27450 (18):** worst_cv 186%, 3 fragile Parameter. Klar überoptimiert.\n\n" +
+            "TEIL 3: Begründung pro Strategie (JEDE auf EIGENER Zeile, getrennt durch Leerzeile!):\n" +
+            "Format pro Zeile: **Pass XXXXX (Score):** 2-3 Sätze mit Analyse der Kurvenform und Konsistenz.\n\n" +
+            "ANALYSE-ANLEITUNG (nutze ALLE verfügbaren Daten!):\n\n" +
+            "1. KURVENFORM-ANALYSE (30% des Scores):\n" +
+            "   Schau dir die Kennlinien-Datenpunkte an (z.B. '48→$850, 50→$980, 52→$950'):\n" +
+            "   - Plateau: Werte ändern sich kaum bei Param-Variation → ROBUST (80-100)\n" +
+            "   - Glocke: sanfter symmetrischer Abfall beidseitig → GUT (60-80)\n" +
+            "   - Peak: ein einzelner hoher Wert, Nachbarn viel niedriger → ÜBEROPTIMIERT (<40)\n" +
+            "   - Cliff: eine Seite stabil, andere bricht ein → RISKANT (40-60)\n" +
+            "   - Chaotisch: Werte springen ohne Muster → INSTABIL (<30)\n" +
+            "   Bewerte PRO PARAMETER separat, dann bilde Gesamturteil über alle Parameter.\n\n" +
+            "2. CV-ANALYSE (25% des Scores):\n" +
+            "   - avg_cv <15%=exzellent, 15-25%=gut, 25-40%=ok, >40%=schlecht\n" +
+            "   - worst_cv >100% = starker Abzug\n\n" +
+            "3. PERFORMANCE-KONTEXT (25% des Scores):\n" +
+            "   - BT/FW Profit: FW_Profit > 0 UND proportional zu BT = Bonus\n" +
+            "   - Drawdown: DD < 10% = Bonus, DD > 20% = Abzug\n" +
+            "   - Profit Factor: PF > 1.5 = gut, PF > 2.0 = sehr gut\n" +
+            "   - Trade-Anzahl: FW_Trades > 20 = statistisch signifikant\n" +
+            "   - Combined_Score: hoher Score = gute Gesamtperformance\n\n" +
+            "4. BT/FW KONSISTENZ (20% des Scores):\n" +
+            "   - Vergleiche BT vs. FW Kennlinien desselben Parameters: gleiche Form = robust\n" +
+            "   - BT CV vs. FW CV pro Parameter: ähnliche Werte = konsistent\n" +
+            "   - Performance BT vs. FW: proportionale Ergebnisse = gut\n\n" +
+            "BEISPIEL (mit 2 Passes):\n\n" +
+            "Eingabe-Daten:\n" +
+            "Pass 22244: BT_Profit=5200.00 | FW_Profit=1800.00 | BT_Trades=120 | FW_Trades=45 | BT_PF=1.85 | FW_PF=1.60 | Combined_Score=72.5\n" +
+            "Pass 22244 | StopLoss | BT | CV=8.50% [ROBUST]\n" +
+            "  Kennlinie: 40→$4800, 45→$5100, 50→$5200, 55→$5150, 60→$4900\n" +
+            "Pass 22244 | StopLoss | FW | CV=12.30% [ROBUST]\n" +
+            "  Kennlinie: 40→$1600, 45→$1750, 50→$1800, 55→$1780, 60→$1650\n\n" +
+            "Erwartete Antwort:\n" +
+            "| Pass | Status | Score | Profit (BT/FW) | Trades (BT/FW) | CV worst | Fragile | Kurvenform | Fazit |\n" +
+            "|---|---|---|---|---|---|---|---|---|\n" +
+            "| 22244 | ✅ Robust | 82 | 5200 / 1800 | 120 / 45 | 12.30% | 0 | Plateau | Breites Plateau, konsistent |\n\n" +
+            "STABILITY_SCORE|22244|82\n\n" +
+            "**Pass 22244 (82):** StopLoss zeigt breites Plateau (BT: $4800-$5200, FW: $1600-$1800). " +
+            "BT und FW Kennlinien haben identische Glockenform. Niedrige CVs (8.5%/12.3%), guter PF (1.85/1.60).\n\n" +
             "REGELN:\n" +
             "- KEINE Einleitung, KEINE Begrüßung, KEIN zusätzlicher Text\n" +
-            "- Anzahl Tabellenzeilen = Anzahl STABILITY_SCORE Zeilen = Anzahl Begründungen = N";
+            "- Anzahl Tabellenzeilen = Anzahl STABILITY_SCORE Zeilen = Anzahl Begründungen = N\n" +
+            "- Nutze die volle Bandbreite 0-100, bewerte RELATIV zueinander\n" +
+            "- Begründe Kurvenform-Urteil mit konkreten Datenpunkten aus den Kennlinien";
 
     private static final String OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
+
+    public LlmAnalysisService() {
+        // Auto-migrate old prompts that don't include the latest format
+        try {
+            DatabaseManager db = DatabaseManager.getInstance();
+            String customPrompt = db.getSetting(SETTING_PROMPT);
+            if (customPrompt != null && !customPrompt.isEmpty() && !customPrompt.contains("Profit (BT/FW)")) {
+                log.info("Migrating old KI prompt to include profit and trade columns");
+                db.saveSetting(SETTING_PROMPT, DEFAULT_PROMPT);
+            }
+        } catch (Exception e) {
+            log.error("Failed to auto-migrate KI prompt", e);
+        }
+    }
 
     /**
      * Runs the full LLM analysis: loads data, builds prompt, calls API, returns response.
      *
+     * @param activePasses pass numbers to analyze
+     * @param expertName EA name
+     * @param symbol trading symbol
+     * @param performanceData optional performance metrics per pass (from CombinedPass). May be null.
      * @return The LLM's analysis text, or an error message.
      */
-    public String analyzeStrategies(java.util.List<Integer> activePasses, String expertName, String symbol) {
+    public String analyzeStrategies(java.util.List<Integer> activePasses, String expertName, String symbol,
+                                    java.util.Map<Integer, PassPerformance> performanceData) {
         DatabaseManager db = DatabaseManager.getInstance();
 
         // 1. Check API key
@@ -88,14 +140,14 @@ public class LlmAnalysisService {
         }
 
         // Auto-migrate old prompts that don't include the latest format
-        if (customPrompt != null && !customPrompt.contains("KEINE Einleitung")) {
-            log.info("Migrating old KI prompt to new compact format");
+        if (customPrompt != null && !customPrompt.contains("Profit (BT/FW)")) {
+            log.info("Migrating old KI prompt to include profit and trade columns");
             customPrompt = DEFAULT_PROMPT;
             db.saveSetting(SETTING_PROMPT, DEFAULT_PROMPT);
         }
 
-        // 2. Load sensitivity data from DB
-        String sensitivityData = loadSensitivityData(activePasses, expertName, symbol);
+        // 2. Load sensitivity data from DB (now includes curves + metrics)
+        String sensitivityData = loadSensitivityData(activePasses, expertName, symbol, performanceData);
         if (sensitivityData == null || sensitivityData.isEmpty()) {
             return "ERROR: Keine Sensitivitätsdaten in der Datenbank für die ausgewählten Passes.\n\n" +
                    "Bitte führe zuerst eine Sensitivitätsanalyse im Backtester durch.";
@@ -110,11 +162,46 @@ public class LlmAnalysisService {
         return callOpenRouter(apiKey, model, systemPrompt, userPrompt, maxTokens);
     }
 
+    /**
+     * Backwards-compatible overload without performance data.
+     */
+    public String analyzeStrategies(java.util.List<Integer> activePasses, String expertName, String symbol) {
+        return analyzeStrategies(activePasses, expertName, symbol, null);
+    }
+
+    /**
+     * Performance data for a single pass, extracted from CombinedPass.
+     */
+    public static class PassPerformance {
+        public final double btProfit, fwProfit;
+        public final int btTrades, fwTrades;
+        public final double btPf, fwPf;
+        public final double btDd, fwDd;
+        public final double btRecovery, fwRecovery;
+        public final double combinedScore;
+
+        public PassPerformance(OptimizationResult.CombinedPass cp) {
+            this.btProfit = cp.getBtProfit();
+            this.fwProfit = cp.getFwProfit();
+            this.btTrades = cp.getBtTrades();
+            this.fwTrades = cp.getFwTrades();
+            this.btPf = cp.getBtPf();
+            this.fwPf = cp.getFwPf();
+            this.btDd = cp.getBtDd();
+            this.fwDd = cp.getFwDd();
+            this.btRecovery = cp.getBtRecovery();
+            this.fwRecovery = cp.getFwRecovery();
+            this.combinedScore = cp.getScore();
+        }
+    }
+
     private String buildSystemPrompt() {
-        return "Du bist ein Quant-Analyst. Antworte IMMER auf Deutsch. " +
-               "Deine Antwort besteht NUR aus einer Markdown-Tabelle und STABILITY_SCORE Zeilen. " +
-               "KEINE Begrüßung, KEINE Einleitung, KEINE Erklärungen, KEIN Fließtext. " +
-               "Starte SOFORT mit der Tabelle. Halte dich extrem kurz.";
+        return "Du bist ein erfahrener Quant-Analyst mit Expertise in Parameter-Sensitivitätsanalyse. " +
+               "Antworte IMMER auf Deutsch. " +
+               "Du analysierst Kennlinien-Datenpunkte, Kurvenformen und Performance-Metriken. " +
+               "Deine Stärke: Du erkennst MUSTER in den Daten, die eine Formel nicht sehen kann — " +
+               "z.B. ob ein Parameter ein breites Plateau hat oder nur einen spitzen Peak. " +
+               "Starte SOFORT mit der Tabelle. KEINE Begrüßung, KEINE Einleitung.";
     }
 
     private String buildUserPrompt(String sensitivityData, String customPrompt) {
@@ -123,7 +210,8 @@ public class LlmAnalysisService {
                sensitivityData;
     }
 
-    private String loadSensitivityData(java.util.List<Integer> activePasses, String expertName, String symbol) {
+    private String loadSensitivityData(java.util.List<Integer> activePasses, String expertName, String symbol,
+                                        java.util.Map<Integer, PassPerformance> performanceData) {
         if (activePasses == null || activePasses.isEmpty()) {
             return null;
         }
@@ -152,9 +240,33 @@ public class LlmAnalysisService {
                 inClause.append(activePasses.get(i));
             }
 
-            // Get overview for active passes
             StringBuilder sb = new StringBuilder();
-            sb.append("=== STRATEGIEN-ÜBERSICHT ===\n");
+
+            // === SECTION 1: Performance Overview per Pass ===
+            sb.append("=== PERFORMANCE-ÜBERSICHT ===\n");
+            if (performanceData != null && !performanceData.isEmpty()) {
+                for (Integer passNum : activePasses) {
+                    PassPerformance perf = performanceData.get(passNum);
+                    if (perf != null) {
+                        sb.append(String.format(java.util.Locale.US,
+                                "Pass %d: BT_Profit=%.2f | FW_Profit=%.2f | BT_Trades=%d | FW_Trades=%d | " +
+                                "BT_PF=%.2f | FW_PF=%.2f | BT_DD=%.2f%% | FW_DD=%.2f%% | " +
+                                "BT_Recovery=%.2f | FW_Recovery=%.2f | Combined_Score=%.1f\n",
+                                passNum,
+                                perf.btProfit, Double.isNaN(perf.fwProfit) ? 0.0 : perf.fwProfit,
+                                perf.btTrades, perf.fwTrades,
+                                perf.btPf, Double.isNaN(perf.fwPf) ? 0.0 : perf.fwPf,
+                                perf.btDd, Double.isNaN(perf.fwDd) ? 0.0 : perf.fwDd,
+                                perf.btRecovery, Double.isNaN(perf.fwRecovery) ? 0.0 : perf.fwRecovery,
+                                perf.combinedScore));
+                    }
+                }
+            } else {
+                sb.append("(Keine Performance-Daten verfügbar)\n");
+            }
+
+            // === SECTION 2: Sensitivity Overview (aggregated CVs) ===
+            sb.append("\n=== SENSITIVITÄTS-ÜBERSICHT ===\n");
 
             String overviewSql = "SELECT pass_number, pass_name, expert_name, symbol, " +
                     "ROUND(AVG(cv), 2) as avg_cv, ROUND(MAX(cv), 2) as worst_cv, " +
@@ -167,13 +279,14 @@ public class LlmAnalysisService {
                     "AND pass_number IN (" + inClause + ") " +
                     "GROUP BY pass_number ORDER BY avg_cv";
 
+            // === SECTION 3: Detailed parameter data WITH curves ===
             String detailSql = "SELECT pass_number, parameter_name, period, cv, verdict, " +
-                    "base_value " +
+                    "base_value, base_profit, mean_profit, min_profit, max_profit, num_variants, curve_json " +
                     "FROM SENSITIVITY_DETAIL " +
                     "WHERE expert_name = ? AND symbol = ? " +
                     (useTimestamp ? "AND run_timestamp = ? " : "") +
                     "AND pass_number IN (" + inClause + ") " +
-                    "ORDER BY pass_number, period, cv DESC";
+                    "ORDER BY pass_number, parameter_name, period";
 
             try (java.sql.Connection conn = db.getConnection();
                  java.sql.PreparedStatement pstmtOverview = conn.prepareStatement(overviewSql);
@@ -196,38 +309,91 @@ public class LlmAnalysisService {
                 // Overview
                 try (ResultSet rs = pstmtOverview.executeQuery()) {
                     while (rs.next()) {
-                        sb.append(String.format("Pass %d (%s) - %s %s: avg_cv=%.2f%%, worst_cv=%.2f%%, robust=%d, acceptable=%d, fragile=%d\n",
+                        sb.append(String.format(java.util.Locale.US,
+                                "Pass %d (%s): avg_cv=%.2f%%, worst_cv=%.2f%%, robust=%d, acceptable=%d, fragile=%d\n",
                                 rs.getInt("pass_number"), rs.getString("pass_name"),
-                                rs.getString("expert_name"), rs.getString("symbol"),
                                 rs.getDouble("avg_cv"), rs.getDouble("worst_cv"),
                                 rs.getInt("robust_count"), rs.getInt("acceptable_count"), rs.getInt("fragile_count")));
                     }
                 }
 
-                sb.append("\n=== PARAMETER-DETAILS ===\n");
+                sb.append("\n=== PARAMETER-DETAILS MIT KENNLINIEN ===\n");
 
-                // Details (compact: only CV and verdict per parameter)
+                // Detailed data with curve points
                 try (ResultSet rs = pstmtDetail.executeQuery()) {
                     while (rs.next()) {
-                        sb.append(String.format(
-                                "Pass %d | %s | %s | base=%s | CV=%.2f%% [%s]\n",
-                                rs.getInt("pass_number"),
-                                rs.getString("parameter_name"),
-                                rs.getString("period"),
-                                rs.getString("base_value"),
-                                rs.getDouble("cv"),
-                                rs.getString("verdict")
-                        ));
+                        int passNum = rs.getInt("pass_number");
+                        String paramName = rs.getString("parameter_name");
+                        String period = rs.getString("period");
+                        String baseValue = rs.getString("base_value");
+                        double cv = rs.getDouble("cv");
+                        String verdict = rs.getString("verdict");
+                        double baseProfit = rs.getDouble("base_profit");
+                        double meanProfit = rs.getDouble("mean_profit");
+                        double minProfit = rs.getDouble("min_profit");
+                        double maxProfit = rs.getDouble("max_profit");
+                        int numVariants = rs.getInt("num_variants");
+                        String curveJson = rs.getString("curve_json");
+
+                        sb.append(String.format(java.util.Locale.US,
+                                "\nPass %d | %s | %s | base=%s | CV=%.2f%% [%s]\n",
+                                passNum, paramName, period, baseValue, cv, verdict));
+                        sb.append(String.format(java.util.Locale.US,
+                                "  Profit: base=%.2f, mean=%.2f, min=%.2f, max=%.2f (%d Varianten)\n",
+                                baseProfit, meanProfit, minProfit, maxProfit, numVariants));
+
+                        // Parse and format curve data points compactly
+                        if (curveJson != null && !curveJson.isEmpty() && !curveJson.equals("[]")) {
+                            String compactCurve = formatCurveCompact(curveJson);
+                            if (compactCurve != null && !compactCurve.isEmpty()) {
+                                sb.append("  Kennlinie: ").append(compactCurve).append("\n");
+                            }
+                        }
                     }
                 }
             }
 
             String result = sb.toString();
-            log.info("Loaded sensitivity data for LLM: {} characters", result.length());
+            log.info("Loaded enhanced sensitivity data for LLM: {} characters", result.length());
             return result;
 
         } catch (Exception e) {
             log.error("Failed to load sensitivity data", e);
+            return null;
+        }
+    }
+
+    /**
+     * Formats curve JSON data into a compact human-readable string.
+     * Input:  [{"paramValue":1.50000,"profit":850.00},{"paramValue":2.00000,"profit":920.00},...]
+     * Output: 1.5→$850, 2.0→$920, ...
+     */
+    private String formatCurveCompact(String curveJson) {
+        try {
+            com.google.gson.JsonArray arr = com.google.gson.JsonParser.parseString(curveJson).getAsJsonArray();
+            if (arr.size() == 0) return null;
+
+            StringBuilder curve = new StringBuilder();
+            for (int i = 0; i < arr.size(); i++) {
+                com.google.gson.JsonObject point = arr.get(i).getAsJsonObject();
+                double paramVal = point.get("paramValue").getAsDouble();
+                double profit = point.get("profit").getAsDouble();
+
+                if (i > 0) curve.append(", ");
+
+                // Format param value: remove trailing zeros
+                String paramStr;
+                if (paramVal == Math.floor(paramVal) && !Double.isInfinite(paramVal)) {
+                    paramStr = String.valueOf((long) paramVal);
+                } else {
+                    paramStr = String.format(java.util.Locale.US, "%.2f", paramVal);
+                }
+
+                curve.append(String.format(java.util.Locale.US, "%s→$%.0f", paramStr, profit));
+            }
+            return curve.toString();
+        } catch (Exception e) {
+            log.warn("Failed to parse curve JSON for LLM: {}", e.getMessage());
             return null;
         }
     }

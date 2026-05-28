@@ -28,6 +28,15 @@ public class RobustnessPersistenceTest {
 
     @Before
     public void setUp() throws Exception {
+        // Reset the singleton instance using reflection so we start with a clean DatabaseManager
+        try {
+            Field instanceField = DatabaseManager.class.getDeclaredField("instance");
+            instanceField.setAccessible(true);
+            instanceField.set(null, null);
+        } catch (Exception e) {
+            // Ignore
+        }
+
         tempDbFile = File.createTempFile("robust_persist_test_", ".db");
         tempDbFile.deleteOnExit();
 
@@ -45,6 +54,14 @@ public class RobustnessPersistenceTest {
     public void tearDown() {
         if (tempDbFile != null && tempDbFile.exists()) {
             tempDbFile.delete();
+        }
+        // Reset the singleton instance so it doesn't leak the temporary dbUrl to other tests
+        try {
+            Field instanceField = DatabaseManager.class.getDeclaredField("instance");
+            instanceField.setAccessible(true);
+            instanceField.set(null, null);
+        } catch (Exception e) {
+            // Ignore
         }
     }
 

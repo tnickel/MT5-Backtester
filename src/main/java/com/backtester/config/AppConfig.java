@@ -19,6 +19,7 @@ public class AppConfig {
     private static final String CONFIG_FILE = "backtester.properties";
     private static final String DATA_DIR = "data";
     private static final String REPORTS_DIR = "backtest_reports";
+    private static final String EXPORTS_DIR = "exports";
 
     private static AppConfig instance;
     private final Properties properties;
@@ -69,7 +70,8 @@ public class AppConfig {
             Files.createDirectories(basePath.resolve(CONFIG_DIR));
             Files.createDirectories(getDataDirectory());
             Files.createDirectories(getReportsDirectory());
-            log.info("Directories verified: config/, data/, backtest_reports/");
+            Files.createDirectories(getExportDirectory());
+            log.info("Directories verified: config/, data/, backtest_reports/, exports/");
         } catch (IOException e) {
             log.error("Failed to create directories", e);
         }
@@ -141,6 +143,16 @@ public class AppConfig {
 
     public void setReportsDirectory(String path) {
         set("output.directory", path);
+    }
+
+    public Path getExportDirectory() {
+        String dir = get("export.directory", EXPORTS_DIR);
+        Path p = Paths.get(dir);
+        return p.isAbsolute() ? p : basePath.resolve(p);
+    }
+
+    public void setExportDirectory(String path) {
+        set("export.directory", path);
     }
 
     public boolean isPortableMode() {

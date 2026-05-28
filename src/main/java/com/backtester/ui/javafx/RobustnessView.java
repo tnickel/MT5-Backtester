@@ -377,8 +377,18 @@ public class RobustnessView {
         nameCol2.setCellValueFactory(new PropertyValueFactory<>("name"));
         nameCol2.setPrefWidth(100);
         
-        TableColumn<com.backtester.report.OptimizationResult.CombinedPass, String> scoreCol = new TableColumn<>("Score");
-        scoreCol.setCellValueFactory(c -> new javafx.beans.property.SimpleStringProperty(String.format("%.2f", c.getValue().getScore())));
+        TableColumn<com.backtester.report.OptimizationResult.CombinedPass, String> scoreCol = new TableColumn<>();
+        HBox scoreHeader = new HBox(4);
+        scoreHeader.setAlignment(Pos.CENTER_LEFT);
+        Label scoreLabel = new Label("Score");
+        scoreLabel.setTooltip(new Tooltip("Gesamt-Score (0-100) bewertet nur Endkennzahlen; betrachtet NICHT den Verlauf der Kennlinie (Equity-Kurve)"));
+        Button infoBtn = DocHelper.createSmallInfoButton("Klicken für detaillierte Erklärung des Scores", () -> {
+            DocHelper.showScoreDocDialog(scoreLabel.getScene() != null ? scoreLabel.getScene().getWindow() : null);
+        });
+        scoreHeader.getChildren().addAll(scoreLabel, infoBtn);
+        scoreCol.setGraphic(scoreHeader);
+        scoreCol.setCellValueFactory(c -> new javafx.beans.property.SimpleStringProperty(String.format(java.util.Locale.US, "%.2f", c.getValue().getScore())));
+        scoreCol.setPrefWidth(95);
         
         TableColumn<com.backtester.report.OptimizationResult.CombinedPass, String> profitCol = new TableColumn<>("BT Profit");
         profitCol.setCellValueFactory(c -> new javafx.beans.property.SimpleStringProperty(String.format("%.2f", c.getValue().getBtProfit())));

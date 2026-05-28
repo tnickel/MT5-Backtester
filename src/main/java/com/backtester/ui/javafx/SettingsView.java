@@ -84,7 +84,7 @@ public class SettingsView {
         
         mt5PathField = new TextField(config.getMt5TerminalPath());
         mt5PathField.getStyleClass().add("text-input");
-        mt5PathField.setPrefWidth(400);
+        mt5PathField.setPrefWidth(550);
         
         Button browseBtn = new Button("Browse...");
         browseBtn.getStyleClass().add("button");
@@ -141,6 +141,8 @@ public class SettingsView {
         dataDirField = new TextField(config.getDataDirectory().toString());
         dataDirField.getStyleClass().add("text-input");
         grid.add(createDirField(dataDirField), 1, 1);
+
+
 
         section.getChildren().add(grid);
         return section;
@@ -235,6 +237,7 @@ public class SettingsView {
     }
 
     private HBox createDirField(TextField field) {
+        field.setPrefWidth(550);
         Button browseBtn = new Button("Browse...");
         browseBtn.getStyleClass().add("button");
         browseBtn.setOnAction(e -> {

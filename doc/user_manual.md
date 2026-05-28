@@ -287,7 +287,13 @@ Der MCP-Server ist vorkonfiguriert und muss in der Claude Desktop Konfigurations
 ### 12. Bereich: Workflow Automator (🔄 Workflow Automator)
 Der **Workflow Automator** ist ein mächtiges, geführtes Assistenz-System, das den gesamten Lebenszyklus einer Trading-Strategie von der ersten Optimierung bis hin zur Portfolio-Auswahl strukturiert und automatisiert. Jede Phase des Prozesses wird durch eine eigene Box visualisiert, die sich per Klick konfigurieren lässt und den aktuellen Status anzeigt.
 
-Der Zustand des gesamten Workflows wird kontinuierlich in der SQLite-Datenbank unter `WORKFLOW_STATE` gesichert, sodass er auch nach einem Neustart des Programms exakt dort fortgesetzt werden kann, wo er unterbrochen wurde.
+Der Zustand des gesamten Workflows wird kontinuierlich in der SQLite-Datenbank gesichert. Dabei unterscheidet die Anwendung zwischen zwei Speicher-Modellen:
+
+* **Aktiver Zwischenstand (`WORKFLOW_STATE`-Tabelle):** Nach jedem erfolgreich abgeschlossenen Schritt (Schritt 1 bis 5) wird der aktuelle Zustand der Pipeline automatisch in der Tabelle `WORKFLOW_STATE` unter der festen `id = 1` überschrieben. Dies dient ausschließlich dazu, dass der laufende Workflow einen Neustart der Anwendung übersteht und Sie ihn genau an der letzten Stelle fortsetzen können. Da dieser Zustand flüchtig ist und beim Start eines neuen Workflows überschrieben wird, erscheint er **nicht** in der Historien-Liste im Tab **Database**.
+* **Dauerhafte Historie (`HISTORY_RUNS`-Tabelle):** Ein eigenständiger, dauerhafter Eintrag in der Datenbank-Historie wird für Workflows erst erzeugt, wenn **Schritt 6 (Portfolio-Auswahl & Export) erfolgreich abgeschlossen** wurde. Zu diesem Zeitpunkt wird der fertige Durchlauf mit dem Typ `"Workflow"` in `HISTORY_RUNS` abgelegt und ist im Tab **Database** sichtbar.
+
+#### Wiederherstellen von Workflows aus der Datenbank:
+Wenn ein Workflow erfolgreich abgeschlossen wurde und in der Historie (Tab **Database**) unter der Kategorie **Workflow** aufgeführt ist, können Sie ihn reaktivieren. Klicken Sie dazu mit der **rechten Maustaste** auf den entsprechenden Workflow-Eintrag im Baum und wählen Sie **"🔄 Workflow wiederherstellen (Restore)"**. Dadurch wird der gesamte Zustand des Workflows (inklusive aller Zwischenergebnisse aus Optimierung, Stress-Tests und KI-Berichten) wieder in die Live-Ansicht des Workflow Automators geladen.
 
 #### Die 6 Phasen des Workflows:
 1. **Schritt 1: Konfiguration (Config)**: Auswählen des Expert Advisors, Handelssymbols, der Periode, des Datumsbereichs sowie des Startkapitals und Hebels. Zudem werden die Parameter definiert, die in Schritt 2 optimiert werden sollen.

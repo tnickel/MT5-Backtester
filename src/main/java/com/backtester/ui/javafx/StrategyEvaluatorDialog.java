@@ -2,6 +2,8 @@ package com.backtester.ui.javafx;
 
 import com.backtester.report.OptimizationResult.CombinedPass;
 import javafx.application.Platform;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import javafx.beans.property.SimpleStringProperty;
 import javafx.collections.FXCollections;
 import javafx.collections.ObservableList;
@@ -24,6 +26,7 @@ import java.util.*;
 import java.util.stream.Collectors;
 
 public class StrategyEvaluatorDialog extends Stage {
+    private static final Logger log = LoggerFactory.getLogger(StrategyEvaluatorDialog.class);
 
     private final List<CombinedPass> allPasses;
     private final OptimizationView parentView;
@@ -308,6 +311,13 @@ public class StrategyEvaluatorDialog extends Stage {
         autoSelectBtn.setStyle("-fx-background-color: #2a2d3a; -fx-text-fill: #ffd740; -fx-border-color: #ffd740;");
         autoSelectBtn.setOnAction(e -> autoSelectTopFive());
 
+        Button autoSelectInfoBtn = new Button("ℹ");
+        autoSelectInfoBtn.setStyle("-fx-background-color: transparent; -fx-text-fill: #ffd740; -fx-padding: 0 5 0 5; -fx-font-size: 14px; -fx-font-weight: bold; -fx-cursor: hand;");
+        autoSelectInfoBtn.setOnAction(e -> showAutoSelectExplanation());
+
+        HBox autoSelectBox = new HBox(5, autoSelectBtn, autoSelectInfoBtn);
+        autoSelectBox.setAlignment(Pos.CENTER_LEFT);
+
         Button addSelectedBtn = new Button("✔️ Add Selected to 'Selected' Tab");
         addSelectedBtn.getStyleClass().addAll("button", "button-start");
         addSelectedBtn.setStyle("-fx-background-color: linear-gradient(to bottom, #287846, #143c23); -fx-text-fill: white;");
@@ -320,7 +330,11 @@ public class StrategyEvaluatorDialog extends Stage {
         Region spacer = new Region();
         HBox.setHgrow(spacer, Priority.ALWAYS);
 
-        bottomBox.getChildren().addAll(spacer, autoSelectBtn, addSelectedBtn, closeBtn);
+        Button mainInfoBtn = DocHelper.createThickCircularInfoButton("Erklärung aller Indizes und Kennzahlen", () -> {
+            DocHelper.showAllIndicesDocDialog(closeBtn.getScene() != null ? closeBtn.getScene().getWindow() : null);
+        });
+
+        bottomBox.getChildren().addAll(mainInfoBtn, spacer, autoSelectBox, addSelectedBtn, closeBtn);
         root.setBottom(bottomBox);
 
         // Set Scene & Stylesheet
@@ -363,30 +377,59 @@ public class StrategyEvaluatorDialog extends Stage {
         table.getSelectionModel().setSelectionMode(SelectionMode.MULTIPLE);
         
         TableColumn<CombinedPass, Number> passCol = new TableColumn<>("Pass");
-        passCol.setCellValueFactory(new PropertyValueFactory<>("passNumber"));
+        passCol.setCellValueFactory(c -> new javafx.beans.property.SimpleObjectProperty<>(c.getValue().getPassNumber()));
         passCol.setPrefWidth(50);
         
         TableColumn<CombinedPass, String> scoreCol = new TableColumn<>("Score");
         scoreCol.setCellValueFactory(c -> new SimpleStringProperty(String.format(Locale.US, "%.2f", c.getValue().getScore())));
-        scoreCol.setPrefWidth(55);
+        scoreCol.setPrefWidth(75);
 
-        TableColumn<CombinedPass, String> riCol = new TableColumn<>();
-        HBox riHeaderBox = new HBox(4);
-        riHeaderBox.setAlignment(Pos.CENTER_LEFT);
-        Label riLabel = new Label("RI");
-        riLabel.setTooltip(new Tooltip("Robustness-Index (RI): Recovery Factor * Trades-Gewichtung * Forward-Konsistenz"));
-        Button infoBtn = new Button("ℹ");
-        infoBtn.setTooltip(new Tooltip("Klicken für detaillierte Erklärung des Robustness-Index"));
-        infoBtn.setStyle("-fx-background-color: transparent; -fx-text-fill: #ffd740; -fx-padding: 0; -fx-font-weight: bold; -fx-cursor: hand;");
-        infoBtn.setOnAction(e -> showRobustnessIndexExplanation());
-        riHeaderBox.getChildren().addAll(riLabel, infoBtn);
-        riCol.setGraphic(riHeaderBox);
+        TableColumn<CombinedPass, String> riCol = new TableColumn<>("RI");
         riCol.setCellValueFactory(c -> new SimpleStringProperty(String.format(Locale.US, "%.2f", calculateRobustnessIndex(c.getValue(), referenceTrades))));
-        riCol.setPrefWidth(65);
+        riCol.setPrefWidth(55);
         
         TableColumn<CombinedPass, String> consistCol = new TableColumn<>("Konsistenz");
         consistCol.setCellValueFactory(c -> new SimpleStringProperty(String.format(Locale.US, "%.2f", c.getValue().getConsistency())));
-        consistCol.setPrefWidth(70);
+        consistCol.setPrefWidth(95);
+
+        TableColumn<CombinedPass, String> robScoreCol = new TableColumn<>("Rob. Scorecard");
+        robScoreCol.setCellValueFactory(c -> {
+            String fromDateStr = "Unbekannt";
+            String toDateStr = "Unbekannt";
+            if (parentView != null && parentView.getLastOptResult() != null) {
+                fromDateStr = parentView.getLastOptResult().getFromDate();
+                toDateStr = parentView.getLastOptResult().getToDate();
+            }
+            double score = com.backtester.report.RobustnessScorecardGenerator.calculateOverallScore(c.getValue(), fromDateStr, toDateStr);
+            return new SimpleStringProperty(String.format(Locale.US, "%.0f", score));
+        });
+        robScoreCol.setPrefWidth(115);
+        robScoreCol.setCellFactory(col -> new TableCell<CombinedPass, String>() {
+            @Override
+            protected void updateItem(String item, boolean empty) {
+                super.updateItem(item, empty);
+                if (empty || item == null) {
+                    setText(null);
+                    setStyle("");
+                } else {
+                    setText(item);
+                    try {
+                        double score = Double.parseDouble(item);
+                        String color;
+                        if (score >= 70) {
+                            color = "#00e676"; // Green
+                        } else if (score >= 55) {
+                            color = "#ffd740"; // Yellow
+                        } else {
+                            color = "#ff5252"; // Red
+                        }
+                        setStyle("-fx-text-fill: " + color + "; -fx-font-weight: bold;");
+                    } catch (Exception e) {
+                        setStyle("");
+                    }
+                }
+            }
+        });
 
         // Backtest Sub-Columns
         TableColumn<CombinedPass, String> btGroup = new TableColumn<>("◀ Backtest");
@@ -395,8 +438,8 @@ public class StrategyEvaluatorDialog extends Stage {
         btProfitCol.setCellValueFactory(c -> new SimpleStringProperty(String.format(Locale.US, "%.2f", c.getValue().getBtProfit())));
         btProfitCol.setPrefWidth(70);
         
-        TableColumn<CombinedPass, Number> btTradesCol = new TableColumn<>("Trades");
-        btTradesCol.setCellValueFactory(new PropertyValueFactory<>("btTrades"));
+        TableColumn<CombinedPass, String> btTradesCol = new TableColumn<>("Trades");
+        btTradesCol.setCellValueFactory(c -> new SimpleStringProperty(String.valueOf(c.getValue().getBtTrades())));
         btTradesCol.setPrefWidth(50);
         
         TableColumn<CombinedPass, String> btDdCol = new TableColumn<>("DD%");
@@ -464,7 +507,7 @@ public class StrategyEvaluatorDialog extends Stage {
             }
         });
 
-        table.getColumns().addAll(passCol, scoreCol, riCol, consistCol, btGroup, fwGroup, remarkCol);
+        table.getColumns().addAll(passCol, scoreCol, riCol, consistCol, robScoreCol, btGroup, fwGroup, remarkCol);
 
         table.setRowFactory(tv -> {
             TableRow<CombinedPass> row = new TableRow<>();
@@ -788,8 +831,10 @@ public class StrategyEvaluatorDialog extends Stage {
 
         Label scoreComparisonText = new Label(
             "Nein, der Robustness-Index wird NICHT aus der Score-Gewichtung berechnet.\n\n" +
-            "• Der normale 'Score' in den Tabellen basiert auf Ihren individuellen Gewichtungen (im Hauptfenster konfigurierbar unter 'Score-Gewichtung...').\n" +
-            "• Der 'Robustness-Index (RI)' ist ein mathematisch fixierter Standard-Benchmark, der Ihnen eine objektive, einheitliche Bewertung Ihrer EAs unabhängig von Ihren gewählten UI-Gewichtungen erlaubt."
+            "• Der normale 'Score' in den Tabellen basiert auf Ihren individuellen Gewichtungen (im Hauptfenster konfigurierbar unter 'Score-Gewichtung...'). " +
+            "Wichtig: Dieser Score bewertet ausschließlich die endgültigen Kennzahlen am Schluss und ignoriert den eigentlichen Verlauf der Kennlinie.\n\n" +
+            "• Der 'Robustness-Index (RI)' ist ein mathematisch fixierter Standard-Benchmark, der Ihnen eine objektive, einheitliche Bewertung Ihrer EAs unabhängig von Ihren gewählten UI-Gewichtungen erlaubt. " +
+            "Er baut auf dem Robustness Score auf und betrachtet somit indirekt auch den Verlauf der Equity-Kurve (Kennlinie) per R²-Stabilität."
         );
         scoreComparisonText.setWrapText(true);
         scoreComparisonText.setTextFill(Color.web("#e6e9f0"));
@@ -801,7 +846,7 @@ public class StrategyEvaluatorDialog extends Stage {
         Label formulaText = new Label(
             "Formel: RI = Recovery Factor (Backtest) × Trade-Gewicht (w_trades) × Konsistenz-Gewicht (w_konsistenz)\n\n" +
             "• Base Metric: Der Recovery Factor (Nettoprofit / max. Drawdown) aus dem Backtest bildet die Basis.\n" +
-            "• Trade-Gewicht (w_trades): Berechnet sich als (1 - e^(-Trades / N_ref)).\n" +
+            "• Trade-Gewicht (w_trades): Berechnet sich as (1 - e^(-Trades / N_ref)).\n" +
             "   - Dynamisches N_ref für diesen Durchlauf: N_ref = " + referenceTrades + " Trades.\n" +
             "     (Berechnet als Median der Tradeanzahl über alle " + allPasses.size() + " geladenen Strategien, mindestens jedoch 30).\n" +
             "   - Ein Durchlauf mit genau " + referenceTrades + " Trades erhält somit ein Trade-Gewicht von ca. 0,63.\n" +
@@ -836,9 +881,98 @@ public class StrategyEvaluatorDialog extends Stage {
 
         layout.getChildren().addAll(title, scoreComparisonTitle, scoreComparisonText, formulaTitle, formulaText, parameterTitle, parameterText, btnBox);
 
-        Scene scene = new Scene(layout, 550, 560);
+        ScrollPane scrollPane = new ScrollPane(layout);
+        scrollPane.setFitToWidth(true);
+        scrollPane.setStyle("-fx-background-color: transparent; -fx-background: #11141d; -fx-border-color: transparent;");
+        scrollPane.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
+
+        Scene scene = new Scene(scrollPane, 580, 580);
         try {
             scene.getStylesheets().add(getClass().getResource("/css/antigravity.css").toExternalForm());
+        } catch (Exception e) {
+            // Ignore
+        }
+        infoStage.setScene(scene);
+        infoStage.showAndWait();
+    }
+
+    public static void showRobustnessScoreExplanation(javafx.stage.Window owner) {
+        Stage infoStage = new Stage();
+        if (owner != null) {
+            infoStage.initOwner(owner);
+        }
+        infoStage.initModality(Modality.APPLICATION_MODAL);
+        infoStage.setTitle("Was ist der Robustness Score?");
+
+        VBox layout = new VBox(15);
+        layout.setPadding(new Insets(20));
+        layout.setStyle("-fx-background-color: #11141d; -fx-border-color: #ffd740; -fx-border-width: 1px; -fx-border-radius: 5px;");
+
+        Label title = new Label("Robustness Score (0-100) - Erklärung");
+        title.setFont(javafx.scene.text.Font.font("Segoe UI", javafx.scene.text.FontWeight.BOLD, 18));
+        title.setTextFill(Color.web("#ffd740"));
+
+        Label descText = new Label(
+            "Der Robustness Score ist ein von 0 bis 100 skalierter Gesamtwert, der auf 6 wesentlichen Säulen der Strategiequalität basiert. " +
+            "Er prüft detailliert, ob eine Strategie robust ist oder Anzeichen von Überoptimierung (Curve-Fitting) aufweist."
+        );
+        descText.setWrapText(true);
+        descText.setTextFill(Color.web("#e6e9f0"));
+
+        Label comparisonNote = new Label(
+            "⚠️ WICHTIGER UNTERSCHIED ZUM GESAMT-SCORE:\n" +
+            "Der normale Gesamt-Score bewertet ausschließlich die endgültigen Kennzahlen am Schluss (Gewinn, Drawdown, etc.). " +
+            "Nur der Robustness Score analysiert den tatsächlichen Verlauf der Kennlinie (Equity-Kurve) per linearer Regression (R²-Stabilität), " +
+            "um Glückstreffer oder instabile Verläufe aufzudecken."
+        );
+        comparisonNote.setWrapText(true);
+        comparisonNote.setTextFill(Color.web("#ffd740"));
+        comparisonNote.setFont(javafx.scene.text.Font.font("Segoe UI", javafx.scene.text.FontWeight.BOLD, 12));
+
+        Label pillarsTitle = new Label("Die 6 Säulen der Robustheit:");
+        pillarsTitle.setFont(javafx.scene.text.Font.font("Segoe UI", javafx.scene.text.FontWeight.BOLD, 13));
+        pillarsTitle.setTextFill(Color.web("#00e5ff"));
+
+        Label pillarsText = new Label(
+            "• 1. Profitabilität (Profitability): Bewertet Profit, Profit Factor und Sharpe Ratio.\n" +
+            "• 2. Risiko-Verhältnis (Risk/Reward): Bewertet Calmar Ratio und Recovery Factor.\n" +
+            "• 3. Stabilität (Stability R²): Misst die Linearität des Kapitalwachstums der Equity-Kurve.\n" +
+            "• 4. Stichprobengröße (Sample Size): Bewertet die Anzahl der ausgeführten Trades.\n" +
+            "• 5. Symmetrie (Symmetry): Bewertet das Verhältnis von Long- zu Short-Trades.\n" +
+            "• 6. Tail-Risk: Bewertet das Risiko extrem großer Verlust-Trades."
+        );
+        pillarsText.setWrapText(true);
+        pillarsText.setTextFill(Color.web("#e6e9f0"));
+
+        Label evaluationTitle = new Label("Bewertungsskala:");
+        evaluationTitle.setFont(javafx.scene.text.Font.font("Segoe UI", javafx.scene.text.FontWeight.BOLD, 13));
+        evaluationTitle.setTextFill(Color.web("#00e5ff"));
+
+        Label evaluationText = new Label(
+            "• >= 70 (Klasse A / B): Hervorragende Robustheit, sehr gut geeignet für Live-Tests.\n" +
+            "• 55 - 69 (Klasse C): Grenzwertig robuste Performance mit Schwächen.\n" +
+            "• < 55 (Klasse D / F): Mangelnde Robustheit, hohe Wahrscheinlichkeit von Curve-Fitting."
+        );
+        evaluationText.setWrapText(true);
+        evaluationText.setTextFill(Color.web("#e6e9f0"));
+
+        Button closeBtn = new Button("Verstanden");
+        closeBtn.getStyleClass().add("button");
+        closeBtn.setOnAction(e -> infoStage.close());
+
+        HBox btnBox = new HBox(closeBtn);
+        btnBox.setAlignment(Pos.CENTER_RIGHT);
+
+        layout.getChildren().addAll(title, descText, comparisonNote, pillarsTitle, pillarsText, evaluationTitle, evaluationText, btnBox);
+
+        ScrollPane scrollPane = new ScrollPane(layout);
+        scrollPane.setFitToWidth(true);
+        scrollPane.setStyle("-fx-background-color: transparent; -fx-background: #11141d; -fx-border-color: transparent;");
+        scrollPane.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
+
+        Scene scene = new Scene(scrollPane, 580, 580);
+        try {
+            scene.getStylesheets().add(StrategyEvaluatorDialog.class.getResource("/css/antigravity.css").toExternalForm());
         } catch (Exception e) {
             // Ignore
         }
@@ -978,8 +1112,27 @@ public class StrategyEvaluatorDialog extends Stage {
             new Alert(Alert.AlertType.WARNING, "Keine Strategien zum Auswählen vorhanden.").show();
             return;
         }
+
+        String fromDateStr = "Unbekannt";
+        String toDateStr = "Unbekannt";
+        if (parentView != null && parentView.getLastOptResult() != null) {
+            fromDateStr = parentView.getLastOptResult().getFromDate();
+            toDateStr = parentView.getLastOptResult().getToDate();
+        }
+        final String fFrom = fromDateStr;
+        final String fTo = toDateStr;
+
         List<CombinedPass> sorted = items.stream()
-            .sorted((p1, p2) -> Double.compare(calculateRobustnessIndex(p2, referenceTrades), calculateRobustnessIndex(p1, referenceTrades)))
+            .sorted((p1, p2) -> {
+                double ri1 = calculateRobustnessIndex(p1, referenceTrades);
+                double ri2 = calculateRobustnessIndex(p2, referenceTrades);
+                int cmp = Double.compare(ri2, ri1); // Higher Robustness Index (RI) first
+                if (cmp != 0) return cmp;
+                // Tie-breaker: Higher Vue Robustness Score
+                double vs1 = com.backtester.report.RobustnessScorecardGenerator.calculateOverallScore(p1, fFrom, fTo);
+                double vs2 = com.backtester.report.RobustnessScorecardGenerator.calculateOverallScore(p2, fFrom, fTo);
+                return Double.compare(vs2, vs1);
+            })
             .limit(5)
             .collect(Collectors.toList());
         
@@ -994,7 +1147,87 @@ public class StrategyEvaluatorDialog extends Stage {
                 added++;
             }
         }
-        new Alert(Alert.AlertType.INFORMATION, "Die Top " + sorted.size() + " Strategien (nach Robustness-Index) wurden in der Tabelle markiert\nund erfolgreich zum 'Selected' Tab hinzugefügt!").show();
+        new Alert(Alert.AlertType.INFORMATION, "Die Top " + sorted.size() + " Strategien (nach Robustness-Index & Vue Robustness Score) wurden in der Tabelle markiert\nund erfolgreich zum 'Selected' Tab hinzugefügt!").show();
+    }
+
+    private void showAutoSelectExplanation() {
+        Stage infoStage = new Stage();
+        infoStage.initOwner(this);
+        infoStage.initModality(Modality.APPLICATION_MODAL);
+        infoStage.setTitle("Wie funktioniert Auto-Select?");
+
+        VBox layout = new VBox(15);
+        layout.setPadding(new Insets(20));
+        layout.setStyle("-fx-background-color: #11141d; -fx-border-color: #ffd740; -fx-border-width: 1px; -fx-border-radius: 5px;");
+
+        Label title = new Label("Auto-Select Top 5 - Erklärung");
+        title.setFont(javafx.scene.text.Font.font("Segoe UI", javafx.scene.text.FontWeight.BOLD, 18));
+        title.setTextFill(Color.web("#ffd740"));
+
+        Label functionTitle = new Label("1. Funktionsweise");
+        functionTitle.setFont(javafx.scene.text.Font.font("Segoe UI", javafx.scene.text.FontWeight.BOLD, 13));
+        functionTitle.setTextFill(Color.web("#00e5ff"));
+
+        Label functionText = new Label(
+            "Der Auto-Select-Button durchsucht die aktuell gefilterten Durchgänge der Tabelle, sortiert sie nach Qualität und Robustheit und wählt die 5 besten Kandidaten aus. " +
+            "Diese werden in der Tabelle markiert und direkt in das Tab 'Selected' kopiert, damit Sie sie vergleichen und exportieren können."
+        );
+        functionText.setWrapText(true);
+        functionText.setTextFill(Color.web("#e6e9f0"));
+
+        Label logicTitle = new Label("2. Die Sortier-Logik & Warum wir zwei Indizes nutzen");
+        logicTitle.setFont(javafx.scene.text.Font.font("Segoe UI", javafx.scene.text.FontWeight.BOLD, 13));
+        logicTitle.setTextFill(Color.web("#00e5ff"));
+
+        Label logicText = new Label(
+            "Um die stabilsten Strategien mathematisch präzise zu ermitteln, kombiniert die Funktion zwei komplementäre Metriken:\n\n" +
+            "• Warum zwei Indizes?\n" +
+            "  - Der Robustness-Index (RI) ist eine präzise Fließkommazahl, bei der es fast nie zu Gleichständen kommt. Er eignet sich hervorragend zur Feinsortierung.\n" +
+            "  - Der Robustness Score (0-100) ist ein ganzzahliger Qualitätsfilter (Pillars-Check). Da er gerundet ist, weisen viele ähnliche EAs denselben Score auf (z. B. 67).\n\n" +
+            "• Ablauf der Auto-Filterung:\n" +
+            "  - 1. Primäres Kriterium: Robustness-Index (RI)\n" +
+            "    Alle Durchgänge werden primär absteigend nach dem RI sortiert.\n" +
+            "  - 2. Sekundäres Kriterium: Robustness Score als Tie-Breaker\n" +
+            "    Haben zwei Strategien exakt denselben RI (z. B. wenn mehrere EAs bei einem RI von 0.25 gleichauf liegen), entscheidet der Robustness Score. Eine Strategie mit einem Score von 67 wird somit bevorzugt vor einer Strategie mit 66 ausgewählt.\n\n" +
+            "• Wichtiger Hinweis:\n" +
+            "  Der normale Gesamt-Score bewertet ausschließlich die endgültigen Kennzahlen am Schluss (Gewinn, Drawdown, etc.) und ignoriert den Verlauf. Nur der Robustness Score (sowie der RI, der darauf aufbaut) analysiert den Verlauf der Kennlinie (Equity-Kurve) per linearer Regression (R²-Stabilität)."
+        );
+        logicText.setWrapText(true);
+        logicText.setTextFill(Color.web("#e6e9f0"));
+
+        Label tipsTitle = new Label("3. Praxistipp zur Anwendung");
+        tipsTitle.setFont(javafx.scene.text.Font.font("Segoe UI", javafx.scene.text.FontWeight.BOLD, 13));
+        tipsTitle.setTextFill(Color.web("#00e5ff"));
+
+        Label tipsText = new Label(
+            "• Nutzen Sie zuerst die Schieberegler auf der linken Seite (Min. Trades, Max. Drawdown, Min. Profit Factor), um ungeeignete Strategien generell auszublenden.\n" +
+            "• Klicken Sie danach auf 'Auto-Select Top 5'. Die Funktion bewertet dann nur die verbleibenden, bereits vorgefilterten Durchgänge und wählt die absolut besten 5 aus."
+        );
+        tipsText.setWrapText(true);
+        tipsText.setTextFill(Color.web("#e6e9f0"));
+
+        Button closeBtn = new Button("Verstanden");
+        closeBtn.getStyleClass().add("button");
+        closeBtn.setOnAction(e -> infoStage.close());
+
+        HBox btnBox = new HBox(closeBtn);
+        btnBox.setAlignment(Pos.CENTER_RIGHT);
+
+        layout.getChildren().addAll(title, functionTitle, functionText, logicTitle, logicText, tipsTitle, tipsText, btnBox);
+
+        ScrollPane scrollPane = new ScrollPane(layout);
+        scrollPane.setFitToWidth(true);
+        scrollPane.setStyle("-fx-background-color: transparent; -fx-background: #11141d; -fx-border-color: transparent;");
+        scrollPane.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
+
+        Scene scene = new Scene(scrollPane, 580, 620);
+        try {
+            scene.getStylesheets().add(getClass().getResource("/css/antigravity.css").toExternalForm());
+        } catch (Exception e) {
+            // Ignore
+        }
+        infoStage.setScene(scene);
+        infoStage.showAndWait();
     }
 
     private void addSelectedToOptimizationView() {
@@ -1236,11 +1469,74 @@ public class StrategyEvaluatorDialog extends Stage {
         closeBtn.getStyleClass().add("button");
         closeBtn.setOnAction(e -> detailStage.close());
 
-        HBox btnBox = new HBox(closeBtn);
+        HBox btnBox = new HBox(10, closeBtn);
         btnBox.setAlignment(Pos.CENTER_RIGHT);
         layout.getChildren().add(btnBox);
 
-        Scene scene = new Scene(layout, 850, 780);
+        // --- Scorecard WebView (Right Side) ---
+        String symbolStr = parentView != null && parentView.getLastOptResult() != null ? parentView.getLastOptResult().getSymbol() : "EURUSD";
+        String periodStr = parentView != null && parentView.getLastOptResult() != null ? parentView.getLastOptResult().getPeriod() : "H1";
+        String expertStr = parentView != null && parentView.getLastOptResult() != null ? parentView.getLastOptResult().getExpert() : "";
+
+        double sensitivScoreVal = -1.0;
+        double kiScoreVal = -1.0;
+        if (parentView != null && parentView.getSensitivityResults() != null) {
+            for (com.backtester.report.SensitivityResult sr : parentView.getSensitivityResults()) {
+                if (sr.getOriginalPass() != null && sr.getOriginalPass().getPassNumber() == cp.getPassNumber()) {
+                    sensitivScoreVal = 100.0 - Math.max(sr.getOverallCV(), sr.getOverallCVFw());
+                    String kiRes = sr.getKiResult();
+                    if (kiRes != null && !kiRes.isEmpty()) {
+                        try {
+                            java.util.regex.Matcher m = java.util.regex.Pattern.compile("(\\d{1,3})\\s*/\\s*100").matcher(kiRes);
+                            if (m.find()) {
+                                kiScoreVal = Double.parseDouble(m.group(1));
+                            } else {
+                                kiScoreVal = Double.parseDouble(kiRes.trim());
+                            }
+                        } catch (Exception ignored) {}
+                    }
+                    break;
+                }
+            }
+        }
+
+        String htmlContent = com.backtester.report.RobustnessScorecardGenerator.generateHtml(
+            cp, expertStr, symbolStr, periodStr, fromDateStr, toDateStr, sensitivScoreVal, kiScoreVal
+        );
+
+        javafx.scene.web.WebView webView = new javafx.scene.web.WebView();
+        webView.getEngine().setOnAlert(event -> log.info("JS ALERT: " + event.getData()));
+        webView.getEngine().getLoadWorker().stateProperty().addListener((obs, oldState, newState) -> {
+            if (newState == javafx.concurrent.Worker.State.RUNNING || newState == javafx.concurrent.Worker.State.SUCCEEDED) {
+                try {
+                    netscape.javascript.JSObject window = (netscape.javascript.JSObject) webView.getEngine().executeScript("window");
+                    window.setMember("consoleBridge", new ConsoleLoggerBridge());
+                } catch (Exception ex) {
+                    // Ignore
+                }
+            }
+        });
+        webView.getEngine().getLoadWorker().exceptionProperty().addListener((obs, oldExc, newExc) -> {
+            if (newExc != null) {
+                log.error("WebView LoadWorker Exception: ", newExc);
+            }
+        });
+        webView.getEngine().loadContent(htmlContent);
+
+        VBox rightPane = new VBox(webView);
+        VBox.setVgrow(webView, Priority.ALWAYS);
+        rightPane.setStyle("-fx-background-color: #11141d;");
+
+        ScrollPane leftScroll = new ScrollPane(layout);
+        leftScroll.setFitToWidth(true);
+        leftScroll.setStyle("-fx-background-color: transparent; -fx-background: #11141d; -fx-box-border: transparent;");
+
+        SplitPane splitPane = new SplitPane();
+        splitPane.getItems().addAll(leftScroll, rightPane);
+        splitPane.setDividerPositions(0.55);
+        splitPane.setStyle("-fx-background-color: #11141d; -fx-box-border: transparent;");
+
+        Scene scene = new Scene(splitPane, 1500, 850);
         try {
             scene.getStylesheets().add(getClass().getResource("/css/antigravity.css").toExternalForm());
         } catch (Exception e) {
@@ -1264,6 +1560,76 @@ public class StrategyEvaluatorDialog extends Stage {
         });
 
         detailStage.showAndWait();
+    }
+
+    private void showRobustnessScorecardWebView(CombinedPass cp) {
+        Stage stage = new Stage();
+        stage.setTitle("🛡️ Robustness Scorecard: Pass #" + cp.getPassNumber());
+        stage.initOwner(this);
+        stage.initModality(Modality.APPLICATION_MODAL);
+
+        String fromDateStr = "Unbekannt";
+        String toDateStr = "Unbekannt";
+        if (parentView != null && parentView.getLastOptResult() != null) {
+            fromDateStr = parentView.getLastOptResult().getFromDate();
+            toDateStr = parentView.getLastOptResult().getToDate();
+        }
+        
+        String symbolStr = parentView != null && parentView.getLastOptResult() != null ? parentView.getLastOptResult().getSymbol() : "EURUSD";
+        String periodStr = parentView != null && parentView.getLastOptResult() != null ? parentView.getLastOptResult().getPeriod() : "H1";
+        String expertStr = parentView != null && parentView.getLastOptResult() != null ? parentView.getLastOptResult().getExpert() : "";
+
+        double sensitivScoreVal = -1.0;
+        double kiScoreVal = -1.0;
+        if (parentView != null && parentView.getSensitivityResults() != null) {
+            for (com.backtester.report.SensitivityResult sr : parentView.getSensitivityResults()) {
+                if (sr.getOriginalPass() != null && sr.getOriginalPass().getPassNumber() == cp.getPassNumber()) {
+                    sensitivScoreVal = 100.0 - Math.max(sr.getOverallCV(), sr.getOverallCVFw());
+                    String kiRes = sr.getKiResult();
+                    if (kiRes != null && !kiRes.isEmpty()) {
+                        try {
+                            java.util.regex.Matcher m = java.util.regex.Pattern.compile("(\\d{1,3})\\s*/\\s*100").matcher(kiRes);
+                            if (m.find()) {
+                                kiScoreVal = Double.parseDouble(m.group(1));
+                            } else {
+                                kiScoreVal = Double.parseDouble(kiRes.trim());
+                            }
+                        } catch (Exception ignored) {}
+                    }
+                    break;
+                }
+            }
+        }
+
+        String htmlContent = com.backtester.report.RobustnessScorecardGenerator.generateHtml(
+            cp, expertStr, symbolStr, periodStr, fromDateStr, toDateStr, sensitivScoreVal, kiScoreVal
+        );
+
+        javafx.scene.web.WebView webView = new javafx.scene.web.WebView();
+        webView.getEngine().setOnAlert(event -> log.info("JS ALERT: " + event.getData()));
+        webView.getEngine().getLoadWorker().stateProperty().addListener((obs, oldState, newState) -> {
+            if (newState == javafx.concurrent.Worker.State.RUNNING || newState == javafx.concurrent.Worker.State.SUCCEEDED) {
+                try {
+                    netscape.javascript.JSObject window = (netscape.javascript.JSObject) webView.getEngine().executeScript("window");
+                    window.setMember("consoleBridge", new ConsoleLoggerBridge());
+                } catch (Exception e) {
+                    // Ignore if window is not ready yet
+                }
+            }
+        });
+        webView.getEngine().getLoadWorker().exceptionProperty().addListener((obs, oldExc, newExc) -> {
+            if (newExc != null) {
+                log.error("WebView LoadWorker Exception: ", newExc);
+            }
+        });
+        webView.getEngine().loadContent(htmlContent);
+
+        VBox box = new VBox(webView);
+        VBox.setVgrow(webView, Priority.ALWAYS);
+        
+        Scene scene = new Scene(box, 750, 750);
+        stage.setScene(scene);
+        stage.show();
     }
 
     public static List<Double> generateSyntheticEquityCurve(double startBalance, double profit, int trades, double pf, int passNumber) {
@@ -1334,5 +1700,10 @@ public class StrategyEvaluatorDialog extends Stage {
         }
 
         return curve;
+    }
+
+    public static class ConsoleLoggerBridge {
+        public void log(String text) { log.info("JS CONSOLE: " + text); }
+        public void error(String text) { log.error("JS ERROR: " + text); }
     }
 }

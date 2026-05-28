@@ -3,14 +3,60 @@ package com.backtester.engine;
 import com.backtester.report.OptimizationResult;
 import com.backtester.report.OptimizationResult.CombinedPass;
 import com.backtester.report.OptimizationResult.Pass;
+import com.backtester.database.DatabaseManager;
+import org.junit.Before;
+import org.junit.After;
 import org.junit.Test;
 
+import java.io.File;
+import java.lang.reflect.Field;
 import java.util.ArrayList;
 import java.util.List;
 
 import static org.junit.Assert.*;
 
 public class WorkflowDiversityTest {
+
+    private File tempDbFile;
+
+    @Before
+    public void setUp() throws Exception {
+        // Reset the singleton instance using reflection so we start with a clean DatabaseManager
+        try {
+            Field instanceField = DatabaseManager.class.getDeclaredField("instance");
+            instanceField.setAccessible(true);
+            instanceField.set(null, null);
+        } catch (Exception e) {
+            // Ignore
+        }
+
+        tempDbFile = File.createTempFile("workflow_diversity_test_", ".db");
+        tempDbFile.deleteOnExit();
+
+        DatabaseManager db = DatabaseManager.getInstance();
+        Field dbUrlField = DatabaseManager.class.getDeclaredField("dbUrl");
+        dbUrlField.setAccessible(true);
+        dbUrlField.set(db, "jdbc:sqlite:" + tempDbFile.getAbsolutePath());
+
+        java.lang.reflect.Method initMethod = DatabaseManager.class.getDeclaredMethod("initializeDatabase");
+        initMethod.setAccessible(true);
+        initMethod.invoke(db);
+    }
+
+    @After
+    public void tearDown() {
+        if (tempDbFile != null && tempDbFile.exists()) {
+            tempDbFile.delete();
+        }
+        // Reset the singleton instance so it doesn't leak the temporary dbUrl to other tests
+        try {
+            Field instanceField = DatabaseManager.class.getDeclaredField("instance");
+            instanceField.setAccessible(true);
+            instanceField.set(null, null);
+        } catch (Exception e) {
+            // Ignore
+        }
+    }
 
     @Test
     public void testArePassesSimilar_SameParamsAndTrades() {

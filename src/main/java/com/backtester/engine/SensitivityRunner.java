@@ -184,7 +184,11 @@ public class SensitivityRunner {
         }
         double stdDev = Math.sqrt(varianceSum / variants.size());
 
-        // --- Improved CV calculation ---
+        // --- CV calculation ---
+        // Use the base profit of the original strategy for this period as the denominator.
+        // Floor at $1 to avoid division by zero and to always compute a real CV
+        // (the old code assigned arbitrary categorical values when baseProfit ≤ $100,
+        //  which especially penalized forward periods with naturally smaller profits).
         double baseProfit = isForward
                 ? (target.getOriginalPass().getForwardPass() != null
                         ? target.getOriginalPass().getFwProfit() : 0.0)
@@ -194,16 +198,9 @@ public class SensitivityRunner {
         double cv;
         if (stdDev < 1e-9) {
             cv = 0.0;
-        } else if (absBase > 100.0) {
-            cv = (stdDev / absBase) * 100.0;
         } else {
-            if (stdDev < 100.0) {
-                cv = 5.0;
-            } else if (stdDev < 1000.0) {
-                cv = 50.0;
-            } else {
-                cv = 150.0;
-            }
+            double denominator = Math.max(absBase, 1.0); // Floor at $1 for numerical stability
+            cv = (stdDev / denominator) * 100.0;
         }
         // Cap at 200%. Above 100% already means "variation > base profit" =
         // extremely fragile.  Whether it's 300% or 800% changes nothing

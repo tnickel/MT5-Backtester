@@ -1,6 +1,8 @@
 package com.backtester.ui.javafx;
 
 import com.backtester.config.EaParameter;
+import com.backtester.config.AppConfig;
+import javafx.scene.web.WebView;
 import com.backtester.config.EaParameterManager;
 import com.backtester.engine.BacktestConfig;
 import com.backtester.engine.OptimizationConfig;
@@ -88,10 +90,120 @@ public class WorkflowConfigDialogs {
         HBox expBox = new HBox(5, expertField, browseBtn);
         grid.add(expBox, 1, 0, 2, 1);
 
-        grid.add(new Label("Symbol:"), 0, 1);
-        ComboBox<String> symbolCombo = new ComboBox<>(FXCollections.observableArrayList(BacktestConfig.SYMBOLS));
-        symbolCombo.setValue(engine.getSymbol());
-        grid.add(symbolCombo, 1, 1);
+        grid.add(new Label("Symbol(s):"), 0, 1);
+        TextField symbolField = new TextField(engine.getSymbol());
+        symbolField.setPrefWidth(220);
+        symbolField.setTooltip(new Tooltip("Geben Sie ein oder mehrere Währungspaare kommagetrennt ein (z.B. EURUSD,GBPUSD)"));
+        Button selectSymbolsBtn = new Button("Wählen...");
+        HBox symbolBox = new HBox(5, symbolField, selectSymbolsBtn);
+        grid.add(symbolBox, 1, 1, 2, 1);
+
+        selectSymbolsBtn.setOnAction(e -> {
+            Stage selectionStage = new Stage();
+            selectionStage.setTitle("Währungspaare auswählen");
+            selectionStage.initModality(Modality.APPLICATION_MODAL);
+            selectionStage.initOwner(stage);
+            
+            VBox selLayout = new VBox(10);
+            selLayout.setStyle("-fx-background-color: #0b0d13; -fx-padding: 15;");
+            selLayout.setPrefWidth(450);
+            
+            Label selTitle = new Label("WÄHRUNGSPAARE AUSWÄHLEN");
+            selTitle.setFont(Font.font("Segoe UI", FontWeight.BOLD, 14));
+            selTitle.setTextFill(Color.web("#00e5ff"));
+            
+            GridPane checkboxesGrid = new GridPane();
+            checkboxesGrid.setHgap(15);
+            checkboxesGrid.setVgap(8);
+            
+            List<CheckBox> cbs = new ArrayList<>();
+            String currentText = symbolField.getText().trim().toUpperCase();
+            List<String> currentSyms = Arrays.asList(currentText.split(",\\s*"));
+            
+            int rowIdx = 0;
+            int colIdx = 0;
+            for (String sym : com.backtester.engine.BacktestConfig.SYMBOLS) {
+                CheckBox cb = new CheckBox(sym);
+                cb.setTextFill(Color.web("#e6e9f0"));
+                cb.setSelected(currentSyms.contains(sym));
+                checkboxesGrid.add(cb, colIdx, rowIdx);
+                cbs.add(cb);
+                
+                colIdx++;
+                if (colIdx > 2) {
+                    colIdx = 0;
+                    rowIdx++;
+                }
+            }
+            
+            HBox addCustomBox = new HBox(5);
+            TextField customSymInput = new TextField();
+            customSymInput.setPromptText("Zusätzliches Symbol (z.B. BTCUSD)");
+            Button addCustomBtn = new Button("Hinzufügen");
+            addCustomBox.getChildren().addAll(customSymInput, addCustomBtn);
+            
+            final int[] nextRow = { rowIdx + 1 };
+            final int[] nextCol = { 0 };
+            
+            addCustomBtn.setOnAction(evt -> {
+                String val = customSymInput.getText().trim().toUpperCase();
+                if (!val.isEmpty()) {
+                    boolean alreadyExists = cbs.stream().anyMatch(cb -> cb.getText().equals(val));
+                    if (!alreadyExists) {
+                        CheckBox cb = new CheckBox(val);
+                        cb.setTextFill(Color.web("#e6e9f0"));
+                        cb.setSelected(true);
+                        checkboxesGrid.add(cb, nextCol[0], nextRow[0]);
+                        cbs.add(cb);
+                        
+                        nextCol[0]++;
+                        if (nextCol[0] > 2) {
+                            nextCol[0] = 0;
+                            nextRow[0]++;
+                        }
+                    }
+                    customSymInput.clear();
+                }
+            });
+            
+            ScrollPane scroll = new ScrollPane(checkboxesGrid);
+            scroll.setFitToWidth(true);
+            scroll.setPrefHeight(250);
+            scroll.setStyle("-fx-background: #11141d; -fx-background-color: transparent; -fx-border-color: #3e4555;");
+            
+            HBox btnBox = new HBox(10);
+            btnBox.setAlignment(Pos.CENTER_RIGHT);
+            Button okBtn = new Button("OK");
+            okBtn.getStyleClass().add("button-start");
+            okBtn.setOnAction(evt -> {
+                List<String> selected = new ArrayList<>();
+                for (CheckBox cb : cbs) {
+                    if (cb.isSelected()) {
+                        selected.add(cb.getText());
+                    }
+                }
+                symbolField.setText(String.join(",", selected));
+                selectionStage.close();
+            });
+            
+            Button clearBtn = new Button("Alle abwählen");
+            clearBtn.setOnAction(evt -> {
+                for (CheckBox cb : cbs) {
+                    cb.setSelected(false);
+                }
+            });
+            
+            btnBox.getChildren().addAll(clearBtn, okBtn);
+            
+            selLayout.getChildren().addAll(selTitle, scroll, addCustomBox, btnBox);
+            
+            Scene selScene = new Scene(selLayout);
+            if (stage.getScene() != null && !stage.getScene().getStylesheets().isEmpty()) {
+                selScene.getStylesheets().addAll(stage.getScene().getStylesheets());
+            }
+            selectionStage.setScene(selScene);
+            selectionStage.showAndWait();
+        });
 
         grid.add(new Label("Periode:"), 2, 1);
         ComboBox<String> periodCombo = new ComboBox<>(FXCollections.observableArrayList("M1", "M5", "M15", "M30", "H1", "H4", "D1"));
@@ -216,7 +328,7 @@ public class WorkflowConfigDialogs {
                     try {
                         boolean loaded = engine.loadStrategyConfig(expert);
                         if (loaded) {
-                            symbolCombo.setValue(engine.getSymbol());
+                            symbolField.setText(engine.getSymbol());
                             periodCombo.setValue(engine.getPeriod());
                             fromDatePicker.setValue(engine.getFromDate());
                             toDatePicker.setValue(engine.getToDate());
@@ -248,7 +360,15 @@ public class WorkflowConfigDialogs {
                 }
             }
 
-            String symbol = symbolCombo.getValue() != null ? symbolCombo.getValue() : "EURUSD";
+            String rawSymbol = symbolField.getText().trim();
+            String symbol = "EURUSD";
+            if (!rawSymbol.isEmpty()) {
+                if (rawSymbol.contains(",")) {
+                    symbol = rawSymbol.split(",\\s*")[0];
+                } else {
+                    symbol = rawSymbol;
+                }
+            }
             String period = periodCombo.getValue() != null ? periodCombo.getValue() : "H1";
 
             // Try DB first
@@ -330,7 +450,11 @@ public class WorkflowConfigDialogs {
             }
         });
         expertField.setOnAction(e -> updateParamsTable.run());
-        symbolCombo.valueProperty().addListener((obs, oldVal, newVal) -> updateParamsTable.run());
+        symbolField.focusedProperty().addListener((obs, oldVal, newVal) -> {
+            if (!newVal) {
+                updateParamsTable.run();
+            }
+        });
         periodCombo.valueProperty().addListener((obs, oldVal, newVal) -> updateParamsTable.run());
 
         if (engine.getEaParameters() != null && !engine.getEaParameters().isEmpty()) {
@@ -445,7 +569,7 @@ public class WorkflowConfigDialogs {
 
             if (params != null && !params.isEmpty()) {
                 expertField.setText(robExpert);
-                symbolCombo.setValue(robSymbol);
+                symbolField.setText(robSymbol);
                 periodCombo.setValue(robPeriod);
                 
                 List<EaParameter> tableCopy = new ArrayList<>();
@@ -492,7 +616,7 @@ public class WorkflowConfigDialogs {
         save.getStyleClass().add("button-start");
         save.setOnAction(e -> {
             engine.changeExpert(expertField.getText().trim());
-            engine.setSymbol(symbolCombo.getValue());
+            engine.setSymbol(symbolField.getText().trim());
             engine.setPeriod(periodCombo.getValue());
             engine.setFromDate(fromDatePicker.getValue());
             engine.setToDate(toDatePicker.getValue());
@@ -676,18 +800,103 @@ public class WorkflowConfigDialogs {
             table.setPrefHeight(150);
             
             TableColumn<CombinedPass, Integer> passCol = new TableColumn<>("Pass");
-            passCol.setCellValueFactory(new PropertyValueFactory<>("passNumber"));
+            passCol.setCellValueFactory(c -> new javafx.beans.property.SimpleObjectProperty<>(c.getValue().getPassNumber()));
+            passCol.setPrefWidth(65);
+            passCol.setStyle("-fx-alignment: CENTER;");
             
             TableColumn<CombinedPass, Double> scoreCol = new TableColumn<>("Score");
-            scoreCol.setCellValueFactory(new PropertyValueFactory<>("score"));
+            scoreCol.setCellValueFactory(c -> new javafx.beans.property.SimpleObjectProperty<>(c.getValue().getScore()));
+            scoreCol.setPrefWidth(75);
+            scoreCol.setStyle("-fx-alignment: CENTER;");
+            scoreCol.setCellFactory(col -> new TableCell<CombinedPass, Double>() {
+                @Override
+                protected void updateItem(Double item, boolean empty) {
+                    super.updateItem(item, empty);
+                    if (empty || item == null) {
+                        setText(null);
+                        setStyle("-fx-alignment: CENTER;");
+                    } else {
+                        setText(String.format(Locale.US, "%.1f", item));
+                        setStyle("-fx-alignment: CENTER;");
+                    }
+                }
+            });
             
+            TableColumn<CombinedPass, String> robScoreCol = new TableColumn<>("Rob. Scorecard");
+            robScoreCol.setCellValueFactory(c -> {
+                String fromDateStr = engine.getFromDate() != null ? engine.getFromDate().toString() : "Unbekannt";
+                String toDateStr = engine.getToDate() != null ? engine.getToDate().toString() : "Unbekannt";
+                double score = com.backtester.report.RobustnessScorecardGenerator.calculateOverallScore(c.getValue(), fromDateStr, toDateStr);
+                return new javafx.beans.property.SimpleStringProperty(String.format(Locale.US, "%.0f", score));
+            });
+            robScoreCol.setStyle("-fx-alignment: CENTER;");
+            robScoreCol.setCellFactory(col -> new TableCell<CombinedPass, String>() {
+                @Override
+                protected void updateItem(String item, boolean empty) {
+                    super.updateItem(item, empty);
+                    if (empty || item == null) {
+                        setText(null);
+                        setStyle("-fx-alignment: CENTER;");
+                    } else {
+                        setText(item);
+                        try {
+                            double score = Double.parseDouble(item);
+                            String color;
+                            if (score >= 70) {
+                                color = "#00e676"; // Green
+                            } else if (score >= 55) {
+                                color = "#ffd740"; // Yellow
+                            } else {
+                                color = "#ff5252"; // Red
+                            }
+                            setStyle("-fx-alignment: CENTER; -fx-text-fill: " + color + "; -fx-font-weight: bold;");
+                        } catch (Exception e) {
+                            setStyle("-fx-alignment: CENTER;");
+                        }
+                    }
+                }
+            });
+            robScoreCol.setPrefWidth(115);
+
             TableColumn<CombinedPass, Double> btProf = new TableColumn<>("BT Profit");
-            btProf.setCellValueFactory(new PropertyValueFactory<>("btProfit"));
+            btProf.setCellValueFactory(c -> new javafx.beans.property.SimpleObjectProperty<>(c.getValue().getBtProfit()));
+            btProf.setPrefWidth(95);
+            btProf.setCellFactory(col -> new TableCell<CombinedPass, Double>() {
+                @Override
+                protected void updateItem(Double item, boolean empty) {
+                    super.updateItem(item, empty);
+                    if (empty || item == null || Double.isNaN(item)) {
+                        setText("-");
+                        setStyle("-fx-alignment: CENTER;");
+                    } else {
+                        setText(String.format(Locale.US, "%.2f", item));
+                        if (item >= 0) {
+                            setStyle("-fx-alignment: CENTER; -fx-text-fill: #00e676; -fx-font-weight: bold;");
+                        } else {
+                            setStyle("-fx-alignment: CENTER; -fx-text-fill: #ff5252; -fx-font-weight: bold;");
+                        }
+                    }
+                }
+            });
 
             TableColumn<CombinedPass, Integer> btTr = new TableColumn<>("BT Trades");
-            btTr.setCellValueFactory(new PropertyValueFactory<>("btTrades"));
+            btTr.setCellValueFactory(c -> new javafx.beans.property.SimpleObjectProperty<>(c.getValue().getBtTrades()));
+            btTr.setPrefWidth(85);
+            btTr.setCellFactory(col -> new TableCell<CombinedPass, Integer>() {
+                @Override
+                protected void updateItem(Integer item, boolean empty) {
+                    super.updateItem(item, empty);
+                    if (empty || item == null) {
+                        setText("-");
+                        setStyle("-fx-alignment: CENTER;");
+                    } else {
+                        setText(String.valueOf(item));
+                        setStyle("-fx-alignment: CENTER;");
+                    }
+                }
+            });
 
-            table.getColumns().addAll(passCol, scoreCol, btProf, btTr);
+            table.getColumns().addAll(passCol, scoreCol, robScoreCol, btProf, btTr);
             table.getItems().setAll(engine.getSelectedDiversePasses());
             resultsBox.getChildren().add(table);
             layout.getChildren().add(resultsBox);
@@ -715,12 +924,272 @@ public class WorkflowConfigDialogs {
             stage.close();
         });
 
-        bottomRow.getChildren().addAll(cancel, save);
+        Button mainInfoBtn = DocHelper.createThickCircularInfoButton("Erklärung aller Indizes und Kennzahlen", () -> {
+            DocHelper.showAllIndicesDocDialog(cancel.getScene() != null ? cancel.getScene().getWindow() : null);
+        });
+        Button diversityInfoBtn = DocHelper.createThickCircularCyanInfoButton("Erklärung des Diversitäts-Filters & Strategie-Auswahl", () -> {
+            DocHelper.showDiversityDocDialog(cancel.getScene() != null ? cancel.getScene().getWindow() : null);
+        });
+        Button weightsBtn = new Button("Score-Gewichtung...");
+        weightsBtn.getStyleClass().add("button");
+        weightsBtn.setOnAction(e -> {
+            showScoreWeightsDialog(stage);
+        });
+        Region spacer = new Region();
+        HBox.setHgrow(spacer, Priority.ALWAYS);
+
+        bottomRow.getChildren().addAll(mainInfoBtn, diversityInfoBtn, weightsBtn, spacer, cancel, save);
         layout.getChildren().add(bottomRow);
 
         stage.setScene(new Scene(layout));
         applyTheme(stage, owner);
         stage.showAndWait();
+    }
+
+    public static void showScoreWeightsDialog(Window owner) {
+        Stage dialog = new Stage();
+        dialog.setTitle("Score-Gewichtung konfigurieren");
+        dialog.initModality(Modality.APPLICATION_MODAL);
+        if (owner != null) {
+            dialog.initOwner(owner);
+        }
+        dialog.setResizable(false);
+
+        VBox root = new VBox(18);
+        root.setPadding(new Insets(24));
+        root.setStyle("-fx-background-color: #1a1d27;");
+
+        Label title = new Label("⚙️  Unified Score-Gewichtung");
+        title.setFont(Font.font("Segoe UI", FontWeight.BOLD, 16));
+        title.setTextFill(Color.web("#ffd740"));
+
+        Label hint = new Label("Jeder Parameter wird relativ zum anderen gewichtet.\n" +
+                "Die Summe muss nicht genau 100 ergeben — sie wird automatisch normalisiert.\n" +
+                "Unified Score = Performance + Robustheit in einem Score.");
+        hint.setWrapText(true);
+        hint.setStyle("-fx-text-fill: #7e889a; -fx-font-size: 11px;");
+
+        GridPane grid = new GridPane();
+        grid.setHgap(14);
+        grid.setVgap(10);
+
+        String[] names = {
+            "BT Profitabilität", "FW Profitabilität", "Konsistenz FW/BT", "Risiko-Verhältnis",
+            "Equity-Konsistenz", "Stichprobengröße", "Symmetrie L/S", "Tail-Risk",
+            "FW Trade Count", "Erholungsfaktor"
+        };
+        String[] dbKeys = {
+            "opt.weight.btProfit", "opt.weight.fwProfit", "opt.weight.consistency", "opt.weight.risk",
+            "opt.weight.equityConsist", "opt.weight.sampleSize", "opt.weight.symmetry", "opt.weight.tailRisk",
+            "opt.weight.fwTrades", "opt.weight.recovery"
+        };
+        String[] defaults = {
+            "10", "15", "15", "15", "10", "10", "5", "10", "5", "5"
+        };
+        String[] tooltips = {
+            "Backtest ROI + Profit Factor — Wie profitabel ist die Strategie im In-Sample?",
+            "Forward ROI + Profit Factor — Wie profitabel ist die Strategie Out-of-Sample?",
+            "Verhältnis FW/BT: 1.0 = perfekte Reproduzierbarkeit der Ergebnisse",
+            "Return/Drawdown + Calmar Ratio — Gewinn im Verhältnis zum Risiko",
+            "R² Stability + SQN — Wie gleichmäßig steigt die Equity-Kurve?",
+            "Anzahl Trades + Testjahre — Statistische Signifikanz der Ergebnisse",
+            "Long/Short Balance — Funktioniert die Strategie in beide Richtungen?",
+            "MaxLoss/AvgLoss + MaxLoss/Profit — Risiko seltener Extremverluste",
+            "Mehr FW-Trades = statistisch belastbarer. Zusätzlich automatische Strafe wenn FW-Trades < median/2.",
+            "Recovery Factor: Net Profit / Max Drawdown (BT und FW gemittelt)"
+        };
+
+        com.backtester.database.DatabaseManager db = com.backtester.database.DatabaseManager.getInstance();
+        int N = names.length;
+        Slider[] sliders = new Slider[N];
+        Label[] valLabels = new Label[N];
+
+        TextField tfMin = new TextField(db.getSetting("opt.weight.recovery.min", "1.0"));
+        tfMin.setPrefWidth(50);
+        tfMin.setStyle("-fx-background-color: #2a2d3a; -fx-text-fill: #fff; -fx-border-color: #444; -fx-border-width: 1; -fx-font-size: 11px;");
+
+        TextField tfMax = new TextField(db.getSetting("opt.weight.recovery.max", "5.0"));
+        tfMax.setPrefWidth(50);
+        tfMax.setStyle("-fx-background-color: #2a2d3a; -fx-text-fill: #fff; -fx-border-color: #444; -fx-border-width: 1; -fx-font-size: 11px;");
+
+        for (int i = 0; i < N; i++) {
+            Label label = new Label(names[i]);
+            label.setMinWidth(140);
+            label.setStyle("-fx-text-fill: #b4bac8; -fx-font-size: 12px;");
+            label.setTooltip(new Tooltip(tooltips[i]));
+
+            int currentVal = Integer.parseInt(db.getSetting(dbKeys[i], defaults[i]));
+            Slider sl = new Slider(0, 100, currentVal);
+            sl.setMajorTickUnit(25);
+            sl.setMinorTickCount(4);
+            sl.setShowTickMarks(true);
+            sl.setPrefWidth(260);
+            sl.setStyle("-fx-control-inner-background: #2a2d3a;");
+            sliders[i] = sl;
+
+            Label vl = new Label(currentVal + "%");
+            vl.setMinWidth(36);
+            vl.setFont(Font.font("Segoe UI", FontWeight.BOLD, 13));
+            vl.setTextFill(Color.web("#00e5ff"));
+            valLabels[i] = vl;
+
+            final int idx = i;
+            sl.valueProperty().addListener((o, a, b) -> {
+                int v = (int) Math.round(b.doubleValue());
+                sl.setValue(v);
+                valLabels[idx].setText(v + "%");
+            });
+
+            grid.add(label, 0, i);
+            if (i == 9) {
+                HBox scaleBox = new HBox(6);
+                scaleBox.setAlignment(Pos.CENTER_LEFT);
+                scaleBox.setPadding(new Insets(4, 0, 0, 0));
+
+                Label scaleLabel = new Label("Skalierung: Min");
+                scaleLabel.setStyle("-fx-text-fill: #7e889a; -fx-font-size: 11px;");
+
+                Label scaleToLabel = new Label("bis Max");
+                scaleToLabel.setStyle("-fx-text-fill: #7e889a; -fx-font-size: 11px;");
+
+                Button infoBtn = new Button("ℹ");
+                infoBtn.setStyle("-fx-background-color: transparent; -fx-text-fill: #ffd740; -fx-cursor: hand; -fx-font-size: 12px; -fx-padding: 0 4 0 4;");
+                Tooltip infoTooltip = new Tooltip(
+                    "Grenzwerte für die lineare Skalierung des Erholungsfaktors auf 0-100 Punkte.\n" +
+                    "Werte unter Min geben 0 Punkte, über Max geben 100 Punkte."
+                );
+                infoTooltip.setShowDelay(javafx.util.Duration.millis(100));
+                Tooltip.install(infoBtn, infoTooltip);
+                infoBtn.setOnAction(evt -> {
+                    Alert alert = new Alert(Alert.AlertType.INFORMATION);
+                    alert.setTitle("Erholungsfaktor Skalierung");
+                    alert.setHeaderText("Wie funktioniert die Skalierung des Erholungsfaktors?");
+                    alert.setContentText(
+                        "Der Erholungsfaktor (Net Profit / Max Drawdown) wird anhand dieser Grenzwerte linear auf 0-100 Punkte skaliert.\n\n" +
+                        "• Ein Wert kleiner oder gleich Min erhält 0 Punkte.\n" +
+                        "• Ein Wert größer oder gleich Max erhält 100 Punkte.\n" +
+                        "• Dazwischen wird linear interpoliert.\n\n" +
+                        "Wenn Sie z.B. Min=1.0 und Max=2.0 einstellen, hat eine Strategie mit Recovery Factor = 1.5 genau 50 Punkte."
+                    );
+                    alert.getDialogPane().setStyle("-fx-background-color: #1a1d27;");
+                    alert.getDialogPane().lookup(".content.label").setStyle("-fx-text-fill: #b4bac8;");
+                    alert.getDialogPane().lookup(".header-panel").setStyle("-fx-background-color: #1a1d27;");
+                    if (alert.getDialogPane().lookup(".header-panel").lookup(".label") != null) {
+                        alert.getDialogPane().lookup(".header-panel").lookup(".label").setStyle("-fx-text-fill: #ffd740;");
+                    }
+                    alert.initOwner(dialog);
+                    alert.showAndWait();
+                });
+
+                scaleBox.getChildren().addAll(scaleLabel, tfMin, scaleToLabel, tfMax, infoBtn);
+
+                VBox sliderContainer = new VBox(4);
+                sliderContainer.getChildren().addAll(sl, scaleBox);
+                grid.add(sliderContainer, 1, i);
+            } else {
+                grid.add(sl, 1, i);
+            }
+            grid.add(vl, 2, i);
+        }
+
+        Label sumLabel = new Label();
+        sumLabel.setFont(Font.font("Segoe UI", FontWeight.BOLD, 13));
+        Runnable refreshSum = () -> {
+            int s = 0;
+            for (Slider sl : sliders) s += (int) sl.getValue();
+            sumLabel.setText("Σ = " + s + (s == 100 ? "  ✓ optimal" : "  (wird normalisiert)"));
+            sumLabel.setTextFill(s == 100 ? Color.web("#00e676") : Color.web("#ffd740"));
+        };
+        for (Slider sl : sliders) {
+            sl.valueProperty().addListener((o, a, b) -> refreshSum.run());
+        }
+        refreshSum.run();
+
+        Label autoPenaltyHint = new Label(
+            "Automatische Schutzschwelle: FW-Trades unter median/2 erhalten zusätzlich " +
+            "eine multiplikative Strafe (max. −50 %).\n" +
+            "Hinweis: Symmetrie + Tail-Risk werden geschätzt, da MT5 keine L/S-Aufschlüsselung liefert.");
+        autoPenaltyHint.setWrapText(true);
+        autoPenaltyHint.setStyle("-fx-text-fill: #7e889a; -fx-font-size: 10px; -fx-font-style: italic;");
+
+        Button resetBtn = new Button("↺ Zurücksetzen");
+        resetBtn.setStyle("-fx-background-color: #2a2d3a; -fx-text-fill: #b4bac8; -fx-border-color: #444; -fx-border-width: 1;");
+        resetBtn.setOnAction(e -> {
+            for (int i = 0; i < N; i++) {
+                sliders[i].setValue(Integer.parseInt(defaults[i]));
+            }
+            tfMin.setText("1.0");
+            tfMax.setText("5.0");
+        });
+
+        Button applyBtn = new Button("✔ Übernehmen & Schließen");
+        applyBtn.setStyle("-fx-background-color: #00e5ff; -fx-text-fill: #0d0f17; -fx-font-weight: bold;");
+        applyBtn.setOnAction(e -> {
+            double rMin = 1.0;
+            double rMax = 5.0;
+            try {
+                rMin = Double.parseDouble(tfMin.getText().trim().replace(',', '.'));
+            } catch (Exception ex) {}
+            try {
+                rMax = Double.parseDouble(tfMax.getText().trim().replace(',', '.'));
+            } catch (Exception ex) {}
+            db.saveSetting("opt.weight.recovery.min", String.valueOf(rMin));
+            db.saveSetting("opt.weight.recovery.max", String.valueOf(rMax));
+
+            for (int i = 0; i < N; i++) {
+                db.saveSetting(dbKeys[i], String.valueOf((int) sliders[i].getValue()));
+            }
+            dialog.close();
+        });
+
+        Button cancelBtn = new Button("Abbrechen");
+        cancelBtn.setStyle("-fx-background-color: #2a2d3a; -fx-text-fill: #b4bac8; -fx-border-color: #444; -fx-border-width: 1;");
+        cancelBtn.setOnAction(e -> dialog.close());
+
+        Button btnPresetLow = new Button("Low / Zahm");
+        btnPresetLow.setStyle("-fx-background-color: #2a2d3a; -fx-text-fill: #a7f3d0; -fx-border-color: #10b981; -fx-border-width: 1; -fx-cursor: hand;");
+        btnPresetLow.setOnAction(e -> {
+            int[] lowWeights = {20, 20, 10, 10, 5, 5, 3, 5, 10, 5};
+            for (int i = 0; i < N; i++) sliders[i].setValue(lowWeights[i]);
+        });
+
+        Button btnPresetMed = new Button("Med / Ausgewogen");
+        btnPresetMed.setStyle("-fx-background-color: #2a2d3a; -fx-text-fill: #fde047; -fx-border-color: #eab308; -fx-border-width: 1; -fx-cursor: hand;");
+        btnPresetMed.setOnAction(e -> {
+            int[] medWeights = {10, 15, 15, 15, 10, 10, 5, 10, 5, 5};
+            for (int i = 0; i < N; i++) sliders[i].setValue(medWeights[i]);
+        });
+
+        Button btnPresetHigh = new Button("High / Streng");
+        btnPresetHigh.setStyle("-fx-background-color: #2a2d3a; -fx-text-fill: #fca5a5; -fx-border-color: #ef4444; -fx-border-width: 1; -fx-cursor: hand;");
+        btnPresetHigh.setOnAction(e -> {
+            int[] highWeights = {5, 10, 15, 20, 15, 15, 5, 15, 3, 5};
+            for (int i = 0; i < N; i++) sliders[i].setValue(highWeights[i]);
+        });
+
+        HBox presetRow = new HBox(8, new Label("Voreinstellungen:"), btnPresetLow, btnPresetMed, btnPresetHigh);
+        presetRow.setAlignment(Pos.CENTER_LEFT);
+        presetRow.getChildren().get(0).setStyle("-fx-text-fill: #b4bac8;");
+
+        HBox btnRow = new HBox(10, resetBtn, new Region(), applyBtn, cancelBtn);
+        HBox.setHgrow(btnRow.getChildren().get(1), Priority.ALWAYS);
+        btnRow.setAlignment(Pos.CENTER_LEFT);
+
+        Separator sep = new Separator();
+        sep.setStyle("-fx-background-color: #2a2d3a;");
+        Separator sep2 = new Separator();
+        sep2.setStyle("-fx-background-color: #2a2d3a;");
+
+        root.getChildren().addAll(title, hint, grid, sep, sumLabel, autoPenaltyHint, presetRow, sep2, btnRow);
+
+        Scene scene = new Scene(root, 540, 710);
+        try {
+            java.net.URL css = DocHelper.class.getResource("/css/antigravity.css");
+            if (css != null) scene.getStylesheets().add(css.toExternalForm());
+        } catch (Exception ignored) {}
+        dialog.setScene(scene);
+        applyTheme(dialog, owner);
+        dialog.showAndWait();
     }
 
     // ─── Step 4: Sensitivity Sweep ─────────────────────────────────────────────
@@ -818,13 +1287,39 @@ public class WorkflowConfigDialogs {
             passCol.setCellValueFactory(c -> new javafx.beans.property.SimpleIntegerProperty(c.getValue().getOriginalPass().getPassNumber()).asObject());
             passCol.setPrefWidth(80);
             
-            TableColumn<SensitivityResult, String> btCvCol = new TableColumn<>("BT CV (worst)");
+            TableColumn<SensitivityResult, String> btCvCol = new TableColumn<>();
+            HBox btCvHeader = new HBox(3);
+            btCvHeader.setAlignment(Pos.CENTER_LEFT);
+            Label btCvLabel = new Label("BT CV (worst)");
+            btCvLabel.setTooltip(new Tooltip("Backtest Variationskoeffizient"));
+            Button btCvInfo = new Button("ℹ");
+            btCvInfo.setTooltip(new Tooltip("Klicken für Erklärung des BT CV (worst)"));
+            btCvInfo.setStyle("-fx-background-color: transparent; -fx-text-fill: #ffd740; -fx-padding: 0; -fx-font-weight: bold; -fx-cursor: hand;");
+            btCvInfo.setOnAction(e -> {
+                e.consume();
+                showCvExplanationDialog(btCvInfo.getScene() != null ? btCvInfo.getScene().getWindow() : null, false);
+            });
+            btCvHeader.getChildren().addAll(btCvLabel, btCvInfo);
+            btCvCol.setGraphic(btCvHeader);
             btCvCol.setCellValueFactory(c -> new javafx.beans.property.SimpleStringProperty(String.format("%.2f %%", c.getValue().getOverallCV())));
-            btCvCol.setPrefWidth(120);
+            btCvCol.setPrefWidth(130);
 
-            TableColumn<SensitivityResult, String> fwCvCol = new TableColumn<>("FW CV (worst)");
+            TableColumn<SensitivityResult, String> fwCvCol = new TableColumn<>();
+            HBox fwCvHeader = new HBox(3);
+            fwCvHeader.setAlignment(Pos.CENTER_LEFT);
+            Label fwCvLabel = new Label("FW CV (worst)");
+            fwCvLabel.setTooltip(new Tooltip("Forward Variationskoeffizient"));
+            Button fwCvInfo = new Button("ℹ");
+            fwCvInfo.setTooltip(new Tooltip("Klicken für Erklärung des FW CV (worst)"));
+            fwCvInfo.setStyle("-fx-background-color: transparent; -fx-text-fill: #ffd740; -fx-padding: 0; -fx-font-weight: bold; -fx-cursor: hand;");
+            fwCvInfo.setOnAction(e -> {
+                e.consume();
+                showCvExplanationDialog(fwCvInfo.getScene() != null ? fwCvInfo.getScene().getWindow() : null, true);
+            });
+            fwCvHeader.getChildren().addAll(fwCvLabel, fwCvInfo);
+            fwCvCol.setGraphic(fwCvHeader);
             fwCvCol.setCellValueFactory(c -> new javafx.beans.property.SimpleStringProperty(c.getValue().hasForwardCV() ? String.format("%.2f %%", c.getValue().getOverallCVFw()) : "-"));
-            fwCvCol.setPrefWidth(120);
+            fwCvCol.setPrefWidth(130);
 
             TableColumn<SensitivityResult, String> statusCol = new TableColumn<>("Status");
             statusCol.setCellValueFactory(new PropertyValueFactory<>("status"));
@@ -861,7 +1356,7 @@ public class WorkflowConfigDialogs {
         VBox layout = new VBox(15);
         layout.setStyle("-fx-background-color: #0b0d13; -fx-padding: 20;");
         layout.setPrefWidth(650);
-        layout.setPrefHeight(600);
+        layout.setPrefHeight(640);
 
         Label title = new Label("KI STABILITÄTS-ANALYSE EINSTELLUNGEN");
         title.setFont(Font.font("Segoe UI", FontWeight.BOLD, 18));
@@ -892,6 +1387,16 @@ public class WorkflowConfigDialogs {
         modelCombo.setValue(engine.getOpenRouterModel());
         grid.add(modelCombo, 1, 1);
 
+        grid.add(new Label("Gewichtung Performance (0.0 - 1.0):"), 0, 2);
+        TextField perfWeightField = new TextField(String.valueOf(engine.getPerformanceWeight()));
+        perfWeightField.setStyle("-fx-control-inner-background: #1a1d27; -fx-text-fill: white; -fx-font-size: 14px;");
+        grid.add(perfWeightField, 1, 2);
+
+        grid.add(new Label("Gewichtung Stabilität (0.0 - 1.0):"), 0, 3);
+        TextField stabWeightField = new TextField(String.valueOf(engine.getStabilityWeight()));
+        stabWeightField.setStyle("-fx-control-inner-background: #1a1d27; -fx-text-fill: white; -fx-font-size: 14px;");
+        grid.add(stabWeightField, 1, 3);
+
         layout.getChildren().add(grid);
 
         VBox promptBox = new VBox(5);
@@ -915,6 +1420,12 @@ public class WorkflowConfigDialogs {
             engine.setOpenRouterApiKey(keyField.getText().trim());
             engine.setOpenRouterModel(modelCombo.getValue());
             engine.setOpenRouterPrompt(promptArea.getText().trim());
+            try {
+                engine.setPerformanceWeight(Double.parseDouble(perfWeightField.getText().trim()));
+            } catch (Exception ignored) {}
+            try {
+                engine.setStabilityWeight(Double.parseDouble(stabWeightField.getText().trim()));
+            } catch (Exception ignored) {}
             engine.savePreferences();
             engine.saveState();
             stage.close();
@@ -949,68 +1460,248 @@ public class WorkflowConfigDialogs {
         VBox.setVgrow(table, Priority.ALWAYS);
 
         TableColumn<CombinedPass, Integer> passCol = new TableColumn<>("Pass");
-        passCol.setCellValueFactory(new PropertyValueFactory<>("passNumber"));
-        passCol.setPrefWidth(60);
+        passCol.setCellValueFactory(c -> new javafx.beans.property.SimpleObjectProperty<>(c.getValue().getPassNumber()));
+        passCol.setPrefWidth(65);
+        passCol.setStyle("-fx-alignment: CENTER;");
 
-        TableColumn<CombinedPass, Double> scoreCol = new TableColumn<>("Komb. Score");
-        scoreCol.setCellValueFactory(new PropertyValueFactory<>("score"));
-        scoreCol.setPrefWidth(90);
+        TableColumn<CombinedPass, Double> scoreCol = new TableColumn<>("Unified-Score");
+        scoreCol.setCellValueFactory(c -> new javafx.beans.property.SimpleObjectProperty<>(c.getValue().getScore()));
+        scoreCol.setPrefWidth(100);
+        scoreCol.setStyle("-fx-alignment: CENTER;");
+        scoreCol.setCellFactory(col -> new TableCell<CombinedPass, Double>() {
+            @Override
+            protected void updateItem(Double item, boolean empty) {
+                super.updateItem(item, empty);
+                if (empty || item == null) {
+                    setText(null);
+                    setStyle("-fx-alignment: CENTER;");
+                } else {
+                    setText(String.format(Locale.US, "%.1f", item));
+                    setStyle("-fx-alignment: CENTER;");
+                }
+            }
+        });
+
+        TableColumn<CombinedPass, String> robScoreCol = new TableColumn<>("Rob. Scorecard");
+        robScoreCol.setCellValueFactory(c -> {
+            String fromDateStr = engine.getFromDate() != null ? engine.getFromDate().toString() : "Unbekannt";
+            String toDateStr = engine.getToDate() != null ? engine.getToDate().toString() : "Unbekannt";
+            double score = com.backtester.report.RobustnessScorecardGenerator.calculateOverallScore(c.getValue(), fromDateStr, toDateStr);
+            return new javafx.beans.property.SimpleStringProperty(String.format(Locale.US, "%.0f", score));
+        });
+        robScoreCol.setStyle("-fx-alignment: CENTER;");
+        robScoreCol.setCellFactory(col -> new TableCell<CombinedPass, String>() {
+            @Override
+            protected void updateItem(String item, boolean empty) {
+                super.updateItem(item, empty);
+                if (empty || item == null) {
+                    setText(null);
+                    setStyle("-fx-alignment: CENTER;");
+                } else {
+                    setText(item);
+                    try {
+                        double score = Double.parseDouble(item);
+                        String color;
+                        if (score >= 70) {
+                            color = "#00e676"; // Green
+                        } else if (score >= 55) {
+                            color = "#ffd740"; // Yellow
+                        } else {
+                            color = "#ff5252"; // Red
+                        }
+                        setStyle("-fx-alignment: CENTER; -fx-text-fill: " + color + "; -fx-font-weight: bold;");
+                    } catch (Exception e) {
+                        setStyle("-fx-alignment: CENTER;");
+                    }
+                }
+            }
+        });
+        robScoreCol.setPrefWidth(115);
+
+        TableColumn<CombinedPass, String> kiScoreCol = new TableColumn<>("KI-Stabilität");
+        kiScoreCol.setCellValueFactory(c -> {
+            int score = engine.getKiScoreForPass(c.getValue().getPassNumber());
+            return new javafx.beans.property.SimpleStringProperty(score >= 0 ? String.valueOf(score) : "—");
+        });
+        kiScoreCol.setStyle("-fx-alignment: CENTER;");
+        kiScoreCol.setPrefWidth(90);
+
+        TableColumn<CombinedPass, String> weightedScoreCol = new TableColumn<>("Gesamtwert");
+        weightedScoreCol.setCellValueFactory(c -> {
+            CombinedPass cp = c.getValue();
+            double perfScore = cp.getScore();
+            int kiScore = engine.getKiScoreForPass(cp.getPassNumber());
+            if (kiScore < 0) {
+                return new javafx.beans.property.SimpleStringProperty(String.format(Locale.US, "%.1f", perfScore));
+            }
+            double wScore = engine.getPerformanceWeight() * perfScore + engine.getStabilityWeight() * kiScore;
+            return new javafx.beans.property.SimpleStringProperty(String.format(Locale.US, "%.1f", wScore));
+        });
+        weightedScoreCol.setStyle("-fx-alignment: CENTER; -fx-font-weight: bold; -fx-text-fill: #00e5ff;");
+        weightedScoreCol.setPrefWidth(95);
 
         TableColumn<CombinedPass, Double> btProf = new TableColumn<>("BT Profit");
-        btProf.setCellValueFactory(new PropertyValueFactory<>("btProfit"));
+        btProf.setCellValueFactory(c -> new javafx.beans.property.SimpleObjectProperty<>(c.getValue().getBtProfit()));
+        btProf.setPrefWidth(95);
+        btProf.setCellFactory(col -> new TableCell<CombinedPass, Double>() {
+            @Override
+            protected void updateItem(Double item, boolean empty) {
+                super.updateItem(item, empty);
+                if (empty || item == null || Double.isNaN(item)) {
+                    setText("-");
+                    setStyle("-fx-alignment: CENTER;");
+                } else {
+                    setText(String.format(Locale.US, "%.2f", item));
+                    if (item >= 0) {
+                        setStyle("-fx-alignment: CENTER; -fx-text-fill: #00e676; -fx-font-weight: bold;");
+                    } else {
+                        setStyle("-fx-alignment: CENTER; -fx-text-fill: #ff5252; -fx-font-weight: bold;");
+                    }
+                }
+            }
+        });
 
         TableColumn<CombinedPass, Integer> btTr = new TableColumn<>("BT Trades");
-        btTr.setCellValueFactory(new PropertyValueFactory<>("btTrades"));
+        btTr.setCellValueFactory(c -> new javafx.beans.property.SimpleObjectProperty<>(c.getValue().getBtTrades()));
+        btTr.setPrefWidth(80);
+        btTr.setCellFactory(col -> new TableCell<CombinedPass, Integer>() {
+            @Override
+            protected void updateItem(Integer item, boolean empty) {
+                super.updateItem(item, empty);
+                if (empty || item == null) {
+                    setText("-");
+                    setStyle("-fx-alignment: CENTER;");
+                } else {
+                    setText(String.valueOf(item));
+                    setStyle("-fx-alignment: CENTER;");
+                }
+            }
+        });
 
         TableColumn<CombinedPass, Double> btDd = new TableColumn<>("BT DD%");
-        btDd.setCellValueFactory(new PropertyValueFactory<>("btDd"));
+        btDd.setCellValueFactory(c -> new javafx.beans.property.SimpleObjectProperty<>(c.getValue().getBtDd()));
+        btDd.setPrefWidth(85);
+        btDd.setCellFactory(col -> new TableCell<CombinedPass, Double>() {
+            @Override
+            protected void updateItem(Double item, boolean empty) {
+                super.updateItem(item, empty);
+                if (empty || item == null || Double.isNaN(item)) {
+                    setText("-");
+                    setStyle("-fx-alignment: CENTER;");
+                } else {
+                    setText(String.format(Locale.US, "%.2f %%", item));
+                    if (item > 25) {
+                        setStyle("-fx-alignment: CENTER; -fx-text-fill: #ff5252;");
+                    } else if (item > 15) {
+                        setStyle("-fx-alignment: CENTER; -fx-text-fill: #ffd740;");
+                    } else {
+                        setStyle("-fx-alignment: CENTER; -fx-text-fill: #00e676;");
+                    }
+                }
+            }
+        });
 
         TableColumn<CombinedPass, Double> fwProf = new TableColumn<>("FW Profit");
-        fwProf.setCellValueFactory(new PropertyValueFactory<>("fwProfit"));
+        fwProf.setCellValueFactory(c -> new javafx.beans.property.SimpleObjectProperty<>(c.getValue().getFwProfit()));
+        fwProf.setPrefWidth(95);
+        fwProf.setCellFactory(col -> new TableCell<CombinedPass, Double>() {
+            @Override
+            protected void updateItem(Double item, boolean empty) {
+                super.updateItem(item, empty);
+                if (empty || item == null || Double.isNaN(item)) {
+                    setText("-");
+                    setStyle("-fx-alignment: CENTER;");
+                } else {
+                    setText(String.format(Locale.US, "%.2f", item));
+                    if (item >= 0) {
+                        setStyle("-fx-alignment: CENTER; -fx-text-fill: #00e676; -fx-font-weight: bold;");
+                    } else {
+                        setStyle("-fx-alignment: CENTER; -fx-text-fill: #ff5252; -fx-font-weight: bold;");
+                    }
+                }
+            }
+        });
 
         TableColumn<CombinedPass, Integer> fwTr = new TableColumn<>("FW Trades");
-        fwTr.setCellValueFactory(new PropertyValueFactory<>("fwTrades"));
+        fwTr.setCellValueFactory(c -> new javafx.beans.property.SimpleObjectProperty<>(c.getValue().getFwTrades()));
+        fwTr.setPrefWidth(80);
+        fwTr.setCellFactory(col -> new TableCell<CombinedPass, Integer>() {
+            @Override
+            protected void updateItem(Integer item, boolean empty) {
+                super.updateItem(item, empty);
+                if (empty || item == null) {
+                    setText("-");
+                    setStyle("-fx-alignment: CENTER;");
+                } else {
+                    setText(String.valueOf(item));
+                    setStyle("-fx-alignment: CENTER;");
+                }
+            }
+        });
 
-        table.getColumns().addAll(passCol, scoreCol, btProf, btTr, btDd, fwProf, fwTr);
+        table.getColumns().addAll(passCol, scoreCol, robScoreCol, kiScoreCol, weightedScoreCol, btProf, btTr, btDd, fwProf, fwTr);
 
         List<CombinedPass> results = engine.getFinalSelectedPasses();
         table.getItems().setAll(results);
         layout.getChildren().add(table);
 
+        // Export Directory Configuration Row
+        GridPane exportGrid = new GridPane();
+        exportGrid.setHgap(10);
+        exportGrid.setVgap(5);
+        exportGrid.getStyleClass().add("sci-fi-panel");
+        exportGrid.setPadding(new Insets(10));
+
+        exportGrid.add(new Label("Export-Verzeichnis:"), 0, 0);
+        TextField exportDirField = new TextField(AppConfig.getInstance().getExportDirectory().toString());
+        exportDirField.setPrefWidth(550);
+
+        Button browseBtn = new Button("Durchsuchen...");
+        browseBtn.getStyleClass().add("button");
+        browseBtn.setOnAction(evt -> {
+            javafx.stage.DirectoryChooser chooser = new javafx.stage.DirectoryChooser();
+            chooser.setTitle("Export-Verzeichnis wählen");
+            File dir = new File(exportDirField.getText());
+            if (dir.exists()) {
+                chooser.setInitialDirectory(dir);
+            }
+            File selected = chooser.showDialog(stage);
+            if (selected != null) {
+                exportDirField.setText(selected.getAbsolutePath());
+                AppConfig.getInstance().setExportDirectory(selected.getAbsolutePath());
+                AppConfig.getInstance().save();
+            }
+        });
+
+        // Listen for manual path edits
+        exportDirField.textProperty().addListener((obs, oldV, newV) -> {
+            if (newV != null && !newV.trim().isEmpty()) {
+                AppConfig.getInstance().setExportDirectory(newV.trim());
+                AppConfig.getInstance().save();
+            }
+        });
+
+        HBox pathBox = new HBox(10, exportDirField, browseBtn);
+        HBox.setHgrow(exportDirField, Priority.ALWAYS);
+        exportGrid.add(pathBox, 1, 0);
+        layout.getChildren().add(exportGrid);
+
         HBox actionsRow = new HBox(15);
         actionsRow.setAlignment(Pos.CENTER_LEFT);
         
-        Button exportBtn = new Button("💾 Als .set Dateien exportieren...");
+        Button exportBtn = new Button("💾 Portfolio exportieren");
         exportBtn.getStyleClass().add("button-start");
         exportBtn.setOnAction(e -> {
-            CombinedPass selected = table.getSelectionModel().getSelectedItem();
-            if (selected == null) {
-                new Alert(Alert.AlertType.WARNING, "Bitte markiere erst die Strategie in der Tabelle, die du exportieren möchtest.").show();
-                return;
-            }
-            FileChooser ch = new FileChooser();
-            ch.setTitle("Save Strategy Preset");
-            ch.setInitialFileName("Pass_" + selected.getPassNumber() + ".set");
-            ch.getExtensionFilters().add(new FileChooser.ExtensionFilter("MT5 Set Files", "*.set"));
-            File file = ch.showSaveDialog(stage);
-            if (file != null) {
-                // Construct a set parameter list based on base params mutated by this pass
-                List<EaParameter> finalParams = new ArrayList<>();
-                for (EaParameter base : engine.getEaParameters()) {
-                    EaParameter p = new EaParameter();
-                    p.setName(base.getName());
-                    p.setStringType(base.isStringType());
-                    String passVal = selected.getBacktestPass().getParameter(base.getName());
-                    if (passVal != null && !passVal.isEmpty()) {
-                        p.setValue(passVal);
-                    } else {
-                        p.setValue(base.getValue());
-                    }
-                    p.setOptimizeEnabled(false);
-                    finalParams.add(p);
+            try {
+                String expDir = exportDirField.getText().trim();
+                if (expDir.isEmpty()) {
+                    new Alert(Alert.AlertType.WARNING, "Bitte gib ein gültiges Export-Verzeichnis an.").show();
+                    return;
                 }
-                eaParamManager.writeSetFile(file.toPath(), finalParams, EaParameterManager.extractEaBaseName(engine.getExpert()));
-                new Alert(Alert.AlertType.INFORMATION, "Preset erfolgreich gespeichert!").show();
+                engine.exportPortfolio(expDir);
+                new Alert(Alert.AlertType.INFORMATION, "Portfolio erfolgreich exportiert!\nPreset-Dateien (.set) und PDF-Reports wurden erstellt.").show();
+            } catch (Exception ex) {
+                new Alert(Alert.AlertType.ERROR, "Fehler beim Exportieren des Portfolios:\n" + ex.getMessage()).show();
             }
         });
 
@@ -1021,11 +1712,114 @@ public class WorkflowConfigDialogs {
         closeBtn.getStyleClass().add("button");
         closeBtn.setOnAction(e -> stage.close());
 
-        actionsRow.getChildren().addAll(exportBtn, spacer, closeBtn);
+        Button mainInfoBtn = DocHelper.createThickCircularInfoButton("Erklärung aller Indizes und Kennzahlen", () -> {
+            DocHelper.showAllIndicesDocDialog(closeBtn.getScene() != null ? closeBtn.getScene().getWindow() : null);
+        });
+
+        actionsRow.getChildren().addAll(exportBtn, mainInfoBtn, spacer, closeBtn);
         layout.getChildren().add(actionsRow);
 
         stage.setScene(new Scene(layout));
         applyTheme(stage, owner);
         stage.showAndWait();
+    }
+
+    public static void showCvExplanationDialog(Window owner, boolean isForward) {
+        Stage stage = new Stage();
+        stage.setTitle(isForward ? "FW CV (worst) Erklärung" : "BT CV (worst) Erklärung");
+        stage.initModality(Modality.APPLICATION_MODAL);
+        if (owner != null) {
+            stage.initOwner(owner);
+        }
+
+        VBox box = new VBox(15);
+        box.setPadding(new Insets(20));
+        box.setStyle("-fx-background-color: #11141d; -fx-border-color: #ffd740; -fx-border-width: 1px; -fx-border-radius: 5px;");
+
+        Label titleLabel = new Label(isForward ? "FW CV (worst) - Forward Variationskoeffizient" : "BT CV (worst) - Backtest Variationskoeffizient");
+        titleLabel.setFont(Font.font("Segoe UI", FontWeight.BOLD, 16));
+        titleLabel.setTextFill(Color.web("#00e5ff"));
+
+        WebView webView = new WebView();
+        webView.setPrefSize(750, 480);
+        
+        String htmlBodyContent = isForward ? getFwCvExplanationHtml() : getBtCvExplanationHtml();
+        String fullHtml = "<html><head><style>"
+                + "body { background-color:#161821; color:#c8cddc; font-family:\"Segoe UI\", sans-serif; font-size:15px; line-height:1.6; margin:15px; }"
+                + "h3 { color:#ffd740; font-size:18px; margin-top:15px; border-bottom: 1px solid #3e4555; padding-bottom: 5px; font-weight: bold; }"
+                + "h4 { color:#00e5ff; font-size:15px; margin-top:12px; font-weight: bold; }"
+                + "code { background-color:#1f2937; padding:4px 8px; border-radius:4px; color:#38bdf8; font-family:Consolas, monospace; font-size:13px; display:block; margin:8px 0; }"
+                + "ul, ol { margin-left: 20px; padding-left: 0; }"
+                + "li { margin-bottom: 6px; }"
+                + "</style></head><body>"
+                + htmlBodyContent
+                + "</body></html>";
+        webView.getEngine().loadContent(fullHtml);
+        webView.setStyle("-fx-background-color: #161821;");
+
+        Button closeBtn = new Button("Schließen");
+        closeBtn.getStyleClass().addAll("button");
+        closeBtn.setOnAction(e -> stage.close());
+
+        HBox btnBox = new HBox(closeBtn);
+        btnBox.setAlignment(Pos.CENTER_RIGHT);
+
+        box.getChildren().addAll(titleLabel, webView, btnBox);
+        VBox.setVgrow(webView, Priority.ALWAYS);
+
+        Scene scene = new Scene(box, 800, 600);
+        try {
+            scene.getStylesheets().add(WorkflowConfigDialogs.class.getResource("/css/antigravity.css").toExternalForm());
+        } catch (Exception e) {
+            // Ignore
+        }
+        stage.setScene(scene);
+        stage.showAndWait();
+    }
+
+    private static String getBtCvExplanationHtml() {
+        return "<h3>BT CV (worst) - Backtest Variationskoeffizient</h3>"
+             + "<p>Der <b>Variationskoeffizient (CV - Coefficient of Variation)</b> im Backtest-Zeitraum (In-Sample) misst die relative Streuung der Profite, wenn einzelne Optimierungsparameter variiert werden.</p>"
+             + "<h4>Berechnung:</h4>"
+             + "<p>Für jeden optimierten Parameter wird ein Sweep um die engere Umgebung des Optimalwerts durchgeführt. Daraus wird berechnet:</p>"
+             + "<code>"
+             + "CV = (Standardabweichung des Profits / Absoluter Basis-Profit) * 100%"
+             + "</code>"
+             + "<p>Der <b>BT CV (worst)</b> ist der <b>schlechteste (maximale) CV-Wert</b> über alle getesteten Parameter. Eine Strategie ist nur so robust wie ihr empfindlichster Parameter.</p>"
+             + "<h4>Bedeutung der Werte:</h4>"
+             + "<ul>"
+             + "  <li><span style='color:#00e676; font-weight:bold;'>&lt; 30% (Robust):</span> Sehr stabil. Parameteränderungen in der nahen Umgebung haben kaum Einfluss auf das Endergebnis.</li>"
+             + "  <li><span style='color:#ffd740; font-weight:bold;'>30% - 60% (Akzeptabel):</span> Mäßige Empfindlichkeit. Vertretbares Risiko für Überoptimierung.</li>"
+             + "  <li><span style='color:#ff3b30; font-weight:bold;'>&gt; 60% (Fragil):</span> Sehr empfindlich. Kleine Parameteränderungen führen zu massiven Unterschieden im Gewinn oder Verlust.</li>"
+             + "</ul>"
+             + "<h4>Warum sind die Werte manchmal so hoch (z.B. 200%)?</h4>"
+             + "<ol>"
+             + "  <li><b>Geringer Basis-Profit:</b> Da der Basis-Profit im Nenner steht, explodiert der CV-Wert bei profitarmen Strategien. Wenn eine Strategie z.B. nur 10 € Gewinn macht, führt eine kleine Schwankung um 20 € bereits zu einem CV von 200%.</li>"
+             + "  <li><b>Harte Filterung:</b> Wir testen die Parameter isoliert durch erneutes Backtesting. Fällt der Profit bei einer kleinen Änderung eines Parameters stark ab, deutet das auf <i>Curve-Fitting</i> (Überoptimierung) hin. Ein hoher CV warnt dich vor unzuverlässigen Strategien.</li>"
+             + "  <li><b>Capping:</b> Um extreme Werte übersichtlich darzustellen, deckeln wir den angezeigten CV-Wert bei maximal 200%.</li>"
+             + "</ol>";
+    }
+
+    private static String getFwCvExplanationHtml() {
+        return "<h3>FW CV (worst) - Forward Variationskoeffizient</h3>"
+             + "<p>Der <b>Variationskoeffizient (CV - Coefficient of Variation)</b> im Forward-Zeitraum (Out-of-Sample) misst die relative Streuung der Profite im Forward-Test, wenn die Parameter variiert werden.</p>"
+             + "<h4>Berechnung:</h4>"
+             + "<p>Es wird derselbe Parameter-Sweep wie im Backtest durchgeführt, jedoch ausschließlich auf den Out-of-Sample Forward-Daten:</p>"
+             + "<code>"
+             + "CV = (Standardabweichung des Profits / Absoluter Forward-Profit) * 100%"
+             + "</code>"
+             + "<p>Der <b>FW CV (worst)</b> zeigt den maximalen CV-Wert aller Parameter im Forward-Test-Zeitraum.</p>"
+             + "<h4>Bedeutung der Werte:</h4>"
+             + "<ul>"
+             + "  <li><span style='color:#00e676; font-weight:bold;'>&lt; 30% (Robust):</span> Exzellente Stabilität auch auf unbekannten Zukundfdaten (Forward).</li>"
+             + "  <li><span style='color:#ffd740; font-weight:bold;'>30% - 60% (Akzeptabel):</span> Vertretbare Abweichung im Forward-Zeitraum.</li>"
+             + "  <li><span style='color:#ff3b30; font-weight:bold;'>&gt; 60% (Fragil):</span> Extrem unzuverlässiges Verhalten in der Forward-Phase bei minimalen Parameterverschiebungen.</li>"
+             + "</ul>"
+             + "<h4>Warum sind die Werte manchmal so hoch (z.B. 200%)?</h4>"
+             + "<ol>"
+             + "  <li><b>Geringer Forward-Profit:</b> Im Forward-Zeitraum sind die Gewinne oft noch kleiner oder nahe null. Dadurch wird der Nenner sehr klein, was zu extrem hohen Prozentwerten führt.</li>"
+             + "  <li><b>Verlustphasen im Forward:</b> Wenn der Forward-Test schlechter läuft (was oft vorkommt, da Out-of-Sample-Daten), steigt die Standardabweichung im Verhältnis zum Profit drastisch an.</li>"
+             + "  <li><b>Capping:</b> Um extreme Werte übersichtlich darzustellen, deckeln wir den angezeigten CV-Wert bei maximal 200%.</li>"
+             + "</ol>";
     }
 }
