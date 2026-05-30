@@ -124,4 +124,106 @@ public class OptimizationResultTest {
         assertEquals("30", pass.getParameter("StopLoss"));
         assertEquals("", pass.getParameter("MissingParam"));
     }
+
+    @Test
+    public void testContinuousFwTradeScoring() {
+        // Backtest pass
+        OptimizationResult.Pass btPass = new OptimizationResult.Pass();
+        btPass.setPassNumber(1);
+        btPass.setProfit(1000.0);
+        btPass.setTotalTrades(300);
+        btPass.setProfitFactor(2.0);
+        btPass.setRecoveryFactor(3.0);
+        btPass.setDrawdownPercent(10.0);
+        btPass.setBalance(11000.0);
+        
+        // Scenario 1: Forward pass with 20 trades
+        OptimizationResult.Pass fwPassLow = new OptimizationResult.Pass();
+        fwPassLow.setPassNumber(1);
+        fwPassLow.setProfit(1000.0);
+        fwPassLow.setTotalTrades(20);
+        fwPassLow.setProfitFactor(2.0);
+        fwPassLow.setRecoveryFactor(3.0);
+        fwPassLow.setDrawdownPercent(10.0);
+
+        // Scenario 2: Forward pass with 150 trades
+        OptimizationResult.Pass fwPassMed = new OptimizationResult.Pass();
+        fwPassMed.setPassNumber(1);
+        fwPassMed.setProfit(1000.0);
+        fwPassMed.setTotalTrades(150);
+        fwPassMed.setProfitFactor(2.0);
+        fwPassMed.setRecoveryFactor(3.0);
+        fwPassMed.setDrawdownPercent(10.0);
+
+        // Scenario 3: Forward pass with 600 trades
+        OptimizationResult.Pass fwPassHigh = new OptimizationResult.Pass();
+        fwPassHigh.setPassNumber(1);
+        fwPassHigh.setProfit(1000.0);
+        fwPassHigh.setTotalTrades(600);
+        fwPassHigh.setProfitFactor(2.0);
+        fwPassHigh.setRecoveryFactor(3.0);
+        fwPassHigh.setDrawdownPercent(10.0);
+
+        // Let's measure the scores.
+        OptimizationResult rLow = new OptimizationResult();
+        rLow.addPass(btPass);
+        rLow.addForwardPass(fwPassLow);
+        double scoreLow = rLow.buildCombinedPasses(true).get(0).getScore();
+
+        OptimizationResult rMed = new OptimizationResult();
+        rMed.addPass(btPass);
+        rMed.addForwardPass(fwPassMed);
+        double scoreMed = rMed.buildCombinedPasses(true).get(0).getScore();
+
+        OptimizationResult rHigh = new OptimizationResult();
+        rHigh.addPass(btPass);
+        rHigh.addForwardPass(fwPassHigh);
+        double scoreHigh = rHigh.buildCombinedPasses(true).get(0).getScore();
+
+        // Assertions: Score should increase with more trades
+        assertTrue("Score with 150 trades should be higher than with 20 trades", scoreMed > scoreLow);
+        assertTrue("Score with 600 trades should be higher than with 150 trades", scoreHigh > scoreMed);
+    }
+
+    @Test
+    public void testScoreWithGridPresetWeights() {
+        OptimizationResult.Pass btPass = new OptimizationResult.Pass();
+        btPass.setPassNumber(1);
+        btPass.setProfit(1000.0);
+        btPass.setTotalTrades(600); // Many trades!
+        btPass.setProfitFactor(2.5);
+        btPass.setRecoveryFactor(4.0);
+        btPass.setDrawdownPercent(10.0);
+        btPass.setBalance(11000.0);
+
+        OptimizationResult.Pass fwPass = new OptimizationResult.Pass();
+        fwPass.setPassNumber(1);
+        fwPass.setProfit(1200.0);
+        fwPass.setTotalTrades(500); // Many trades!
+        fwPass.setProfitFactor(2.8);
+        fwPass.setRecoveryFactor(4.5);
+        fwPass.setDrawdownPercent(10.0);
+
+        result.addPass(btPass);
+        result.addForwardPass(fwPass);
+
+        // Grid Preset Weights:
+        OptimizationResult.ScoreWeights gridWeights = new OptimizationResult.ScoreWeights();
+        gridWeights.wBtProfit = 5.0;
+        gridWeights.wFwProfit = 5.0;
+        gridWeights.wConsistency = 15.0;
+        gridWeights.wRisk = 5.0;
+        gridWeights.wEquityConsist = 5.0;
+        gridWeights.wSampleSize = 35.0; // High weight on trades!
+        gridWeights.wSymmetry = 5.0;
+        gridWeights.wTailRisk = 5.0;
+        gridWeights.wFwTrades = 35.0;  // High weight on trades!
+        gridWeights.wRecovery = 40.0;  // High weight on recovery!
+        gridWeights.recoveryMin = 1.0;
+        gridWeights.recoveryMax = 5.0;
+
+        List<OptimizationResult.CombinedPass> combined = result.buildCombinedPasses(true, gridWeights);
+        assertEquals(1, combined.size());
+        assertTrue("Unified score should be very high due to many trades and recovery", combined.get(0).getScore() > 65.0);
+    }
 }
