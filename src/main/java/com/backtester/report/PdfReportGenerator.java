@@ -356,15 +356,16 @@ public class PdfReportGenerator {
         document.add(new Paragraph("Vergleich der selektierten Portfolio-Strategien", SECTION_FONT));
         document.add(new Paragraph(" ", SMALL_FONT));
 
-        PdfPTable compTable = new PdfPTable(7);
+        PdfPTable compTable = new PdfPTable(8);
         compTable.setWidthPercentage(100);
         compTable.setSpacingAfter(20);
-        compTable.setWidths(new float[]{10, 15, 15, 15, 15, 15, 15});
+        compTable.setWidths(new float[]{8, 13, 11, 13, 15, 13, 13, 14});
 
         addTableHeaderCell(compTable, "Pass");
         addTableHeaderCell(compTable, "Unified Score");
         addTableHeaderCell(compTable, "KI Score");
         addTableHeaderCell(compTable, "Gesamtwert");
+        addTableHeaderCell(compTable, "Trades (BT/FW)");
         addTableHeaderCell(compTable, "BT Profit");
         addTableHeaderCell(compTable, "FW Profit");
         addTableHeaderCell(compTable, "BT Max DD");
@@ -377,6 +378,11 @@ public class PdfReportGenerator {
             addTableCell(compTable, formatDouble(cp.getScore()), TEXT_FONT);
             addTableCell(compTable, kiScore >= 0 ? String.valueOf(kiScore) : "-", TEXT_FONT);
             addTableCellColored(compTable, String.format(Locale.US, "%.1f", wScore), GREEN_FONT);
+            
+            // Trades (BT/FW)
+            String tradesStr = cp.getBtTrades() + (cp.getForwardPass() != null ? " / " + cp.getFwTrades() : " / -");
+            addTableCellColored(compTable, tradesStr, TEXT_FONT);
+
             addTableCellColored(compTable, formatDouble(cp.getBtProfit()), cp.getBtProfit() >= 0 ? GREEN_FONT : RED_FONT);
             addTableCellColored(compTable, Double.isNaN(cp.getFwProfit()) ? "-" : formatDouble(cp.getFwProfit()), cp.getFwProfit() >= 0 ? GREEN_FONT : RED_FONT);
             addTableCellColored(compTable, formatDouble(cp.getBtDd()) + "%", cp.getBtDd() > 25 ? RED_FONT : GREEN_FONT);
@@ -579,7 +585,7 @@ public class PdfReportGenerator {
         g2.setColor(bgColor);
         g2.fillRect(0, 0, width, height);
 
-        if (points == null || points.isEmpty()) {
+        if (points == null || points.size() <= 1) {
             g2.setColor(Color.WHITE);
             g2.drawString("Keine Daten", width / 2 - (int)(30 * scale), height / 2);
             g2.dispose();

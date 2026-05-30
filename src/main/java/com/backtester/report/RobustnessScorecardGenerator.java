@@ -30,16 +30,16 @@ public class RobustnessScorecardGenerator {
 
         DatabaseManager db = DatabaseManager.getInstance();
         OptimizationResult.ScoreWeights w = new OptimizationResult.ScoreWeights();
-        w.wBtProfit = Double.parseDouble(db.getSetting("opt.weight.btProfit", "10"));
+        w.wBtProfit = Double.parseDouble(db.getSetting("opt.weight.btProfit", "15"));
         w.wFwProfit = Double.parseDouble(db.getSetting("opt.weight.fwProfit", "15"));
-        w.wConsistency = Double.parseDouble(db.getSetting("opt.weight.consistency", "15"));
-        w.wRisk = Double.parseDouble(db.getSetting("opt.weight.risk", "15"));
+        w.wConsistency = Double.parseDouble(db.getSetting("opt.weight.consistency", "10"));
+        w.wRisk = Double.parseDouble(db.getSetting("opt.weight.risk", "10"));
         w.wEquityConsist = Double.parseDouble(db.getSetting("opt.weight.equityConsist", "10"));
-        w.wSampleSize = Double.parseDouble(db.getSetting("opt.weight.sampleSize", "10"));
+        w.wSampleSize = Double.parseDouble(db.getSetting("opt.weight.sampleSize", "25"));
         w.wSymmetry = Double.parseDouble(db.getSetting("opt.weight.symmetry", "5"));
-        w.wTailRisk = Double.parseDouble(db.getSetting("opt.weight.tailRisk", "10"));
-        w.wFwTrades = Double.parseDouble(db.getSetting("opt.weight.fwTrades", "5"));
-        w.wRecovery = Double.parseDouble(db.getSetting("opt.weight.recovery", "5"));
+        w.wTailRisk = Double.parseDouble(db.getSetting("opt.weight.tailRisk", "5"));
+        w.wFwTrades = Double.parseDouble(db.getSetting("opt.weight.fwTrades", "30"));
+        w.wRecovery = Double.parseDouble(db.getSetting("opt.weight.recovery", "25"));
         w.recoveryMin = Double.parseDouble(db.getSetting("opt.weight.recovery.min", "1.0"));
         w.recoveryMax = Double.parseDouble(db.getSetting("opt.weight.recovery.max", "5.0"));
 

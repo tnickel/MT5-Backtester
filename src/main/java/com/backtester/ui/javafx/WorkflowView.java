@@ -592,7 +592,9 @@ public class WorkflowView {
         passCol.setPrefWidth(65);
         passCol.setStyle("-fx-alignment: CENTER;");
 
-        TableColumn<CombinedPass, Double> scoreCol = new TableColumn<>("Score");
+        TableColumn<CombinedPass, Double> scoreCol = new TableColumn<>();
+        scoreCol.setGraphic(DocHelper.createHeaderWithTooltip("Score", 
+            "Unified Score (0-100):\nGewichteter Gesamtwert aus 10 Kriterien (Profit, DD, PF etc.). Konfigurierbar über das Regler-Symbol. Zeigt die beste Gesamtperformance."));
         scoreCol.setCellValueFactory(c -> new javafx.beans.property.SimpleObjectProperty<>(c.getValue().getScore()));
         scoreCol.setPrefWidth(75);
         scoreCol.setStyle("-fx-alignment: CENTER;");
@@ -610,11 +612,13 @@ public class WorkflowView {
             }
         });
 
-        TableColumn<CombinedPass, String> robScoreCol = new TableColumn<>("Rob. Scorecard");
+        TableColumn<CombinedPass, String> robScoreCol = new TableColumn<>();
+        robScoreCol.setGraphic(DocHelper.createHeaderWithTooltip("Rob. Scorecard", 
+            "Robustness Scorecard (0-100):\nErgebnis des Monte-Carlo-Stresstests und systematischen Parameter-Shifting. Simuliert Rauschen (Slippage, Spread, Execution) und bewertet die Geradlinigkeit (R²-Stabilität) der Equity-Kurve."));
         robScoreCol.setCellValueFactory(c -> {
             String fromDateStr = engine.getFromDate() != null ? engine.getFromDate().toString() : "Unbekannt";
             String toDateStr = engine.getToDate() != null ? engine.getToDate().toString() : "Unbekannt";
-            double score = com.backtester.report.RobustnessScorecardGenerator.calculateOverallScore(c.getValue(), fromDateStr, toDateStr);
+            double score = c.getValue().getCachedOverallScore(fromDateStr, toDateStr);
             return new javafx.beans.property.SimpleStringProperty(String.format(Locale.US, "%.0f", score));
         });
         robScoreCol.setPrefWidth(115);

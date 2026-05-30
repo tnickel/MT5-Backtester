@@ -380,19 +380,27 @@ public class StrategyEvaluatorDialog extends Stage {
         passCol.setCellValueFactory(c -> new javafx.beans.property.SimpleObjectProperty<>(c.getValue().getPassNumber()));
         passCol.setPrefWidth(50);
         
-        TableColumn<CombinedPass, String> scoreCol = new TableColumn<>("Score");
+        TableColumn<CombinedPass, String> scoreCol = new TableColumn<>();
+        scoreCol.setGraphic(DocHelper.createHeaderWithTooltip("Score", 
+            "Unified Score (0-100):\nGewichteter Gesamtwert aus 10 Kriterien (Profit, DD, PF etc.). Konfigurierbar über das Regler-Symbol. Zeigt die beste Gesamtperformance."));
         scoreCol.setCellValueFactory(c -> new SimpleStringProperty(String.format(Locale.US, "%.2f", c.getValue().getScore())));
         scoreCol.setPrefWidth(75);
 
-        TableColumn<CombinedPass, String> riCol = new TableColumn<>("RI");
+        TableColumn<CombinedPass, String> riCol = new TableColumn<>();
+        riCol.setGraphic(DocHelper.createHeaderWithTooltip("RI", 
+            "Robustness Index (RI):\nEin fixierter mathematischer Wert ohne Gewichtung. Multipliziert BT Recovery Factor, Trades-Gewichtung und Forward-Konsistenz. Dient als objektiver Tie-Breaker."));
         riCol.setCellValueFactory(c -> new SimpleStringProperty(String.format(Locale.US, "%.2f", calculateRobustnessIndex(c.getValue(), referenceTrades))));
         riCol.setPrefWidth(55);
         
-        TableColumn<CombinedPass, String> consistCol = new TableColumn<>("Konsistenz");
+        TableColumn<CombinedPass, String> consistCol = new TableColumn<>();
+        consistCol.setGraphic(DocHelper.createHeaderWithTooltip("Konsistenz", 
+            "Forward-Konsistenz (0.0-2.0):\nDas Verhältnis der Performance (Gewinn & Erholung) im Forward-Test (ungesehene Daten) zum Backtest. Je näher an 1.0 (oder höher), desto stabiler ist das Live-Verhalten."));
         consistCol.setCellValueFactory(c -> new SimpleStringProperty(String.format(Locale.US, "%.2f", c.getValue().getConsistency())));
         consistCol.setPrefWidth(95);
 
-        TableColumn<CombinedPass, String> robScoreCol = new TableColumn<>("Rob. Scorecard");
+        TableColumn<CombinedPass, String> robScoreCol = new TableColumn<>();
+        robScoreCol.setGraphic(DocHelper.createHeaderWithTooltip("Rob. Scorecard", 
+            "Robustness Scorecard (0-100):\nErgebnis des Monte-Carlo-Stresstests und systematischen Parameter-Shifting. Simuliert Rauschen (Slippage, Spread, Execution) und bewertet die Geradlinigkeit (R²-Stabilität) der Equity-Kurve."));
         robScoreCol.setCellValueFactory(c -> {
             String fromDateStr = "Unbekannt";
             String toDateStr = "Unbekannt";
@@ -400,7 +408,7 @@ public class StrategyEvaluatorDialog extends Stage {
                 fromDateStr = parentView.getLastOptResult().getFromDate();
                 toDateStr = parentView.getLastOptResult().getToDate();
             }
-            double score = com.backtester.report.RobustnessScorecardGenerator.calculateOverallScore(c.getValue(), fromDateStr, toDateStr);
+            double score = c.getValue().getCachedOverallScore(fromDateStr, toDateStr);
             return new SimpleStringProperty(String.format(Locale.US, "%.0f", score));
         });
         robScoreCol.setPrefWidth(115);

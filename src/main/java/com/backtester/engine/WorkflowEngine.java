@@ -47,10 +47,10 @@ public class WorkflowEngine {
     private OptimizationResult optResult;
 
     // Step 3 State (Diversity Filter)
-    private double minBtProfit = 0.0;
-    private double minFwProfit = 0.0;
-    private int minBtTrades = 1;
-    private int minFwTrades = 0;
+    private double minBtProfit = 0.01;
+    private double minFwProfit = 0.01;
+    private int minBtTrades = 100;
+    private int minFwTrades = 15;
     private double maxBtDd = 100.0;
     private double maxFwDd = 100.0;
     private double paramDiffPct = 0.10;
@@ -285,10 +285,10 @@ public class WorkflowEngine {
             this.optimizationCriterion = sc.optimizationCriterion;
             this.forwardMode = sc.forwardMode;
             if (sc.forwardDate != null) this.forwardDate = LocalDate.parse(sc.forwardDate);
-            this.minBtProfit = sc.minBtProfit;
-            this.minFwProfit = sc.minFwProfit;
-            this.minBtTrades = sc.minBtTrades;
-            this.minFwTrades = sc.minFwTrades;
+            this.minBtProfit = sc.minBtProfit == 0.0 ? 0.01 : sc.minBtProfit;
+            this.minFwProfit = sc.minFwProfit == 0.0 ? 0.01 : sc.minFwProfit;
+            this.minBtTrades = sc.minBtTrades == 1 ? 100 : sc.minBtTrades;
+            this.minFwTrades = sc.minFwTrades == 0 ? 15 : sc.minFwTrades;
             this.maxBtDd = sc.maxBtDd;
             this.maxFwDd = sc.maxFwDd;
             this.paramDiffPct = sc.paramDiffPct;

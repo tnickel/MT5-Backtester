@@ -17,6 +17,7 @@ public class DatabaseManager {
     private static final Logger log = LoggerFactory.getLogger(DatabaseManager.class);
     private static DatabaseManager instance;
     private final String dbUrl;
+    private final java.util.Map<String, String> settingsCache = new java.util.concurrent.ConcurrentHashMap<>();
 
     private DatabaseManager() {
         // Find user home to place DB
@@ -26,7 +27,7 @@ public class DatabaseManager {
             dir.mkdirs();
         }
         File dbFile = new File(dir, "history.db");
-        dbUrl = "jdbc:sqlite:" + dbFile.getAbsolutePath();
+        dbUrl = "jdbc:sqlite:" + dbFile.getAbsolutePath() + "?journal_mode=WAL&busy_timeout=10000";
         initializeDatabase();
     }
 
@@ -217,7 +218,26 @@ public class DatabaseManager {
                 log.warn("Could not migrate EA_CONFIGS (might not exist or already migrated)", e);
             }
 
+            // Migrate settings to optimized defaults if they are still at old defaults
+            try {
+                stmt.execute("UPDATE APP_SETTINGS SET value = '15' WHERE key = 'opt.weight.btProfit' AND value = '10'");
+                stmt.execute("UPDATE APP_SETTINGS SET value = '10' WHERE key = 'opt.weight.consistency' AND value = '15'");
+                stmt.execute("UPDATE APP_SETTINGS SET value = '10' WHERE key = 'opt.weight.risk' AND value = '15'");
+                stmt.execute("UPDATE APP_SETTINGS SET value = '25' WHERE key = 'opt.weight.sampleSize' AND value = '10'");
+                stmt.execute("UPDATE APP_SETTINGS SET value = '5' WHERE key = 'opt.weight.tailRisk' AND value = '10'");
+                stmt.execute("UPDATE APP_SETTINGS SET value = '30' WHERE key = 'opt.weight.fwTrades' AND value = '5'");
+                stmt.execute("UPDATE APP_SETTINGS SET value = '25' WHERE key = 'opt.weight.recovery' AND value = '5'");
+                stmt.execute("UPDATE APP_SETTINGS SET value = '0.01' WHERE key = 'opt.filter.minBtProfit' AND value = '0.0'");
+                stmt.execute("UPDATE APP_SETTINGS SET value = '0.01' WHERE key = 'opt.filter.minFwProfit' AND value = '0.0'");
+                stmt.execute("UPDATE APP_SETTINGS SET value = '100' WHERE key = 'opt.filter.minBtTrades' AND value = '1'");
+                stmt.execute("UPDATE APP_SETTINGS SET value = '15' WHERE key = 'opt.filter.minFwTrades' AND value = '0'");
+                log.info("Migrated old default settings to new optimized defaults in APP_SETTINGS.");
+            } catch (Exception e) {
+                log.warn("Could not migrate app settings defaults", e);
+            }
+
             log.info("SQLite database initialized at: {}", dbUrl);
+            settingsCache.clear();
         } catch (SQLException e) {
             log.error("Error initializing Database", e);
         }
@@ -471,6 +491,11 @@ public class DatabaseManager {
     // ====================================================================
 
     public void saveSetting(String key, String value) {
+        if (value == null) {
+            settingsCache.put(key, "__NULL__");
+        } else {
+            settingsCache.put(key, value);
+        }
         String sql = "INSERT OR REPLACE INTO APP_SETTINGS (key, value) VALUES (?, ?)";
         try (Connection conn = connect(); PreparedStatement p = conn.prepareStatement(sql)) {
             p.setString(1, key);
@@ -482,15 +507,28 @@ public class DatabaseManager {
     }
 
     public String getSetting(String key) {
+        String cached = settingsCache.get(key);
+        if (cached != null) {
+            return "__NULL__".equals(cached) ? null : cached;
+        }
         String sql = "SELECT value FROM APP_SETTINGS WHERE key = ?";
         try (Connection conn = connect(); PreparedStatement p = conn.prepareStatement(sql)) {
             p.setString(1, key);
             try (ResultSet rs = p.executeQuery()) {
-                if (rs.next()) return rs.getString("value");
+                if (rs.next()) {
+                    String val = rs.getString("value");
+                    if (val != null) {
+                        settingsCache.put(key, val);
+                    } else {
+                        settingsCache.put(key, "__NULL__");
+                    }
+                    return val;
+                }
             }
         } catch (SQLException e) {
             log.error("Failed to get setting '{}'", key, e);
         }
+        settingsCache.put(key, "__NULL__");
         return null;
     }
 

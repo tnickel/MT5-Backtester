@@ -69,7 +69,7 @@ public class WorkflowConfigDialogs {
 
         VBox layout = new VBox(15);
         layout.setStyle("-fx-background-color: #0b0d13; -fx-padding: 20;");
-        layout.setPrefWidth(900);
+        layout.setPrefWidth(1000);
         layout.setPrefHeight(750);
 
         Label title = new Label("STRATEGIE-AUSWAHL & OPTIMIERUNGS-INPUTS");
@@ -85,18 +85,249 @@ public class WorkflowConfigDialogs {
 
         grid.add(new Label("Expert Advisor:"), 0, 0);
         TextField expertField = new TextField(engine.getExpert());
-        expertField.setPrefWidth(300);
+        expertField.setPrefWidth(400);
         Button browseBtn = new Button("...");
         HBox expBox = new HBox(5, expertField, browseBtn);
         grid.add(expBox, 1, 0, 2, 1);
 
         grid.add(new Label("Symbol(s):"), 0, 1);
         TextField symbolField = new TextField(engine.getSymbol());
-        symbolField.setPrefWidth(220);
+        symbolField.setPrefWidth(300);
         symbolField.setTooltip(new Tooltip("Geben Sie ein oder mehrere Währungspaare kommagetrennt ein (z.B. EURUSD,GBPUSD)"));
         Button selectSymbolsBtn = new Button("Wählen...");
         HBox symbolBox = new HBox(5, symbolField, selectSymbolsBtn);
-        grid.add(symbolBox, 1, 1, 2, 1);
+        grid.add(symbolBox, 1, 1);
+
+
+        grid.add(new Label("Periode:"), 2, 1);
+        ComboBox<String> periodCombo = new ComboBox<>(FXCollections.observableArrayList("M1", "M5", "M15", "M30", "H1", "H4", "D1"));
+        periodCombo.setValue(engine.getPeriod());
+        grid.add(periodCombo, 3, 1);
+
+        grid.add(new Label("Presets:"), 0, 2);
+        Button set1Btn = new Button("Set 1 (M5 Core Pairs)");
+        grid.add(set1Btn, 1, 2);
+
+        grid.add(new Label("Datum von:"), 0, 3);
+        DatePicker fromDatePicker = new DatePicker(engine.getFromDate());
+        fromDatePicker.setConverter(createDateConverter());
+        grid.add(fromDatePicker, 1, 3);
+
+        grid.add(new Label("bis:"), 2, 3);
+        DatePicker toDatePicker = new DatePicker(engine.getToDate());
+        toDatePicker.setConverter(createDateConverter());
+        grid.add(toDatePicker, 3, 3);
+
+        grid.add(new Label("Konto / Währung:"), 0, 4);
+        TextField depField = new TextField(String.valueOf(engine.getDeposit()));
+        TextField curField = new TextField(engine.getCurrency());
+        depField.setPrefWidth(80);
+        curField.setPrefWidth(50);
+        HBox depCur = new HBox(5, depField, curField);
+        grid.add(depCur, 1, 4);
+
+        grid.add(new Label("Hebel / Modell:"), 2, 4);
+        TextField levField = new TextField(engine.getLeverage());
+        levField.setPrefWidth(80);
+        ComboBox<String> modelCombo = new ComboBox<>(FXCollections.observableArrayList(OptimizationConfig.MODEL_NAMES));
+        if (engine.getTickModel() >= 0 && engine.getTickModel() < modelCombo.getItems().size()) {
+            modelCombo.getSelectionModel().select(engine.getTickModel());
+        } else {
+            modelCombo.getSelectionModel().select(1); // Every tick
+        }
+        HBox levMod = new HBox(5, levField, modelCombo);
+        grid.add(levMod, 3, 4);
+
+        layout.getChildren().add(grid);
+
+        // Parameters Table
+        VBox paramBox = new VBox(5);
+        VBox.setVgrow(paramBox, Priority.ALWAYS);
+        Label paramTitle = new Label("EA Parameter & Optimierungs-Suchraum");
+        paramTitle.setFont(Font.font("Segoe UI", FontWeight.BOLD, 14));
+        paramTitle.setTextFill(Color.web("#80d8ff"));
+
+        TableView<EaParameter> paramTable = new TableView<>();
+        paramTable.setEditable(true);
+        paramTable.setStyle("-fx-background-color: transparent;");
+
+        TableColumn<EaParameter, Boolean> optCol = new TableColumn<>("Opt");
+        optCol.setCellValueFactory(cellData -> new javafx.beans.property.SimpleBooleanProperty(cellData.getValue().isOptimizeEnabled()));
+        optCol.setCellFactory(tc -> new TableCell<EaParameter, Boolean>() {
+            private final CheckBox checkBox = new CheckBox();
+            {
+                checkBox.setOnAction(e -> {
+                    EaParameter param = getTableRow().getItem();
+                    if (param != null) {
+                        param.setOptimizeEnabled(checkBox.isSelected());
+                    }
+                });
+                setAlignment(Pos.CENTER);
+            }
+            @Override
+            protected void updateItem(Boolean item, boolean empty) {
+                super.updateItem(item, empty);
+                if (empty || item == null) {
+                    setGraphic(null);
+                } else {
+                    checkBox.setSelected(item);
+                    setGraphic(checkBox);
+                }
+            }
+        });
+        optCol.setPrefWidth(40);
+
+        TableColumn<EaParameter, String> nameCol = new TableColumn<>("Variable");
+        nameCol.setCellValueFactory(new PropertyValueFactory<>("name"));
+        nameCol.setPrefWidth(180);
+
+        TableColumn<EaParameter, String> valCol = new TableColumn<>("Wert");
+        valCol.setCellValueFactory(new PropertyValueFactory<>("value"));
+        valCol.setCellFactory(EnumAwareParamCell.forTableColumn());
+        valCol.setOnEditCommit(e -> e.getRowValue().setValue(e.getNewValue()));
+        valCol.setPrefWidth(100);
+
+        TableColumn<EaParameter, String> startCol = new TableColumn<>("Start");
+        startCol.setCellValueFactory(new PropertyValueFactory<>("optimizeStart"));
+        startCol.setCellFactory(EnumAwareParamCell.forTableColumn());
+        startCol.setOnEditCommit(e -> e.getRowValue().setOptimizeStart(e.getNewValue()));
+
+        TableColumn<EaParameter, String> stepCol = new TableColumn<>("Schritt");
+        stepCol.setCellValueFactory(new PropertyValueFactory<>("optimizeStep"));
+        stepCol.setCellFactory(EnumAwareParamCell.forTableColumn());
+        stepCol.setOnEditCommit(e -> e.getRowValue().setOptimizeStep(e.getNewValue()));
+
+        TableColumn<EaParameter, String> stopCol = new TableColumn<>("Stopp");
+        stopCol.setCellValueFactory(new PropertyValueFactory<>("optimizeEnd"));
+        stopCol.setCellFactory(EnumAwareParamCell.forTableColumn());
+        stopCol.setOnEditCommit(e -> e.getRowValue().setOptimizeEnd(e.getNewValue()));
+
+        paramTable.getColumns().addAll(optCol, nameCol, valCol, startCol, stepCol, stopCol);
+
+        final String[] lastCheckedExpert = { engine.getExpert() != null ? engine.getExpert().trim() : "" };
+        final String[] lastCheckedSymbol = { engine.getSymbol() != null ? engine.getSymbol().trim() : "" };
+        final String[] lastCheckedPeriod = { engine.getPeriod() != null ? engine.getPeriod().trim() : "" };
+
+        Runnable updateParamsTable = () -> {
+            String expert = expertField.getText().trim();
+            String rawSymbol = symbolField.getText().trim();
+            String period = periodCombo.getValue() != null ? periodCombo.getValue().trim() : "";
+
+            if (expert.isEmpty()) {
+                paramTable.getItems().clear();
+                lastCheckedExpert[0] = "";
+                lastCheckedSymbol[0] = rawSymbol;
+                lastCheckedPeriod[0] = period;
+                return;
+            }
+
+            boolean expertChanged = !expert.equals(lastCheckedExpert[0]);
+            boolean symbolChanged = !rawSymbol.equals(lastCheckedSymbol[0]);
+            boolean periodChanged = !period.equals(lastCheckedPeriod[0]);
+
+            if (!expertChanged && !symbolChanged && !periodChanged) {
+                return;
+            }
+
+            lastCheckedExpert[0] = expert;
+            lastCheckedSymbol[0] = rawSymbol;
+            lastCheckedPeriod[0] = period;
+
+            if (expertChanged) {
+                String strategyConfigJson = null;
+                try {
+                    strategyConfigJson = com.backtester.database.DatabaseManager.getInstance().getWorkflowStrategyConfig(expert);
+                } catch (Exception ignored) {}
+
+                if (strategyConfigJson != null && !strategyConfigJson.isEmpty()) {
+                    try {
+                        boolean loaded = engine.loadStrategyConfig(expert);
+                        if (loaded) {
+                            String newSymbol = engine.getSymbol() != null ? engine.getSymbol().trim() : "";
+                            String newPeriod = engine.getPeriod() != null ? engine.getPeriod().trim() : "";
+                            lastCheckedSymbol[0] = newSymbol;
+                            lastCheckedPeriod[0] = newPeriod;
+
+                            symbolField.setText(engine.getSymbol());
+                            periodCombo.setValue(engine.getPeriod());
+                            fromDatePicker.setValue(engine.getFromDate());
+                            toDatePicker.setValue(engine.getToDate());
+                            depField.setText(String.valueOf(engine.getDeposit()));
+                            curField.setText(engine.getCurrency());
+                            levField.setText(engine.getLeverage());
+                            if (engine.getTickModel() >= 0 && engine.getTickModel() < modelCombo.getItems().size()) {
+                                modelCombo.getSelectionModel().select(engine.getTickModel());
+                            }
+
+                            List<EaParameter> tableCopy = new ArrayList<>();
+                            for (EaParameter p : engine.getEaParameters()) {
+                                EaParameter copy = new EaParameter();
+                                copy.setName(p.getName());
+                                copy.setValue(p.getValue());
+                                copy.setDefaultValue(p.getDefaultValue() != null ? p.getDefaultValue() : p.getValue());
+                                copy.setSection(p.getSection());
+                                copy.setOptimizeStart(p.getOptimizeStart());
+                                copy.setOptimizeStep(p.getOptimizeStep());
+                                copy.setOptimizeEnd(p.getOptimizeEnd());
+                                copy.setOptimizeEnabled(p.isOptimizeEnabled());
+                                copy.setStringType(p.isStringType());
+                                tableCopy.add(copy);
+                            }
+                            paramTable.getItems().setAll(tableCopy);
+                            return;
+                        }
+                    } catch (Exception ignored) {}
+                }
+            }
+
+            String symbol = "EURUSD";
+            if (!rawSymbol.isEmpty()) {
+                if (rawSymbol.contains(",")) {
+                    symbol = rawSymbol.split(",\\s*")[0];
+                } else {
+                    symbol = rawSymbol;
+                }
+            }
+            String periodDb = period.isEmpty() ? "H1" : period;
+
+            // Try DB first
+            String dbParamsJson = null;
+            try {
+                dbParamsJson = com.backtester.database.DatabaseManager.getInstance().getEaParameterSettings(expert, symbol, periodDb);
+            } catch (Exception ignored) {}
+
+            List<EaParameter> params = null;
+            if (dbParamsJson != null && !dbParamsJson.isEmpty()) {
+                try {
+                    java.lang.reflect.Type listType = new com.google.gson.reflect.TypeToken<java.util.List<com.backtester.config.EaParameter>>(){}.getType();
+                    params = new com.google.gson.Gson().fromJson(dbParamsJson, listType);
+                } catch (Exception ignored) {}
+            }
+
+            if (params == null || params.isEmpty()) {
+                params = eaParamManager.getEffectiveParameters(expert);
+            }
+
+            if (params != null) {
+                List<EaParameter> tableCopy = new ArrayList<>();
+                for (EaParameter p : params) {
+                    EaParameter copy = new EaParameter();
+                    copy.setName(p.getName());
+                    copy.setValue(p.getValue());
+                    copy.setDefaultValue(p.getDefaultValue() != null ? p.getDefaultValue() : p.getValue());
+                    copy.setSection(p.getSection());
+                    copy.setOptimizeStart(p.getOptimizeStart());
+                    copy.setOptimizeStep(p.getOptimizeStep());
+                    copy.setOptimizeEnd(p.getOptimizeEnd());
+                    copy.setOptimizeEnabled(p.isOptimizeEnabled());
+                    copy.setStringType(p.isStringType());
+                    tableCopy.add(copy);
+                }
+                paramTable.getItems().setAll(tableCopy);
+            } else {
+                paramTable.getItems().clear();
+            }
+        };
 
         selectSymbolsBtn.setOnAction(e -> {
             Stage selectionStage = new Stage();
@@ -183,6 +414,7 @@ public class WorkflowConfigDialogs {
                     }
                 }
                 symbolField.setText(String.join(",", selected));
+                updateParamsTable.run();
                 selectionStage.close();
             });
             
@@ -205,210 +437,11 @@ public class WorkflowConfigDialogs {
             selectionStage.showAndWait();
         });
 
-        grid.add(new Label("Periode:"), 2, 1);
-        ComboBox<String> periodCombo = new ComboBox<>(FXCollections.observableArrayList("M1", "M5", "M15", "M30", "H1", "H4", "D1"));
-        periodCombo.setValue(engine.getPeriod());
-        grid.add(periodCombo, 3, 1);
-
-        grid.add(new Label("Datum von:"), 0, 2);
-        DatePicker fromDatePicker = new DatePicker(engine.getFromDate());
-        fromDatePicker.setConverter(createDateConverter());
-        grid.add(fromDatePicker, 1, 2);
-
-        grid.add(new Label("bis:"), 2, 2);
-        DatePicker toDatePicker = new DatePicker(engine.getToDate());
-        toDatePicker.setConverter(createDateConverter());
-        grid.add(toDatePicker, 3, 2);
-
-        grid.add(new Label("Konto / Währung:"), 0, 3);
-        TextField depField = new TextField(String.valueOf(engine.getDeposit()));
-        TextField curField = new TextField(engine.getCurrency());
-        depField.setPrefWidth(80);
-        curField.setPrefWidth(50);
-        HBox depCur = new HBox(5, depField, curField);
-        grid.add(depCur, 1, 3);
-
-        grid.add(new Label("Hebel / Modell:"), 2, 3);
-        TextField levField = new TextField(engine.getLeverage());
-        levField.setPrefWidth(80);
-        ComboBox<String> modelCombo = new ComboBox<>(FXCollections.observableArrayList(OptimizationConfig.MODEL_NAMES));
-        if (engine.getTickModel() >= 0 && engine.getTickModel() < modelCombo.getItems().size()) {
-            modelCombo.getSelectionModel().select(engine.getTickModel());
-        } else {
-            modelCombo.getSelectionModel().select(1); // Every tick
-        }
-        HBox levMod = new HBox(5, levField, modelCombo);
-        grid.add(levMod, 3, 3);
-
-        layout.getChildren().add(grid);
-
-        // Parameters Table
-        VBox paramBox = new VBox(5);
-        VBox.setVgrow(paramBox, Priority.ALWAYS);
-        Label paramTitle = new Label("EA Parameter & Optimierungs-Suchraum");
-        paramTitle.setFont(Font.font("Segoe UI", FontWeight.BOLD, 14));
-        paramTitle.setTextFill(Color.web("#80d8ff"));
-
-        TableView<EaParameter> paramTable = new TableView<>();
-        paramTable.setEditable(true);
-        paramTable.setStyle("-fx-background-color: transparent;");
-
-        TableColumn<EaParameter, Boolean> optCol = new TableColumn<>("Opt");
-        optCol.setCellValueFactory(cellData -> new javafx.beans.property.SimpleBooleanProperty(cellData.getValue().isOptimizeEnabled()));
-        optCol.setCellFactory(tc -> new TableCell<EaParameter, Boolean>() {
-            private final CheckBox checkBox = new CheckBox();
-            {
-                checkBox.setOnAction(e -> {
-                    EaParameter param = getTableRow().getItem();
-                    if (param != null) {
-                        param.setOptimizeEnabled(checkBox.isSelected());
-                    }
-                });
-                setAlignment(Pos.CENTER);
-            }
-            @Override
-            protected void updateItem(Boolean item, boolean empty) {
-                super.updateItem(item, empty);
-                if (empty || item == null) {
-                    setGraphic(null);
-                } else {
-                    checkBox.setSelected(item);
-                    setGraphic(checkBox);
-                }
-            }
+        set1Btn.setOnAction(e -> {
+            symbolField.setText("AUDJPY,AUDUSD,EURAUD,EURCHF,EURGBP,EURJPY,EURUSD,GBPCHF,GBPJPY,GBPUSD,NZDUSD,USDCAD,USDCHF,USDJPY");
+            periodCombo.setValue("M5");
+            updateParamsTable.run();
         });
-        optCol.setPrefWidth(40);
-
-        TableColumn<EaParameter, String> nameCol = new TableColumn<>("Variable");
-        nameCol.setCellValueFactory(new PropertyValueFactory<>("name"));
-        nameCol.setPrefWidth(180);
-
-        TableColumn<EaParameter, String> valCol = new TableColumn<>("Wert");
-        valCol.setCellValueFactory(new PropertyValueFactory<>("value"));
-        valCol.setCellFactory(javafx.scene.control.cell.TextFieldTableCell.forTableColumn());
-        valCol.setOnEditCommit(e -> e.getRowValue().setValue(e.getNewValue()));
-        valCol.setPrefWidth(100);
-
-        TableColumn<EaParameter, String> startCol = new TableColumn<>("Start");
-        startCol.setCellValueFactory(new PropertyValueFactory<>("optimizeStart"));
-        startCol.setCellFactory(javafx.scene.control.cell.TextFieldTableCell.forTableColumn());
-        startCol.setOnEditCommit(e -> e.getRowValue().setOptimizeStart(e.getNewValue()));
-
-        TableColumn<EaParameter, String> stepCol = new TableColumn<>("Schritt");
-        stepCol.setCellValueFactory(new PropertyValueFactory<>("optimizeStep"));
-        stepCol.setCellFactory(javafx.scene.control.cell.TextFieldTableCell.forTableColumn());
-        stepCol.setOnEditCommit(e -> e.getRowValue().setOptimizeStep(e.getNewValue()));
-
-        TableColumn<EaParameter, String> stopCol = new TableColumn<>("Stopp");
-        stopCol.setCellValueFactory(new PropertyValueFactory<>("optimizeEnd"));
-        stopCol.setCellFactory(javafx.scene.control.cell.TextFieldTableCell.forTableColumn());
-        stopCol.setOnEditCommit(e -> e.getRowValue().setOptimizeEnd(e.getNewValue()));
-
-        paramTable.getColumns().addAll(optCol, nameCol, valCol, startCol, stepCol, stopCol);
-
-        final String[] lastCheckedExpert = { engine.getExpert() };
-
-        Runnable updateParamsTable = () -> {
-            String expert = expertField.getText().trim();
-            if (expert.isEmpty()) {
-                paramTable.getItems().clear();
-                return;
-            }
-
-            boolean expertChanged = !expert.equals(lastCheckedExpert[0]);
-            lastCheckedExpert[0] = expert;
-
-            if (expertChanged) {
-                String strategyConfigJson = null;
-                try {
-                    strategyConfigJson = com.backtester.database.DatabaseManager.getInstance().getWorkflowStrategyConfig(expert);
-                } catch (Exception ignored) {}
-
-                if (strategyConfigJson != null && !strategyConfigJson.isEmpty()) {
-                    try {
-                        boolean loaded = engine.loadStrategyConfig(expert);
-                        if (loaded) {
-                            symbolField.setText(engine.getSymbol());
-                            periodCombo.setValue(engine.getPeriod());
-                            fromDatePicker.setValue(engine.getFromDate());
-                            toDatePicker.setValue(engine.getToDate());
-                            depField.setText(String.valueOf(engine.getDeposit()));
-                            curField.setText(engine.getCurrency());
-                            levField.setText(engine.getLeverage());
-                            if (engine.getTickModel() >= 0 && engine.getTickModel() < modelCombo.getItems().size()) {
-                                modelCombo.getSelectionModel().select(engine.getTickModel());
-                            }
-
-                            List<EaParameter> tableCopy = new ArrayList<>();
-                            for (EaParameter p : engine.getEaParameters()) {
-                                EaParameter copy = new EaParameter();
-                                copy.setName(p.getName());
-                                copy.setValue(p.getValue());
-                                copy.setDefaultValue(p.getDefaultValue() != null ? p.getDefaultValue() : p.getValue());
-                                copy.setSection(p.getSection());
-                                copy.setOptimizeStart(p.getOptimizeStart());
-                                copy.setOptimizeStep(p.getOptimizeStep());
-                                copy.setOptimizeEnd(p.getOptimizeEnd());
-                                copy.setOptimizeEnabled(p.isOptimizeEnabled());
-                                copy.setStringType(p.isStringType());
-                                tableCopy.add(copy);
-                            }
-                            paramTable.getItems().setAll(tableCopy);
-                            return;
-                        }
-                    } catch (Exception ignored) {}
-                }
-            }
-
-            String rawSymbol = symbolField.getText().trim();
-            String symbol = "EURUSD";
-            if (!rawSymbol.isEmpty()) {
-                if (rawSymbol.contains(",")) {
-                    symbol = rawSymbol.split(",\\s*")[0];
-                } else {
-                    symbol = rawSymbol;
-                }
-            }
-            String period = periodCombo.getValue() != null ? periodCombo.getValue() : "H1";
-
-            // Try DB first
-            String dbParamsJson = null;
-            try {
-                dbParamsJson = com.backtester.database.DatabaseManager.getInstance().getEaParameterSettings(expert, symbol, period);
-            } catch (Exception ignored) {}
-
-            List<EaParameter> params = null;
-            if (dbParamsJson != null && !dbParamsJson.isEmpty()) {
-                try {
-                    java.lang.reflect.Type listType = new com.google.gson.reflect.TypeToken<java.util.List<com.backtester.config.EaParameter>>(){}.getType();
-                    params = new com.google.gson.Gson().fromJson(dbParamsJson, listType);
-                } catch (Exception ignored) {}
-            }
-
-            if (params == null || params.isEmpty()) {
-                params = eaParamManager.getEffectiveParameters(expert);
-            }
-
-            if (params != null) {
-                List<EaParameter> tableCopy = new ArrayList<>();
-                for (EaParameter p : params) {
-                    EaParameter copy = new EaParameter();
-                    copy.setName(p.getName());
-                    copy.setValue(p.getValue());
-                    copy.setDefaultValue(p.getDefaultValue() != null ? p.getDefaultValue() : p.getValue());
-                    copy.setSection(p.getSection());
-                    copy.setOptimizeStart(p.getOptimizeStart());
-                    copy.setOptimizeStep(p.getOptimizeStep());
-                    copy.setOptimizeEnd(p.getOptimizeEnd());
-                    copy.setOptimizeEnabled(p.isOptimizeEnabled());
-                    copy.setStringType(p.isStringType());
-                    tableCopy.add(copy);
-                }
-                paramTable.getItems().setAll(tableCopy);
-            } else {
-                paramTable.getItems().clear();
-            }
-        };
 
         // Set action for browse button
         browseBtn.setOnAction(e -> {
@@ -571,6 +604,10 @@ public class WorkflowConfigDialogs {
                 expertField.setText(robExpert);
                 symbolField.setText(robSymbol);
                 periodCombo.setValue(robPeriod);
+                
+                lastCheckedExpert[0] = robExpert;
+                lastCheckedSymbol[0] = robSymbol;
+                lastCheckedPeriod[0] = robPeriod;
                 
                 List<EaParameter> tableCopy = new ArrayList<>();
                 for (EaParameter p : params) {
@@ -804,7 +841,9 @@ public class WorkflowConfigDialogs {
             passCol.setPrefWidth(65);
             passCol.setStyle("-fx-alignment: CENTER;");
             
-            TableColumn<CombinedPass, Double> scoreCol = new TableColumn<>("Score");
+            TableColumn<CombinedPass, Double> scoreCol = new TableColumn<>();
+            scoreCol.setGraphic(DocHelper.createHeaderWithTooltip("Score", 
+                "Unified Score (0-100):\nGewichteter Gesamtwert aus 10 Kriterien (Profit, DD, PF etc.). Konfigurierbar über das Regler-Symbol. Zeigt die beste Gesamtperformance."));
             scoreCol.setCellValueFactory(c -> new javafx.beans.property.SimpleObjectProperty<>(c.getValue().getScore()));
             scoreCol.setPrefWidth(75);
             scoreCol.setStyle("-fx-alignment: CENTER;");
@@ -822,11 +861,13 @@ public class WorkflowConfigDialogs {
                 }
             });
             
-            TableColumn<CombinedPass, String> robScoreCol = new TableColumn<>("Rob. Scorecard");
+            TableColumn<CombinedPass, String> robScoreCol = new TableColumn<>();
+            robScoreCol.setGraphic(DocHelper.createHeaderWithTooltip("Rob. Scorecard", 
+                "Robustness Scorecard (0-100):\nErgebnis des Monte-Carlo-Stresstests und systematischen Parameter-Shifting. Simuliert Rauschen (Slippage, Spread, Execution) und bewertet die Geradlinigkeit (R²-Stabilität) der Equity-Kurve."));
             robScoreCol.setCellValueFactory(c -> {
                 String fromDateStr = engine.getFromDate() != null ? engine.getFromDate().toString() : "Unbekannt";
                 String toDateStr = engine.getToDate() != null ? engine.getToDate().toString() : "Unbekannt";
-                double score = com.backtester.report.RobustnessScorecardGenerator.calculateOverallScore(c.getValue(), fromDateStr, toDateStr);
+                double score = c.getValue().getCachedOverallScore(fromDateStr, toDateStr);
                 return new javafx.beans.property.SimpleStringProperty(String.format(Locale.US, "%.0f", score));
             });
             robScoreCol.setStyle("-fx-alignment: CENTER;");
@@ -963,9 +1004,12 @@ public class WorkflowConfigDialogs {
         title.setFont(Font.font("Segoe UI", FontWeight.BOLD, 16));
         title.setTextFill(Color.web("#ffd740"));
 
-        Label hint = new Label("Jeder Parameter wird relativ zum anderen gewichtet.\n" +
-                "Die Summe muss nicht genau 100 ergeben — sie wird automatisch normalisiert.\n" +
-                "Unified Score = Performance + Robustheit in einem Score.");
+        Label hint = new Label(
+            "Hier konfigurierst du den UNIFIED SCORE (Spalte 'Score' in den Tabellen).\n" +
+            "Dieser Score bewertet gewichtet die Endergebnisse der Backtest- und Forward-Phase.\n" +
+            "• Er unterscheidet sich vom 'Rob. Scorecard' (Stresstests der Equity-Kurve) und dem 'RI' (mathematisch starrer Index).\n" +
+            "• Die Schieberegler bestimmen das relative Gewicht (die Summe wird automatisch normalisiert)."
+        );
         hint.setWrapText(true);
         hint.setStyle("-fx-text-fill: #7e889a; -fx-font-size: 11px;");
 
@@ -984,7 +1028,7 @@ public class WorkflowConfigDialogs {
             "opt.weight.fwTrades", "opt.weight.recovery"
         };
         String[] defaults = {
-            "10", "15", "15", "15", "10", "10", "5", "10", "5", "5"
+            "15", "15", "10", "10", "10", "25", "5", "5", "30", "25"
         };
         String[] tooltips = {
             "Backtest ROI + Profit Factor — Wie profitabel ist die Strategie im In-Sample?",
@@ -1149,30 +1193,40 @@ public class WorkflowConfigDialogs {
         Button btnPresetLow = new Button("Low / Zahm");
         btnPresetLow.setStyle("-fx-background-color: #2a2d3a; -fx-text-fill: #a7f3d0; -fx-border-color: #10b981; -fx-border-width: 1; -fx-cursor: hand;");
         btnPresetLow.setOnAction(e -> {
-            int[] lowWeights = {20, 20, 10, 10, 5, 5, 3, 5, 10, 5};
+            int[] lowWeights = {15, 15, 10, 10, 5, 15, 3, 5, 20, 15};
             for (int i = 0; i < N; i++) sliders[i].setValue(lowWeights[i]);
         });
 
         Button btnPresetMed = new Button("Med / Ausgewogen");
         btnPresetMed.setStyle("-fx-background-color: #2a2d3a; -fx-text-fill: #fde047; -fx-border-color: #eab308; -fx-border-width: 1; -fx-cursor: hand;");
         btnPresetMed.setOnAction(e -> {
-            int[] medWeights = {10, 15, 15, 15, 10, 10, 5, 10, 5, 5};
+            int[] medWeights = {10, 15, 15, 15, 10, 25, 5, 10, 30, 25};
             for (int i = 0; i < N; i++) sliders[i].setValue(medWeights[i]);
         });
 
         Button btnPresetHigh = new Button("High / Streng");
         btnPresetHigh.setStyle("-fx-background-color: #2a2d3a; -fx-text-fill: #fca5a5; -fx-border-color: #ef4444; -fx-border-width: 1; -fx-cursor: hand;");
         btnPresetHigh.setOnAction(e -> {
-            int[] highWeights = {5, 10, 15, 20, 15, 15, 5, 15, 3, 5};
+            int[] highWeights = {5, 10, 15, 15, 15, 25, 5, 15, 35, 30};
             for (int i = 0; i < N; i++) sliders[i].setValue(highWeights[i]);
         });
 
-        HBox presetRow = new HBox(8, new Label("Voreinstellungen:"), btnPresetLow, btnPresetMed, btnPresetHigh);
+        Button btnPresetGrid = new Button("Grid / High-Trade");
+        btnPresetGrid.setStyle("-fx-background-color: #2a2d3a; -fx-text-fill: #38bdf8; -fx-border-color: #0284c7; -fx-border-width: 1; -fx-cursor: hand;");
+        btnPresetGrid.setOnAction(e -> {
+            int[] gridWeights = {5, 5, 15, 5, 5, 35, 5, 5, 35, 40};
+            for (int i = 0; i < N; i++) sliders[i].setValue(gridWeights[i]);
+        });
+
+        HBox presetRow = new HBox(8, new Label("Voreinstellungen:"), btnPresetLow, btnPresetMed, btnPresetHigh, btnPresetGrid);
         presetRow.setAlignment(Pos.CENTER_LEFT);
         presetRow.getChildren().get(0).setStyle("-fx-text-fill: #b4bac8;");
 
-        HBox btnRow = new HBox(10, resetBtn, new Region(), applyBtn, cancelBtn);
-        HBox.setHgrow(btnRow.getChildren().get(1), Priority.ALWAYS);
+        Button mainInfoBtn = DocHelper.createThickCircularInfoButton("Erklärung aller Indizes und Kennzahlen", () -> {
+            DocHelper.showAllIndicesDocDialog(dialog);
+        });
+        HBox btnRow = new HBox(10, resetBtn, mainInfoBtn, new Region(), applyBtn, cancelBtn);
+        HBox.setHgrow(btnRow.getChildren().get(2), Priority.ALWAYS);
         btnRow.setAlignment(Pos.CENTER_LEFT);
 
         Separator sep = new Separator();
@@ -1464,7 +1518,9 @@ public class WorkflowConfigDialogs {
         passCol.setPrefWidth(65);
         passCol.setStyle("-fx-alignment: CENTER;");
 
-        TableColumn<CombinedPass, Double> scoreCol = new TableColumn<>("Unified-Score");
+        TableColumn<CombinedPass, Double> scoreCol = new TableColumn<>();
+        scoreCol.setGraphic(DocHelper.createHeaderWithTooltip("Score", 
+            "Unified Score (0-100):\nGewichteter Gesamtwert aus 10 Kriterien (Profit, DD, PF etc.). Konfigurierbar über das Regler-Symbol. Zeigt die beste Gesamtperformance."));
         scoreCol.setCellValueFactory(c -> new javafx.beans.property.SimpleObjectProperty<>(c.getValue().getScore()));
         scoreCol.setPrefWidth(100);
         scoreCol.setStyle("-fx-alignment: CENTER;");
@@ -1482,11 +1538,13 @@ public class WorkflowConfigDialogs {
             }
         });
 
-        TableColumn<CombinedPass, String> robScoreCol = new TableColumn<>("Rob. Scorecard");
+        TableColumn<CombinedPass, String> robScoreCol = new TableColumn<>();
+        robScoreCol.setGraphic(DocHelper.createHeaderWithTooltip("Rob. Scorecard", 
+            "Robustness Scorecard (0-100):\nErgebnis des Monte-Carlo-Stresstests und systematischen Parameter-Shifting. Simuliert Rauschen (Slippage, Spread, Execution) und bewertet die Geradlinigkeit (R²-Stabilität) der Equity-Kurve."));
         robScoreCol.setCellValueFactory(c -> {
             String fromDateStr = engine.getFromDate() != null ? engine.getFromDate().toString() : "Unbekannt";
             String toDateStr = engine.getToDate() != null ? engine.getToDate().toString() : "Unbekannt";
-            double score = com.backtester.report.RobustnessScorecardGenerator.calculateOverallScore(c.getValue(), fromDateStr, toDateStr);
+            double score = c.getValue().getCachedOverallScore(fromDateStr, toDateStr);
             return new javafx.beans.property.SimpleStringProperty(String.format(Locale.US, "%.0f", score));
         });
         robScoreCol.setStyle("-fx-alignment: CENTER;");

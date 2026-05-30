@@ -883,23 +883,23 @@ public class MultiBacktestView {
         
         TableColumn<com.backtester.config.EaParameter, String> valCol = new TableColumn<>("Value");
         valCol.setCellValueFactory(new PropertyValueFactory<>("value"));
-        valCol.setCellFactory(createEnumAwareCellFactory());
+        valCol.setCellFactory(EnumAwareParamCell.forTableColumn());
         valCol.setOnEditCommit(e -> e.getRowValue().setValue(e.getNewValue()));
         valCol.setPrefWidth(100);
         
         TableColumn<com.backtester.config.EaParameter, String> startCol = new TableColumn<>("Start");
         startCol.setCellValueFactory(new PropertyValueFactory<>("optimizeStart"));
-        startCol.setCellFactory(createEnumAwareCellFactory());
+        startCol.setCellFactory(EnumAwareParamCell.forTableColumn());
         startCol.setOnEditCommit(e -> e.getRowValue().setOptimizeStart(e.getNewValue()));
         
         TableColumn<com.backtester.config.EaParameter, String> stepCol = new TableColumn<>("Step");
         stepCol.setCellValueFactory(new PropertyValueFactory<>("optimizeStep"));
-        stepCol.setCellFactory(javafx.scene.control.cell.TextFieldTableCell.forTableColumn());
+        stepCol.setCellFactory(EnumAwareParamCell.forTableColumn());
         stepCol.setOnEditCommit(e -> e.getRowValue().setOptimizeStep(e.getNewValue()));
         
         TableColumn<com.backtester.config.EaParameter, String> stopCol = new TableColumn<>("Stop");
         stopCol.setCellValueFactory(new PropertyValueFactory<>("optimizeEnd"));
-        stopCol.setCellFactory(createEnumAwareCellFactory());
+        stopCol.setCellFactory(EnumAwareParamCell.forTableColumn());
         stopCol.setOnEditCommit(e -> e.getRowValue().setOptimizeEnd(e.getNewValue()));
         
         paramTable.getColumns().addAll(optCol, nameCol, valCol, startCol, stepCol, stopCol);
@@ -925,130 +925,6 @@ public class MultiBacktestView {
 
         box.getChildren().addAll(title, paramTable, btnBox);
         return box;
-    }
-
-    private static final java.util.Map<String, java.util.List<String>> KNOWN_ENUMS = new java.util.HashMap<>();
-    static {
-        KNOWN_ENUMS.put("typeposition", java.util.Arrays.asList("Buy & Sell", "Buy Only", "Sell Only"));
-    }
-
-    private javafx.util.Callback<TableColumn<com.backtester.config.EaParameter, String>, TableCell<com.backtester.config.EaParameter, String>> createEnumAwareCellFactory() {
-        return col -> new TableCell<com.backtester.config.EaParameter, String>() {
-            private ComboBox<String> comboBox;
-            private TextField textField;
-
-            @Override
-            public void startEdit() {
-                if (!isEmpty()) {
-                    super.startEdit();
-                    com.backtester.config.EaParameter param = getTableRow().getItem();
-                    String lowerName = param != null && param.getName() != null ? param.getName().toLowerCase() : "";
-                    
-                    String currentValue = getItem() != null ? getItem().toLowerCase().trim() : "";
-                    boolean isBool = "true".equals(currentValue) || "false".equals(currentValue);
-                    
-                    if (KNOWN_ENUMS.containsKey(lowerName) || isBool) {
-                        java.util.List<String> options = KNOWN_ENUMS.containsKey(lowerName) ? 
-                            KNOWN_ENUMS.get(lowerName) : java.util.Arrays.asList("false", "true");
-                            
-                        comboBox = new ComboBox<>(FXCollections.observableArrayList(options));
-                        
-                        String v = getItem();
-                        if (isBool) {
-                            comboBox.setValue(v != null ? v.toLowerCase() : "false");
-                        } else {
-                            try {
-                                int idx = Integer.parseInt(v != null ? v.trim() : "0");
-                                if (idx >= 0 && idx < options.size()) {
-                                    comboBox.setValue(options.get(idx));
-                                } else {
-                                    comboBox.setValue(options.get(0));
-                                }
-                            } catch (Exception e) {
-                                comboBox.setValue(options.get(0));
-                            }
-                        }
-
-                        comboBox.valueProperty().addListener((obs, old, newVal) -> {
-                            if (newVal != null) {
-                                if (isBool) {
-                                    commitEdit(newVal);
-                                } else {
-                                    int idx = options.indexOf(newVal);
-                                    if (idx >= 0) commitEdit(String.valueOf(idx));
-                                }
-                            }
-                        });
-                        comboBox.focusedProperty().addListener((obs, old, newVal) -> {
-                            if (!newVal && isEditing()) {
-                                if (isBool) {
-                                    commitEdit(comboBox.getValue());
-                                } else {
-                                    int idx = options.indexOf(comboBox.getValue());
-                                    if (idx >= 0) commitEdit(String.valueOf(idx));
-                                    else cancelEdit();
-                                }
-                            }
-                        });
-                        
-                        setText(null);
-                        setGraphic(comboBox);
-                        comboBox.requestFocus();
-                        comboBox.show();
-                    } else {
-                        textField = new TextField(getItem());
-                        textField.setOnAction(e -> commitEdit(textField.getText()));
-                        textField.focusedProperty().addListener((obs, old, newVal) -> {
-                            if (!newVal && isEditing()) commitEdit(textField.getText());
-                        });
-                        textField.setText(getItem());
-                        setText(null);
-                        setGraphic(textField);
-                        textField.selectAll();
-                        textField.requestFocus();
-                    }
-                }
-            }
-
-            @Override
-            public void cancelEdit() {
-                super.cancelEdit();
-                setText(getDisplayText(getItem()));
-                setGraphic(null);
-            }
-
-            @Override
-            public void updateItem(String item, boolean empty) {
-                super.updateItem(item, empty);
-                if (empty || item == null) {
-                    setText(null);
-                    setGraphic(null);
-                } else {
-                    if (isEditing()) {
-                        // handling in startEdit
-                    } else {
-                        setText(getDisplayText(item));
-                        setGraphic(null);
-                    }
-                }
-            }
-            
-            private String getDisplayText(String val) {
-                if (getTableRow() != null && getTableRow().getItem() != null) {
-                    String lowerName = getTableRow().getItem().getName().toLowerCase();
-                    if (KNOWN_ENUMS.containsKey(lowerName)) {
-                        try {
-                            int idx = Integer.parseInt(val != null ? val.trim() : "0");
-                            java.util.List<String> options = KNOWN_ENUMS.get(lowerName);
-                            if (idx >= 0 && idx < options.size()) {
-                                return options.get(idx);
-                            }
-                        } catch (Exception e) {}
-                    }
-                }
-                return val;
-            }
-        };
     }
 
     private void autoConfigParameters() {
