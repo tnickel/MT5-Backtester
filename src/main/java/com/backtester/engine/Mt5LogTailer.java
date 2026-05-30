@@ -164,22 +164,32 @@ public class Mt5LogTailer implements Runnable {
         return false;
     }
 
-    private void processNewLines(String content, String prefix) {
+    void processNewLines(String content, String prefix) {
         String[] lines = content.split("\\r?\\n");
         for (String line : lines) {
             line = line.trim();
             if (!line.isEmpty()) {
                 String lowerLine = line.toLowerCase();
                 
-                // Parse optimization progress (e.g. "pass 12 returned result")
-                if (progressCallback != null && lowerLine.contains("pass") && lowerLine.contains("returned")) {
-                    try {
-                        java.util.regex.Matcher m = java.util.regex.Pattern.compile("pass\\s+(\\d+)\\s+returned").matcher(lowerLine);
-                        if (m.find()) {
-                            int passNum = Integer.parseInt(m.group(1));
-                            progressCallback.accept(passNum, -1);
-                        }
-                    } catch (Exception e) {}
+                // Parse optimization progress (e.g. "pass 12 returned result" or "produced at generation 5")
+                if (progressCallback != null) {
+                    if (lowerLine.contains("pass") && lowerLine.contains("returned")) {
+                        try {
+                            java.util.regex.Matcher m = java.util.regex.Pattern.compile("pass\\s+(\\d+)\\s+returned").matcher(lowerLine);
+                            if (m.find()) {
+                                int passNum = Integer.parseInt(m.group(1));
+                                progressCallback.accept(passNum, -1);
+                            }
+                        } catch (Exception e) {}
+                    } else if (lowerLine.contains("generation")) {
+                        try {
+                            java.util.regex.Matcher m = java.util.regex.Pattern.compile("generation\\s+(\\d+)").matcher(lowerLine);
+                            if (m.find()) {
+                                int genNum = Integer.parseInt(m.group(1));
+                                progressCallback.accept(genNum, -1);
+                            }
+                        } catch (Exception e) {}
+                    }
                 }
 
                 if (shouldForwardToUi(line)) {

@@ -52,4 +52,19 @@ public class Mt5LogTailerTest {
         assertFalse(Mt5LogTailer.shouldForwardToUi(null));
         assertFalse(Mt5LogTailer.shouldForwardToUi(""));
     }
+
+    @Test
+    public void testProcessProgressParsing() {
+        java.util.concurrent.atomic.AtomicInteger lastProgress = new java.util.concurrent.atomic.AtomicInteger(-1);
+        Mt5LogTailer tailer = new Mt5LogTailer(java.nio.file.Paths.get("."), msg -> {});
+        tailer.setProgressCallback((current, total) -> lastProgress.set(current));
+
+        // Test standard pass
+        tailer.processNewLines("pass 12 returned result 8.5", "[Tester] ");
+        assertEquals(12, lastProgress.get());
+
+        // Test genetic generation
+        tailer.processNewLines("Best result 8.3814 produced at generation 39. Next generation 40", "[Tester] ");
+        assertEquals(39, lastProgress.get());
+    }
 }
