@@ -21,10 +21,15 @@ public class HelpView {
         root = new BorderPane();
         root.setPadding(new Insets(15));
         
-        WebView webView = new WebView();
-        root.setCenter(webView);
-
-        loadManual(webView);
+        try {
+            WebView webView = new WebView();
+            root.setCenter(webView);
+            loadManual(webView);
+        } catch (Throwable t) {
+            javafx.scene.control.Label fallbackLabel = new javafx.scene.control.Label("Could not initialize manual view: " + t.getMessage());
+            fallbackLabel.setStyle("-fx-text-fill: #ff3333; -fx-padding: 20px; -fx-font-family: 'Segoe UI'; -fx-font-size: 14px;");
+            root.setCenter(fallbackLabel);
+        }
     }
 
     private void loadManual(WebView webView) {

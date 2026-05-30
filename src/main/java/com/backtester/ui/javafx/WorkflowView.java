@@ -913,63 +913,71 @@ public class WorkflowView {
         kiReportTab = new Tab("KI-Bericht");
         kiReportTab.setClosable(false);
 
-        kiWebView = new javafx.scene.web.WebView();
-        VBox.setVgrow(kiWebView, Priority.ALWAYS);
-        kiReportTab.setContent(kiWebView);
+        try {
+            kiWebView = new javafx.scene.web.WebView();
+            VBox.setVgrow(kiWebView, Priority.ALWAYS);
+            kiReportTab.setContent(kiWebView);
 
-        // Bind JS Bridge to Java
-        kiWebView.getEngine().getLoadWorker().stateProperty().addListener((obs, oldVal, newVal) -> {
-            if (newVal == Worker.State.SUCCEEDED) {
-                try {
-                    JSObject window = (JSObject) kiWebView.getEngine().executeScript("window");
-                    window.setMember("app", javaBridge);
-                    
-                    // Inject JS click handling and hover effects
-                    String js = 
-                        "function setupTableClicks() {\n" +
-                        "  var tables = document.getElementsByTagName('table');\n" +
-                        "  for (var t = 0; t < tables.length; t++) {\n" +
-                        "    var table = tables[t];\n" +
-                        "    var rows = table.getElementsByTagName('tr');\n" +
-                        "    var headers = rows[0] ? rows[0].getElementsByTagName('th') : [];\n" +
-                        "    var passColIndex = -1;\n" +
-                        "    for (var h = 0; h < headers.length; h++) {\n" +
-                        "      var text = (headers[h].textContent || headers[h].innerText || '').trim();\n" +
-                        "      if (text === 'Pass') {\n" +
-                        "        passColIndex = h;\n" +
-                        "        break;\n" +
-                        "      }\n" +
-                        "    }\n" +
-                        "    if (passColIndex !== -1) {\n" +
-                        "      for (var r = 1; r < rows.length; r++) {\n" +
-                        "        (function() {\n" +
-                        "          var row = rows[r];\n" +
-                        "          var cells = row.getElementsByTagName('td');\n" +
-                        "          if (cells.length > passColIndex) {\n" +
-                        "            var cellText = (cells[passColIndex].textContent || cells[passColIndex].innerText || '').trim();\n" +
-                        "            var passNum = parseInt(cellText, 10);\n" +
-                        "            if (!isNaN(passNum)) {\n" +
-                        "              row.classList.add('clickable-row');\n" +
-                        "              row.title = 'Klicken für Mega-Report für Pass ' + passNum;\n" +
-                        "              row.onclick = function() {\n" +
-                        "                if (window.app) {\n" +
-                        "                  window.app.showPass(passNum);\n" +
-                        "                }\n" +
-                        "              };\n" +
-                        "            }\n" +
-                        "          }\n" +
-                        "        })();\n" +
-                        "      }\n" +
-                        "    }\n" +
-                        "  }\n" +
-                        "}\n" +
-                        "setupTableClicks();";
-                    kiWebView.getEngine().executeScript(js);
-                } catch (Exception ex) {
-                    System.err.println("Fehler beim Initialisieren der JS-Brücke: " + ex.getMessage());
+            // Bind JS Bridge to Java
+            kiWebView.getEngine().getLoadWorker().stateProperty().addListener((obs, oldVal, newVal) -> {
+                if (newVal == Worker.State.SUCCEEDED) {
+                    try {
+                        JSObject window = (JSObject) kiWebView.getEngine().executeScript("window");
+                        window.setMember("app", javaBridge);
+                        
+                        // Inject JS click handling and hover effects
+                        String js = 
+                            "function setupTableClicks() {\n" +
+                            "  var tables = document.getElementsByTagName('table');\n" +
+                            "  for (var t = 0; t < tables.length; t++) {\n" +
+                            "    var table = tables[t];\n" +
+                            "    var rows = table.getElementsByTagName('tr');\n" +
+                            "    var headers = rows[0] ? rows[0].getElementsByTagName('th') : [];\n" +
+                            "    var passColIndex = -1;\n" +
+                            "    for (var h = 0; h < headers.length; h++) {\n" +
+                            "      var text = (headers[h].textContent || headers[h].innerText || '').trim();\n" +
+                            "      if (text === 'Pass') {\n" +
+                            "        passColIndex = h;\n" +
+                            "        break;\n" +
+                            "      }\n" +
+                            "    }\n" +
+                            "    if (passColIndex !== -1) {\n" +
+                            "      for (var r = 1; r < rows.length; r++) {\n" +
+                            "        (function() {\n" +
+                            "          var row = rows[r];\n" +
+                            "          var cells = row.getElementsByTagName('td');\n" +
+                            "          if (cells.length > passColIndex) {\n" +
+                            "            var cellText = (cells[passColIndex].textContent || cells[passColIndex].innerText || '').trim();\n" +
+                            "            var passNum = parseInt(cellText, 10);\n" +
+                            "            if (!isNaN(passNum)) {\n" +
+                            "              row.classList.add('clickable-row');\n" +
+                            "              row.title = 'Klicken für Mega-Report für Pass ' + passNum;\n" +
+                            "              row.onclick = function() {\n" +
+                            "                if (window.app) {\n" +
+                            "                  window.app.showPass(passNum);\n" +
+                            "                }\n" +
+                            "              };\n" +
+                            "            }\n" +
+                            "          }\n" +
+                            "        })();\n" +
+                            "      }\n" +
+                            "    }\n" +
+                            "  }\n" +
+                            "}\n" +
+                            "setupTableClicks();";
+                        kiWebView.getEngine().executeScript(js);
+                    } catch (Exception ex) {
+                        System.err.println("Fehler beim Initialisieren der JS-Brücke: " + ex.getMessage());
+                    }
                 }
-            }
-        });
+            });
+        } catch (Throwable t) {
+            System.err.println("WebView initialization failed (likely headless): " + t.getMessage());
+            kiWebView = null;
+            Label fallbackLabel = new Label("KI-Bericht-Visualisierung ist in diesem System nicht verfügbar (fehlende WebKit-Unterstützung).");
+            fallbackLabel.setStyle("-fx-text-fill: #ff5252; -fx-padding: 20px; -fx-font-size: 13px;");
+            kiReportTab.setContent(fallbackLabel);
+        }
 
         // Tab 3: Logs
         Tab logTab = new Tab("Prozess-Logbuch");
