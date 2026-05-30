@@ -172,4 +172,78 @@ public class PdfReportGeneratorTest {
         assertTrue("Portfolio PDF file should exist", tempPdfFile.exists());
         assertTrue("Portfolio PDF file should not be empty", tempPdfFile.length() > 0);
     }
+
+    @Test
+    public void testGenerateReport_ZeroTrades() throws Exception {
+        // Setup workflow engine mock state
+        WorkflowEngine engine = new WorkflowEngine(null);
+        engine.changeExpert("CC_ADR_Stoch_Grid");
+        engine.setSymbol("EURUSD");
+        engine.setPeriod("H1");
+        engine.setFromDate(LocalDate.of(2026, 1, 1));
+        engine.setToDate(LocalDate.of(2026, 4, 30));
+        engine.setDeposit(10000);
+        engine.setCurrency("USD");
+        engine.setLeverage("1:100");
+        engine.setTickModel(2);
+
+        // Setup mock CombinedPass with 0 trades
+        Pass btPass = new Pass();
+        btPass.setPassNumber(999);
+        btPass.setProfit(0.0);
+        btPass.setTotalTrades(0);
+        btPass.setProfitFactor(1.0);
+        btPass.setDrawdownPercent(0.0);
+        btPass.setRecoveryFactor(0.0);
+        btPass.setSharpeRatio(0.0);
+        
+        Map<String, String> params = new HashMap<>();
+        params.put("InpLots", "0.01");
+        btPass.setParameterValues(params);
+
+        CombinedPass cp = new CombinedPass(btPass, null, 50.0, 1.0, "");
+
+        // Generate report - should not crash with ArithmeticException
+        PdfReportGenerator.generateReport(engine, cp, tempPdfFile);
+
+        assertTrue("PDF file should exist", tempPdfFile.exists());
+        assertTrue("PDF file should not be empty", tempPdfFile.length() > 0);
+    }
+
+    @Test
+    public void testGeneratePortfolioReport_WithForwardResults() throws Exception {
+        WorkflowEngine engine = new WorkflowEngine(null);
+        engine.changeExpert("MyPortfolioEA");
+        engine.setSymbol("GBPUSD");
+        engine.setPeriod("M15");
+        engine.setFromDate(LocalDate.of(2026, 1, 1));
+        engine.setToDate(LocalDate.of(2026, 5, 20));
+        engine.setDeposit(5000);
+        engine.setCurrency("EUR");
+        engine.setLeverage("1:200");
+
+        List<CombinedPass> passes = new ArrayList<>();
+        
+        Pass bt1 = new Pass();
+        bt1.setPassNumber(1);
+        bt1.setProfit(800.0);
+        bt1.setTotalTrades(80);
+        bt1.setProfitFactor(1.9);
+        bt1.setDrawdownPercent(12.0);
+
+        Pass fw1 = new Pass();
+        fw1.setPassNumber(1);
+        fw1.setProfit(200.0);
+        fw1.setTotalTrades(25);
+        fw1.setProfitFactor(1.5);
+        fw1.setDrawdownPercent(5.0);
+
+        passes.add(new CombinedPass(bt1, fw1, 82.0, 1.0, ""));
+
+        // Generate report
+        PdfReportGenerator.generatePortfolioReport(engine, passes, tempPdfFile);
+
+        assertTrue("Portfolio PDF file should exist", tempPdfFile.exists());
+        assertTrue("Portfolio PDF file should not be empty", tempPdfFile.length() > 0);
+    }
 }

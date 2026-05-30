@@ -130,6 +130,7 @@ public class WorkflowDiversityTest {
     @Test
     public void testFilterDiversePasses() {
         WorkflowEngine engine = new WorkflowEngine(null);
+        engine.setForwardMode(0);
         engine.setMinBtProfit(100);
         engine.setMinBtTrades(10);
         engine.setMaxBtDd(30.0);

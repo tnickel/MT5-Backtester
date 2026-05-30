@@ -8,6 +8,32 @@ import javafx.scene.layout.GridPane;
 import javafx.scene.layout.Priority;
 
 public class DocHelper {
+    public static javafx.scene.Node createHeaderWithTooltip(String title, String tooltipText) {
+        javafx.scene.layout.HBox hbox = new javafx.scene.layout.HBox(4);
+        hbox.setAlignment(javafx.geometry.Pos.CENTER);
+        
+        javafx.scene.control.Label label = new javafx.scene.control.Label(title);
+        if (title.equals("Score")) {
+            label.setStyle("-fx-text-fill: #00e5ff; -fx-font-weight: bold;");
+        } else {
+            label.setStyle("-fx-text-fill: #e6e9f0;");
+        }
+        
+        javafx.scene.control.Label infoLabel = new javafx.scene.control.Label("ⓘ");
+        infoLabel.setStyle("-fx-text-fill: #7e889a; -fx-cursor: hand; -fx-font-size: 11px;");
+        
+        javafx.scene.control.Tooltip tooltip = new javafx.scene.control.Tooltip(tooltipText);
+        tooltip.setShowDelay(javafx.util.Duration.millis(100));
+        tooltip.setHideDelay(javafx.util.Duration.millis(5000));
+        tooltip.setMaxWidth(350);
+        tooltip.setWrapText(true);
+        tooltip.setStyle("-fx-font-size: 12px; -fx-background-color: #1e293b; -fx-text-fill: #f8fafc; -fx-border-color: #475569; -fx-border-width: 1px; -fx-border-radius: 4px;");
+        javafx.scene.control.Tooltip.install(infoLabel, tooltip);
+        
+        hbox.getChildren().addAll(label, infoLabel);
+        return hbox;
+    }
+
     public static Button createInfoButton(String tabName, String overview, String details) {
         Button infoBtn = new Button("ℹ");
         String normalStyle = "-fx-font-size: 16px; -fx-font-weight: bold; -fx-background-radius: 50%; -fx-min-width: 28px; -fx-min-height: 28px; -fx-text-fill: #00e5ff; -fx-background-color: transparent; -fx-border-color: #00e5ff; -fx-border-radius: 50%; -fx-cursor: hand; -fx-padding: 0;";
@@ -456,26 +482,61 @@ public class DocHelper {
             + ".warning-box { background-color:#1e293b; border-left:4px solid #ffd740; padding:12px; margin:15px 0; border-radius:4px; }"
             + ".info-box { background-color:#1e293b; border-left:4px solid #00e5ff; padding:12px; margin:15px 0; border-radius:4px; }"
             + "</style></head><body>"
-            + "<h2>Wozu brauchen wir diese verschiedenen Indizes?</h2>"
-            + "<p>Im algorithmischen Handel ist der <b>Backtest-Profit die unzuverlässigste Kennzahl überhaupt</b>. Durch die enorme Rechenleistung moderner Computer neigen wir dazu, Handelsstrategien extrem präzise an historische Daten anzupassen (sogenanntes <b>Curve-Fitting</b> oder Überoptimierung). Eine überoptimierte Strategie sieht im historischen Test absolut perfekt aus (hohe Gewinne, winziger Drawdown), verliert aber in der Realität sofort Geld, da sich Märkte niemals exakt wiederholen.</p>"
-            + "<p>Um eine Strategie vor dem Live-Handel auf Herz und Nieren zu prüfen, reicht eine einzige Metrik nicht aus. Wir benötigen <b>verschiedene, unabhängige Indizes</b>, die die Strategie aus unterschiedlichen Blickwinkeln bewerten:</p>"
-            + "<ul>"
-            + "  <li><b>Score (Gesamt-Score)</b>: Bewertet die <i>absoluten Endergebnisse</i> (Wie viel Gewinn, wie hoch war der Drawdown, wie viele Trades wurden gemacht).</li>"
-            + "  <li><b>Konsistenz</b>: Bewertet die <i>Stabilität beim Übergang</i> vom historischen Datensatz (Backtest) auf ungesehene, spätere Daten (Forward-Zeitraum).</li>"
-            + "  <li><b>Rob. Scorecard (Robustheitsscore)</b>: Bewertet die <i>Stabilität der Equity-Kurve</i> unter Manipulationen (Monte Carlo Stresstests, Parameter-Shifting) und misst per linearer Regression (R²-Stabilität), wie geradlinig die Ertragsentwicklung verläuft.</li>"
-            + "  <li><b>KI Rating</b>: Nutzt ein <i>lokales LLM (Künstliche Intelligenz)</i>, um visuelle Muster der Kapitalkurve (wie plötzliche Einbrüche, Phasen der Stagnation oder unnatürliches Verhalten) zu erkennen.</li>"
-            + "  <li><b>RI (Robustness-Index)</b>: Ein <i>mathematisch fixer Benchmark-Wert</i> (ohne benutzerdefinierte Gewichtungen), der den Recovery-Faktor mit der Trade-Frequenz und der Forward-Konsistenz multipliziert, um EAs standardisiert vergleichen zu können.</li>"
-            + "</ul>"
-            + "<h2>1. Score (Gesamt-Score)</h2>"
+            + "<h2>1. Die Erklärung der 5 Kennzahlen (Warum so viele?)</h2>"
+            + "<p>Im algorithmischen Handel ist der <b>nackte Backtest-Profit leider die unzuverlässigste Zahl überhaupt</b>. Durch die Rechenleistung heutiger PCs neigt man dazu, Strategien perfekt an die Vergangenheit anzupassen (<b>Curve-Fitting</b>). Live verliert das System dann sofort Geld.</p>"
+            + "<p>Deshalb beleuchten diese 5 Werte deine Strategien aus 5 völlig unabhängigen Blickwinkeln, um Glückstreffer von robusten Systemen zu trennen:</p>"
+            + "<table>"
+            + "  <thead>"
+            + "    <tr>"
+            + "      <th style='width: 15%;'>Spalte / Begriff</th>"
+            + "      <th style='width: 15%;'>Name im Detail</th>"
+            + "      <th style='width: 35%;'>Was misst dieser Wert?</th>"
+            + "      <th style='width: 35%;'>Wie wird er berechnet?</th>"
+            + "    </tr>"
+            + "  </thead>"
+            + "  <tbody>"
+            + "    <tr>"
+            + "      <td><b>Score</b></td>"
+            + "      <td>Unified Score</td>"
+            + "      <td><b>Performance &amp; Allround-Qualität</b><br>Bewertet die nackten Endergebnisse (Gewinn, Drawdown, Profit-Faktor) am Ende des Tests.</td>"
+            + "      <td>Gewichteter Durchschnitt aus 10 Kriterien, den du im Regler-Symbol (Score-Gewichtung) einstellen kannst.</td>"
+            + "    </tr>"
+            + "    <tr>"
+            + "      <td><b>Konsistenz</b></td>"
+            + "      <td>Forward-Konsistenz</td>"
+            + "      <td><b>Zukunftsträchtigkeit</b><br>Prüft, ob die Strategie auf unbekannten Live-Daten einbricht.</td>"
+            + "      <td>Forward-Gewinn / Backtest-Gewinn. Ein Wert von 1.0 bedeutet: Live läuft es genauso gut wie im Test.</td>"
+            + "    </tr>"
+            + "    <tr>"
+            + "      <td><b>Rob. Scorecard</b></td>"
+            + "      <td>Robustheitsscore</td>"
+            + "      <td><b>Equity-Stabilität &amp; Stresstest</b><br>Simuliert Rauschen (Slippage, Spread, Execution) und prüft, ob die Kapitalkurve stabil bleibt.</td>"
+            + "      <td>Führt Monte-Carlo-Simulationen durch und bewertet per linearer Regression (<i>R²-Stabilität</i>) die Geradlinigkeit der Kurve.</td>"
+            + "    </tr>"
+            + "    <tr>"
+            + "      <td><b>KI</b></td>"
+            + "      <td>KI-Stabilitätsscore</td>"
+            + "      <td><b>Mustererkennung (AI)</b><br>Erkennt optische Risiken (wie Martingale, Grid-Risiken oder plötzliche Abstürze).</td>"
+            + "      <td>Die künstliche Intelligenz (LLM) bewertet den Kurvenverlauf visuell auf einer Skala von 0-100.</td>"
+            + "      </tr>"
+            + "    <tr>"
+            + "      <td><b>RI</b></td>"
+            + "      <td>Robustness Index</td>"
+            + "      <td><b>Mathematischer Baseline-Vergleich</b><br>Ein starrer, ungewichteter Index, bei dem es fast nie zu Gleichständen kommt.</td>"
+            + "      <td>BT Recovery Factor * Trades-Gewichtung * Forward-Konsistenz. Dient als objektiver Tie-Breaker.</td>"
+            + "    </tr>"
+            + "  </tbody>"
+            + "</table>"
+            + "<h2>2. Score (Gesamt-Score)</h2>"
             + "<p>Der kombinierte Gesamt-Score (0–100) berechnet sich aus einem gewichteten Durchschnitt verschiedener Teilbewertungen des Backtests und Forward-Tests (Profit, Profit Factor, Drawdown-Abzüge, Tradeanzahl). Die genauen Gewichtungen können Sie im Tab unter 'Score-Gewichtung' anpassen.</p>"
             + "<div class=\"warning-box\">"
             + "  <strong>⚠️ WICHTIGER UNTERSCHIED:</strong> Der normale Gesamt-Score bewertet ausschließlich die endgültigen Kennzahlen am Ende des Testzeitraums. Er betrachtet <b>nicht</b> den genauen Verlauf der Equity-Kurve!"
             + "</div>"
-            + "<h2>2. Konsistenz</h2>"
+            + "<h2>3. Konsistenz</h2>"
             + "<p>Das Verhältnis des Forward-Gewinns zum Backtest-Gewinn (<code>Forward-Gewinn / Backtest-Gewinn</code>). Ein Wert von 1.0 bedeutet, dass die Strategie im ungesehenen Forward-Zeitraum genauso profitabel war wie im optimierten Backtest. Werte unter 0.2 deuten auf massives Curve-Fitting hin.</p>"
-            + "<h2>3. Rob. Scorecard (Robustheitsscore)</h2>"
+            + "<h2>4. Rob. Scorecard (Robustheitsscore)</h2>"
             + "<p>Der Robustheitsscore (0–100) ist die ultimative Feuerprobe für den tatsächlichen Verlauf der Equity-Kurve. Er führt Monte Carlo Simulationen und systematische Parameter-Verschiebungen (Shifting) durch, um zu prüfen, ob die Strategie auch bei geänderten Marktbedingungen (z.B. breitere Spreads, Slippage, verzögerte Ausführung) profitabel bleibt. <b>Nur der Robustness Score (Rob. Scorecard) analysiert den Verlauf der Kennlinie per linearer Regression (R²-Stabilität)!</b></p>"
-            + "<h2>4. KI Rating (AI Rating) &amp; Gewichtung</h2>"
+            + "<h2>5. KI Rating (AI Rating) &amp; Gewichtung</h2>"
             + "<p>Ein lokales Large Language Model (KI) analysiert die rohe Equity-Kurve auf Anomalien. Es sucht nach versteckten Risiken, plötzlichen Abstürzen oder Phasen unnatürlicher Gewinne, die auf fehlerhafte Logik (z.B. Martingale-Verhalten) hindeuten könnten, und vergibt eine Stabilitätsbewertung von 0 bis 100.</p>"
             + "<h3>Gewichtung im Gesamtwert (Weighted Final Score):</h3>"
             + "<p>Im finalen Portfolio (Schritt 6) wird das KI Rating gewichtet mit dem Unified Score zusammengeführt, um den endgültigen <b>Gesamtwert</b> einer Strategie zu ermitteln:</p>"
@@ -484,8 +545,10 @@ public class DocHelper {
             + "</div>"
             + "<ul>"
             + "  <li><b>Standard-Verhältnis:</b> <code>0.6</code> (60% Performance / Unified Score) und <code>0.4</code> (40% KI-Stabilität).</li>"
-            + "  <li><b>Konfiguration:</b> Das Gewichtungsverhältnis lässt sich im Hauptfenster über den Button <b>'KI-Einstellungen'</b> (im Optimierungs-Tab) oder in <b>Schritt 5 des Workflows</b> anpassen.</li>"
+            + "  <li><b>Konfiguration:</b> Das Gewichtungsverhältnis lässt sich im Hauptfenster über den Button <b>'KI-Einstellungen'</b> (im Optimierungs-Tab) or in <b>Schritt 5 des Workflows</b> anpassen.</li>"
             + "  <li><b>Fallback:</b> Liegt für eine Strategie noch kein KI-Stabilitätswert vor, wird als Gesamtwert automatisch der rohe Unified Score (100% Gewichtung) verwendet.</li>"
+            + "</ul>"
+            + "<h2>6. RI (Robustness-Index)</h2>"n KI-Stabilitätswert vor, wird als Gesamtwert automatisch der rohe Unified Score (100% Gewichtung) verwendet.</li>"
             + "</ul>"
             + "<h2>5. RI (Robustness-Index)</h2>"
             + "<p>Der Robustness-Index (RI) ist ein fixierter Standard-Wert, bei dem es fast nie zu Gleichständen kommt. Er ist wie folgt definiert:</p>"

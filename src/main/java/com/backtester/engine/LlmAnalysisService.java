@@ -244,6 +244,10 @@ public class LlmAnalysisService {
 
             // === SECTION 1: Performance Overview per Pass ===
             sb.append("=== PERFORMANCE-ÜBERSICHT ===\n");
+            log.info("[LLM-Data] performanceData is {} with {} entries for {} passes",
+                    performanceData == null ? "NULL" : "present",
+                    performanceData != null ? performanceData.size() : 0,
+                    activePasses.size());
             if (performanceData != null && !performanceData.isEmpty()) {
                 for (Integer passNum : activePasses) {
                     PassPerformance perf = performanceData.get(passNum);

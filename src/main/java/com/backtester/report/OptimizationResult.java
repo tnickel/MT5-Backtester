@@ -78,6 +78,10 @@ public class OptimizationResult {
         private final double consistency;
         private final String scoreDetails;
 
+        private Double cachedOverallScore = null;
+        private String cachedFromDate = null;
+        private String cachedToDate = null;
+
         public CombinedPass(Pass backtestPass, Pass forwardPass, double score, double consistency, String scoreDetails) {
             this.passNumber  = backtestPass.getPassNumber();
             this.backtestPass  = backtestPass;
@@ -85,6 +89,18 @@ public class OptimizationResult {
             this.score         = score;
             this.consistency   = consistency;
             this.scoreDetails  = scoreDetails;
+        }
+
+        public synchronized double getCachedOverallScore(String fromDate, String toDate) {
+            if (cachedOverallScore != null 
+                    && java.util.Objects.equals(cachedFromDate, fromDate) 
+                    && java.util.Objects.equals(cachedToDate, toDate)) {
+                return cachedOverallScore;
+            }
+            cachedOverallScore = com.backtester.report.RobustnessScorecardGenerator.calculateOverallScore(this, fromDate, toDate);
+            cachedFromDate = fromDate;
+            cachedToDate = toDate;
+            return cachedOverallScore;
         }
 
         public int    getPassNumber()   { return passNumber; }
@@ -205,16 +221,16 @@ public class OptimizationResult {
      * Values are relative — the sum is normalised automatically.
      */
     public static class ScoreWeights {
-        public double wBtProfit      = 10;  // BT Profitabilität (ROI + PF)
+        public double wBtProfit      = 15;  // BT Profitabilität (ROI + PF)
         public double wFwProfit      = 15;  // FW Profitabilität (ROI + PF)
-        public double wConsistency   = 15;  // FW/BT Konsistenz (Profit-Verhältnis)
-        public double wRisk          = 15;  // Risiko-Verhältnis (Return/DD, Calmar)
+        public double wConsistency   = 10;  // FW/BT Konsistenz (Profit-Verhältnis)
+        public double wRisk          = 10;  // Risiko-Verhältnis (Return/DD, Calmar)
         public double wEquityConsist = 10;  // Equity-Konsistenz (R² Stability, SQN)
-        public double wSampleSize    = 10;  // Stichprobengröße (Trades, Jahre)
+        public double wSampleSize    = 25;  // Stichprobengröße (Trades, Jahre)
         public double wSymmetry      =  5;  // Symmetrie (L/S Balance)
-        public double wTailRisk      = 10;  // Tail-Risk (MaxLoss/AvgLoss, MaxLoss/NetProfit)
-        public double wFwTrades      =  5;  // FW Trade Count
-        public double wRecovery      =  5;  // Erholungsfaktor (BT+FW Recovery)
+        public double wTailRisk      =  5;  // Tail-Risk (MaxLoss/AvgLoss, MaxLoss/NetProfit)
+        public double wFwTrades      = 30;  // FW Trade Count
+        public double wRecovery      = 25;  // Erholungsfaktor (BT+FW Recovery)
         public double recoveryMin    = 1.0; // Min threshold for recovery scaling
         public double recoveryMax    = 5.0; // Max threshold for recovery scaling
 
@@ -406,7 +422,7 @@ public class OptimizationResult {
 
         // ── 9. FW Trade Count ──
         double sFwTrades = fw != null
-                ? Math.max(0.0, Math.min(1.0, (fw.getTotalTrades() - 5.0) / 25.0))
+                ? pwl(fw.getTotalTrades(), new double[][]{{100, 0}, {300, 50}, {1000, 100}}) / 100.0
                 : 0.0;
 
         // ── 10. Erholungsfaktor (BT + FW Recovery) ──

@@ -296,7 +296,7 @@ public class RobustnessView {
         
         TableColumn<EaParameter, String> valCol = new TableColumn<>("Value");
         valCol.setCellValueFactory(new PropertyValueFactory<>("value"));
-        valCol.setCellFactory(javafx.scene.control.cell.TextFieldTableCell.forTableColumn());
+        valCol.setCellFactory(EnumAwareParamCell.forTableColumn());
         valCol.setOnEditCommit(e -> {
             e.getRowValue().setValue(e.getNewValue());
             saveParametersOnDemand();
@@ -305,7 +305,7 @@ public class RobustnessView {
         
         TableColumn<EaParameter, String> startCol = new TableColumn<>("Start");
         startCol.setCellValueFactory(new PropertyValueFactory<>("optimizeStart"));
-        startCol.setCellFactory(javafx.scene.control.cell.TextFieldTableCell.forTableColumn());
+        startCol.setCellFactory(EnumAwareParamCell.forTableColumn());
         startCol.setOnEditCommit(e -> {
             e.getRowValue().setOptimizeStart(e.getNewValue());
             saveParametersOnDemand();
@@ -313,7 +313,7 @@ public class RobustnessView {
         
         TableColumn<EaParameter, String> stepCol = new TableColumn<>("Step");
         stepCol.setCellValueFactory(new PropertyValueFactory<>("optimizeStep"));
-        stepCol.setCellFactory(javafx.scene.control.cell.TextFieldTableCell.forTableColumn());
+        stepCol.setCellFactory(EnumAwareParamCell.forTableColumn());
         stepCol.setOnEditCommit(e -> {
             e.getRowValue().setOptimizeStep(e.getNewValue());
             saveParametersOnDemand();
@@ -321,7 +321,7 @@ public class RobustnessView {
         
         TableColumn<EaParameter, String> stopCol = new TableColumn<>("Stop");
         stopCol.setCellValueFactory(new PropertyValueFactory<>("optimizeEnd"));
-        stopCol.setCellFactory(javafx.scene.control.cell.TextFieldTableCell.forTableColumn());
+        stopCol.setCellFactory(EnumAwareParamCell.forTableColumn());
         stopCol.setOnEditCommit(e -> {
             e.getRowValue().setOptimizeEnd(e.getNewValue());
             saveParametersOnDemand();
