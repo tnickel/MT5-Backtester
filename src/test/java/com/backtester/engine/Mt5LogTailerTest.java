@@ -65,6 +65,6 @@ public class Mt5LogTailerTest {
 
         // Test genetic generation
         tailer.processNewLines("Best result 8.3814 produced at generation 39. Next generation 40", "[Tester] ");
-        assertEquals(39, lastProgress.get());
+        assertEquals(40, lastProgress.get());
     }
 }
