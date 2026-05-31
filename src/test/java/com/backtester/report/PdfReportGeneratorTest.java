@@ -246,4 +246,101 @@ public class PdfReportGeneratorTest {
         assertTrue("Portfolio PDF file should exist", tempPdfFile.exists());
         assertTrue("Portfolio PDF file should not be empty", tempPdfFile.length() > 0);
     }
+
+    @Test
+    public void testGenerateReport_WithKiReport() throws Exception {
+        WorkflowEngine engine = new WorkflowEngine(null);
+        engine.changeExpert("CC_ADR_Stoch_Grid");
+        engine.setSymbol("EURUSD");
+        engine.setPeriod("H1");
+        engine.setFromDate(LocalDate.of(2026, 1, 1));
+        engine.setToDate(LocalDate.of(2026, 4, 30));
+        engine.setDeposit(10000);
+        engine.setCurrency("USD");
+        engine.setLeverage("1:100");
+        engine.setTickModel(2);
+
+        Pass btPass = new Pass();
+        btPass.setPassNumber(574);
+        btPass.setProfit(1500.0);
+        btPass.setTotalTrades(120);
+        btPass.setProfitFactor(2.1);
+        btPass.setDrawdownPercent(8.5);
+        btPass.setRecoveryFactor(5.2);
+        btPass.setSharpeRatio(2.3);
+        
+        Map<String, String> params = new HashMap<>();
+        params.put("InpLots", "0.02");
+        btPass.setParameterValues(params);
+
+        CombinedPass cp = new CombinedPass(btPass, null, 85.0, 1.0, "");
+
+        String kiReportText = "TEIL 1:\n" +
+                "| Pass | Status | Score | Profit (BT/FW) | Trades (BT/FW) | CV worst | Fragile | Kurvenform | Fazit |\n" +
+                "|---|---|---|---|---|---|---|---|---|\n" +
+                "| 574 | Fragil | 45 | 1214 / 1149 | 303 / 310 | 200.00% | 3 | Chaotisch | Inkonsistent |\n\n" +
+                "TEIL 2:\n" +
+                "STABILITY_SCORE|574|45\n\n" +
+                "TEIL 3:\n" +
+                "**Pass 574 (45):** Der StopLoss zeigt ein chaotisches Verhalten.";
+        engine.setKiReportText(kiReportText);
+
+        PdfReportGenerator.generateReport(engine, cp, tempPdfFile);
+
+        assertTrue("PDF file should exist", tempPdfFile.exists());
+        assertTrue("PDF file should not be empty", tempPdfFile.length() > 0);
+    }
+
+    @Test
+    public void testParseKiTableResult() throws Exception {
+        // Test parsing with valid markdown table
+        String kiReportText = "TEIL 1:\n" +
+                "| Pass | Status | Score | Profit (BT/FW) | Trades (BT/FW) | CV worst | Fragile | Kurvenform | Fazit |\n" +
+                "|---|---|---|---|---|---|---|---|---|\n" +
+                "| 101 | Robust | 85 | 1000 / 800 | 50 / 40 | 12.50% | 0 | Plateau | Sehr gut |\n" +
+                "| 102 | Fragil | 40 | 500 / -100 | 30 / 10 | 45.20% | 2 | Peak | Riskant |\n";
+
+        // Parse stable pass
+        java.lang.reflect.Method method = PdfReportGenerator.class.getDeclaredMethod("parseKiTableResult", String.class, int.class);
+        method.setAccessible(true);
+        PdfReportGenerator.KiTableResult r1 = (PdfReportGenerator.KiTableResult) method.invoke(null, kiReportText, 101);
+        assertEquals("Robust", r1.status);
+        assertEquals("85", r1.score);
+        assertEquals("Plateau", r1.kurvenform);
+        assertEquals("0", r1.fragile);
+        assertEquals("Sehr gut", r1.fazit);
+
+        // Parse fragile pass
+        PdfReportGenerator.KiTableResult r2 = (PdfReportGenerator.KiTableResult) method.invoke(null, kiReportText, 102);
+        assertEquals("Fragil", r2.status);
+        assertEquals("40", r2.score);
+        assertEquals("Peak", r2.kurvenform);
+        assertEquals("2", r2.fragile);
+        assertEquals("Riskant", r2.fazit);
+
+        // Parse non-existent pass
+        PdfReportGenerator.KiTableResult r3 = (PdfReportGenerator.KiTableResult) method.invoke(null, kiReportText, 999);
+        assertEquals("-", r3.status);
+        assertEquals("-", r3.score);
+        assertEquals("-", r3.kurvenform);
+    }
+
+    @Test
+    public void testExtractPassKiReport() throws Exception {
+        String kiReportText = "TEIL 3:\n" +
+                "**Pass 101 (85):** Das ist die ausführliche Begründung.\n\n" +
+                "**Pass 102 (40):** Und das ist ein anderes Urteil.\n";
+
+        java.lang.reflect.Method method = PdfReportGenerator.class.getDeclaredMethod("extractPassKiReport", String.class, int.class);
+        method.setAccessible(true);
+
+        String review1 = (String) method.invoke(null, kiReportText, 101);
+        assertTrue(review1.contains("Das ist die ausführliche Begründung"));
+
+        String review2 = (String) method.invoke(null, kiReportText, 102);
+        assertTrue(review2.contains("Und das ist ein anderes Urteil"));
+
+        String review3 = (String) method.invoke(null, kiReportText, 999);
+        assertTrue(review3.contains("Keine detaillierte KI-Begründung"));
+    }
 }

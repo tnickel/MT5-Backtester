@@ -510,4 +510,283 @@ public class WorkflowEngineTest {
         assertEquals(1, finalSelected.get(0).getPassNumber());
         assertEquals(3, finalSelected.get(1).getPassNumber());
     }
+
+    @Test
+    public void testExportPortfolioWithBestFolder() throws Exception {
+        WorkflowEngine engine = new WorkflowEngine(null);
+        engine.changeExpert("CC_ADR_Stoch_Grid");
+        engine.setSymbol("EURUSD");
+        engine.setPeriod("H1");
+
+        // Set up mock params
+        List<EaParameter> params = new ArrayList<>();
+        params.add(new EaParameter("InpLots", "0.01"));
+        engine.setEaParameters(params);
+
+        // Setup passes
+        List<CombinedPass> finalSelected = new ArrayList<>();
+        
+        // Pass 1: Good stable strategy (KI score 80)
+        Pass p1 = new Pass();
+        p1.setPassNumber(1);
+        p1.setProfit(1000);
+        p1.setTotalTrades(50);
+        p1.setProfitFactor(2.0);
+        p1.setDrawdownPercent(10.0);
+        p1.setParameter("InpLots", "0.01");
+        CombinedPass cp1 = new CombinedPass(p1, null, 80.0, 1.0, "");
+        finalSelected.add(cp1);
+        
+        // Pass 2: Fragile strategy (KI score 40)
+        Pass p2 = new Pass();
+        p2.setPassNumber(2);
+        p2.setProfit(2000);
+        p2.setTotalTrades(60);
+        p2.setProfitFactor(2.5);
+        p2.setDrawdownPercent(15.0);
+        p2.setParameter("InpLots", "0.02");
+        CombinedPass cp2 = new CombinedPass(p2, null, 90.0, 1.0, "");
+        finalSelected.add(cp2);
+
+        engine.setFinalSelectedPasses(finalSelected);
+
+        // Save sensitivity results to set the KI scores in WorkflowEngine
+        List<SensitivityResult> sensitivity = new ArrayList<>();
+        SensitivityResult sr1 = new SensitivityResult(cp1);
+        sr1.setKiResult("80");
+        SensitivityResult sr2 = new SensitivityResult(cp2);
+        sr2.setKiResult("40");
+        sensitivity.add(sr1);
+        sensitivity.add(sr2);
+        engine.setSensitivityResults(sensitivity);
+
+        // Set up temp export folder
+        File tempExportDir = File.createTempFile("temp_export_", "_dir");
+        tempExportDir.delete();
+        tempExportDir.mkdirs();
+        tempExportDir.deleteOnExit();
+        File bestDir = new File(tempExportDir.getParentFile(), "export gut");
+
+        try {
+            engine.exportPortfolio(tempExportDir.getAbsolutePath(), bestDir.getAbsolutePath());
+
+            // Verify normal export subfolder was created
+            File[] files = tempExportDir.listFiles();
+            assertNotNull(files);
+            
+            File subDir = null;
+            for (File f : files) {
+                if (f.isDirectory() && f.getName().startsWith("CC_ADR_Stoch_Grid_EURUSD_H1_")) {
+                    subDir = f;
+                }
+            }
+
+            assertNotNull("Ablauf export subdirectory should exist", subDir);
+            assertTrue("export gut directory should exist", bestDir.exists());
+
+            // Verify normal folder has files for both passes
+            File pass1Set = new File(subDir, "CC_ADR_Stoch_Grid_EURUSD_H1_Pass1.set");
+            File pass2Set = new File(subDir, "CC_ADR_Stoch_Grid_EURUSD_H1_Pass2.set");
+            File pass1Report = new File(subDir, "CC_ADR_Stoch_Grid_EURUSD_H1_Pass1_Report.pdf");
+            File pass2Report = new File(subDir, "CC_ADR_Stoch_Grid_EURUSD_H1_Pass2_Report.pdf");
+            File portfolioReport = new File(subDir, "Portfolio_Report_CC_ADR_Stoch_Grid_EURUSD_H1.pdf");
+
+            assertTrue(pass1Set.exists());
+            assertTrue(pass2Set.exists());
+            assertTrue(pass1Report.exists());
+            assertTrue(pass2Report.exists());
+            assertTrue(portfolioReport.exists());
+
+            // Verify "export gut" folder only has files for pass 1 (KI score >= 70), not pass 2
+            File bestPass1Set = new File(bestDir, "CC_ADR_Stoch_Grid_EURUSD_H1_Pass1.set");
+            File bestPass2Set = new File(bestDir, "CC_ADR_Stoch_Grid_EURUSD_H1_Pass2.set");
+            File bestPass1Report = new File(bestDir, "CC_ADR_Stoch_Grid_EURUSD_H1_Pass1_Report.pdf");
+            File bestPass2Report = new File(bestDir, "CC_ADR_Stoch_Grid_EURUSD_H1_Pass2_Report.pdf");
+
+            assertTrue("Pass 1 (stable) should be copied to export gut", bestPass1Set.exists());
+            assertTrue("Pass 1 report should be copied to export gut", bestPass1Report.exists());
+            assertFalse("Pass 2 (fragile) should not be copied to export gut", bestPass2Set.exists());
+            assertFalse("Pass 2 report should not be copied to export gut", bestPass2Report.exists());
+
+        } finally {
+            // cleanup temp files recursively
+            deleteRecursive(tempExportDir);
+            deleteRecursive(bestDir);
+        }
+    }
+
+    @Test
+    public void testFolderNameSanitizationAndFormatting() throws Exception {
+        WorkflowEngine engine = new WorkflowEngine(null);
+        engine.changeExpert("Expert\\TestBot");
+        // Test dirty characters in symbol and period
+        engine.setSymbol("EUR/USD.FX");
+        engine.setPeriod("H1-custom!");
+
+        // Set up mock params
+        List<EaParameter> params = new ArrayList<>();
+        params.add(new EaParameter("InpLots", "0.01"));
+        engine.setEaParameters(params);
+
+        Pass p1 = new Pass();
+        p1.setPassNumber(1);
+        p1.setProfit(100);
+        p1.setTotalTrades(10);
+        CombinedPass cp = new CombinedPass(p1, null, 80.0, 1.0, "");
+        List<CombinedPass> finalSelected = new ArrayList<>();
+        finalSelected.add(cp);
+        engine.setFinalSelectedPasses(finalSelected);
+
+        File tempExportDir = File.createTempFile("temp_export_san_", "_dir");
+        tempExportDir.delete();
+        tempExportDir.mkdirs();
+        tempExportDir.deleteOnExit();
+
+        try {
+            engine.exportPortfolio(tempExportDir.getAbsolutePath());
+
+            File[] files = tempExportDir.listFiles();
+            assertNotNull(files);
+
+            File subDir = null;
+            for (File f : files) {
+                if (f.isDirectory() && !f.getName().equals("best")) {
+                    subDir = f;
+                }
+            }
+
+            assertNotNull(subDir);
+            // Verify that the forward slash / and exclamation mark ! were sanitized to underscores
+            String expectedPrefix = "TestBot_EUR_USD.FX_H1-custom__";
+            assertTrue("Subfolder name should be sanitized and structured: " + subDir.getName(),
+                    subDir.getName().startsWith(expectedPrefix));
+
+        } finally {
+            deleteRecursive(tempExportDir);
+        }
+    }
+
+    @Test
+    public void testExportPortfolio_NoStableStrategies() throws Exception {
+        WorkflowEngine engine = new WorkflowEngine(null);
+        engine.changeExpert("CC_ADR_Stoch_Grid");
+        engine.setSymbol("EURUSD");
+        engine.setPeriod("H1");
+
+        List<EaParameter> params = new ArrayList<>();
+        params.add(new EaParameter("InpLots", "0.01"));
+        engine.setEaParameters(params);
+
+        Pass p1 = new Pass();
+        p1.setPassNumber(1);
+        p1.setProfit(100);
+        p1.setParameter("InpLots", "0.01");
+        CombinedPass cp1 = new CombinedPass(p1, null, 80.0, 1.0, "");
+
+        List<CombinedPass> finalSelected = new ArrayList<>();
+        finalSelected.add(cp1);
+        engine.setFinalSelectedPasses(finalSelected);
+
+        // Score is 45, which is < 70, meaning no stable strategies
+        List<SensitivityResult> sensitivity = new ArrayList<>();
+        SensitivityResult sr1 = new SensitivityResult(cp1);
+        sr1.setKiResult("45");
+        sensitivity.add(sr1);
+        engine.setSensitivityResults(sensitivity);
+
+        File tempExportDir = File.createTempFile("temp_export_nostable_", "_dir");
+        tempExportDir.delete();
+        tempExportDir.mkdirs();
+        tempExportDir.deleteOnExit();
+        File bestDir = new File(tempExportDir.getParentFile(), "export gut");
+
+        try {
+            engine.exportPortfolio(tempExportDir.getAbsolutePath(), bestDir.getAbsolutePath());
+
+            // Best directory should not exist since no stable strategies were exported
+            assertFalse("export gut folder should not exist", bestDir.exists());
+
+        } finally {
+            deleteRecursive(tempExportDir);
+            deleteRecursive(bestDir);
+        }
+    }
+
+    @Test
+    public void testExportPortfolio_AllStableStrategies() throws Exception {
+        WorkflowEngine engine = new WorkflowEngine(null);
+        engine.changeExpert("CC_ADR_Stoch_Grid");
+        engine.setSymbol("EURUSD");
+        engine.setPeriod("H1");
+
+        List<EaParameter> params = new ArrayList<>();
+        params.add(new EaParameter("InpLots", "0.01"));
+        engine.setEaParameters(params);
+
+        Pass p1 = new Pass();
+        p1.setPassNumber(1);
+        p1.setProfit(100);
+        p1.setParameter("InpLots", "0.01");
+        CombinedPass cp1 = new CombinedPass(p1, null, 80.0, 1.0, "");
+
+        Pass p2 = new Pass();
+        p2.setPassNumber(2);
+        p2.setProfit(200);
+        p2.setParameter("InpLots", "0.02");
+        CombinedPass cp2 = new CombinedPass(p2, null, 90.0, 1.0, "");
+
+        List<CombinedPass> finalSelected = new ArrayList<>();
+        finalSelected.add(cp1);
+        finalSelected.add(cp2);
+        engine.setFinalSelectedPasses(finalSelected);
+
+        // Both score >= 70, meaning all are stable
+        List<SensitivityResult> sensitivity = new ArrayList<>();
+        SensitivityResult sr1 = new SensitivityResult(cp1);
+        sr1.setKiResult("75");
+        SensitivityResult sr2 = new SensitivityResult(cp2);
+        sr2.setKiResult("90");
+        sensitivity.add(sr1);
+        sensitivity.add(sr2);
+        engine.setSensitivityResults(sensitivity);
+
+        File tempExportDir = File.createTempFile("temp_export_allstable_", "_dir");
+        tempExportDir.delete();
+        tempExportDir.mkdirs();
+        tempExportDir.deleteOnExit();
+        File bestDir = new File(tempExportDir.getParentFile(), "export gut");
+
+        try {
+            engine.exportPortfolio(tempExportDir.getAbsolutePath(), bestDir.getAbsolutePath());
+
+            assertTrue("export gut folder should exist", bestDir.exists());
+
+            // Both should be in best folder
+            File bestPass1Set = new File(bestDir, "CC_ADR_Stoch_Grid_EURUSD_H1_Pass1.set");
+            File bestPass2Set = new File(bestDir, "CC_ADR_Stoch_Grid_EURUSD_H1_Pass2.set");
+            File bestPass1Report = new File(bestDir, "CC_ADR_Stoch_Grid_EURUSD_H1_Pass1_Report.pdf");
+            File bestPass2Report = new File(bestDir, "CC_ADR_Stoch_Grid_EURUSD_H1_Pass2_Report.pdf");
+
+            assertTrue(bestPass1Set.exists());
+            assertTrue(bestPass2Set.exists());
+            assertTrue(bestPass1Report.exists());
+            assertTrue(bestPass2Report.exists());
+
+        } finally {
+            deleteRecursive(tempExportDir);
+            deleteRecursive(bestDir);
+        }
+    }
+
+    private void deleteRecursive(File f) {
+        if (f.isDirectory()) {
+            File[] children = f.listFiles();
+            if (children != null) {
+                for (File c : children) {
+                    deleteRecursive(c);
+                }
+            }
+        }
+        f.delete();
+    }
 }

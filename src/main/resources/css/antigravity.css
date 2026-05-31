@@ -105,11 +105,17 @@
 .progress-bar .bar {
     -fx-background-color: linear-gradient(to right, #0099cc, #00e5ff);
     -fx-background-radius: 4;
-    -fx-padding: 3;
+    -fx-background-insets: 1;
 }
 .progress-bar .track {
     -fx-background-color: #14161c;
     -fx-background-radius: 4;
+    -fx-background-insets: 0;
+}
+#workflow-progress-bar {
+    -fx-min-height: 14px;
+    -fx-pref-height: 14px;
+    -fx-max-height: 14px;
 }
 
 /* ScrollBars */
@@ -244,6 +250,24 @@
 }
 .tab:selected .tab-label {
     -fx-text-fill: #00e5ff;
+}
+
+/* Custom Workflow Running Tab Styling (Amber Glow) */
+.tab.workflow-running-tab {
+    -fx-background-color: linear-gradient(to bottom, rgba(255, 179, 0, 0.2), rgba(26, 30, 40, 0.8));
+    -fx-border-color: #ffb300 #3e4555 transparent #3e4555;
+    -fx-border-width: 3 1 0 1;
+    -fx-effect: dropshadow(three-pass-box, rgba(255, 179, 0, 0.6), 15, 0, 0, -2);
+}
+.tab.workflow-running-tab .tab-label {
+    -fx-text-fill: #ffb300;
+    -fx-font-weight: bold;
+}
+.tab.workflow-running-tab:selected {
+    -fx-background-color: linear-gradient(to bottom, rgba(255, 179, 0, 0.35), rgba(11, 13, 19, 0.95));
+    -fx-border-color: #ffb300 transparent transparent transparent;
+    -fx-border-width: 3 0 0 0;
+    -fx-effect: dropshadow(three-pass-box, rgba(255, 179, 0, 0.8), 15, 0, 0, -2);
 }
 
 /* Panel Borders (Optimization Settings, etc) */
@@ -387,6 +411,16 @@
     -fx-border-color: #3e4555;
     -fx-border-width: 1px;
 }
+.chart-legend {
+    -fx-background-color: rgba(20, 27, 38, 0.85);
+    -fx-border-color: #3e4555;
+    -fx-border-radius: 4px;
+    -fx-background-radius: 4px;
+    -fx-padding: 5px;
+}
+.chart-legend .label {
+    -fx-text-fill: #e6e9f0;
+}
 .chart-horizontal-grid-lines {
     -fx-stroke: #2b303d;
 }
@@ -467,5 +501,73 @@
 .table-row-cell.flat-parameter .table-cell {
     -fx-text-fill: #ff8a80;
 }
+
+/* Strategy Review Row Highlighting Classes (Premium Glow & Modena overrides) */
+.table-row-cell.top-choice {
+    -fx-background-color: linear-gradient(to right, rgba(16, 185, 129, 0.45), rgba(16, 185, 129, 0.15));
+    -fx-border-color: #10b981;
+    -fx-border-width: 1px 0 1px 0;
+}
+.table-row-cell.top-choice .table-cell {
+    -fx-text-fill: #10b981;
+    -fx-font-weight: bold;
+}
+.table-row-cell.top-choice:selected {
+    -fx-background-color: linear-gradient(to right, rgba(16, 185, 129, 0.6), rgba(16, 185, 129, 0.25));
+    -fx-border-color: #00e5ff;
+}
+
+.table-row-cell.good-choice {
+    -fx-background-color: rgba(21, 128, 61, 0.35);
+    -fx-border-color: transparent;
+}
+.table-row-cell.good-choice .table-cell {
+    -fx-text-fill: #a7f3d0;
+}
+.table-row-cell.good-choice:selected {
+    -fx-background-color: rgba(21, 128, 61, 0.5);
+    -fx-border-color: #00e5ff;
+    -fx-border-width: 1px 0 1px 0;
+}
+
+.table-row-cell.average-choice {
+    -fx-background-color: rgba(202, 138, 4, 0.3);
+    -fx-border-color: transparent;
+}
+.table-row-cell.average-choice .table-cell {
+    -fx-text-fill: #fde047;
+}
+.table-row-cell.average-choice:selected {
+    -fx-background-color: rgba(202, 138, 4, 0.45);
+    -fx-border-color: #00e5ff;
+    -fx-border-width: 1px 0 1px 0;
+}
+
+.table-row-cell.weak-choice {
+    -fx-background-color: rgba(194, 65, 12, 0.3);
+    -fx-border-color: transparent;
+}
+.table-row-cell.weak-choice .table-cell {
+    -fx-text-fill: #fed7aa;
+}
+.table-row-cell.weak-choice:selected {
+    -fx-background-color: rgba(194, 65, 12, 0.45);
+    -fx-border-color: #00e5ff;
+    -fx-border-width: 1px 0 1px 0;
+}
+
+.table-row-cell.poor-choice {
+    -fx-background-color: rgba(153, 27, 27, 0.35);
+    -fx-border-color: transparent;
+}
+.table-row-cell.poor-choice .table-cell {
+    -fx-text-fill: #fca5a5;
+}
+.table-row-cell.poor-choice:selected {
+    -fx-background-color: rgba(153, 27, 27, 0.5);
+    -fx-border-color: #00e5ff;
+    -fx-border-width: 1px 0 1px 0;
+}
+
 
 

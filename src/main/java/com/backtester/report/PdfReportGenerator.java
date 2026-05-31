@@ -208,10 +208,39 @@ public class PdfReportGenerator {
         document.add(new Paragraph("5. KI-Stabilitätsanalyse & Robustheitsurteil", SECTION_FONT));
         document.add(new Paragraph(" ", SMALL_FONT));
 
-        String passKiReview = extractPassKiReport(engine.getKiReportText(), passNum);
-        Paragraph kiPara = new Paragraph(passKiReview, TEXT_FONT);
-        kiPara.setSpacingAfter(20);
-        document.add(kiPara);
+        String kiReportText = engine.getKiReportText();
+        if (kiReportText == null || kiReportText.isEmpty()) {
+            document.add(new Paragraph("Keine KI-Bewertung vorhanden.", TEXT_FONT));
+        } else {
+            KiTableResult kiResult = parseKiTableResult(kiReportText, passNum);
+
+            PdfPTable kiTable = new PdfPTable(2);
+            kiTable.setWidthPercentage(100);
+            kiTable.setSpacingAfter(15);
+            kiTable.setWidths(new float[]{30, 70});
+
+            addTableCell(kiTable, "KI Robustheits-Urteil:", BOLD_FONT);
+            addTableCell(kiTable, kiResult.status, TEXT_FONT);
+
+            addTableCell(kiTable, "KI Stabilitäts-Score:", BOLD_FONT);
+            addTableCell(kiTable, kiResult.score + " / 100", TEXT_FONT);
+
+            addTableCell(kiTable, "Dominante Kurvenform:", BOLD_FONT);
+            addTableCell(kiTable, kiResult.kurvenform, TEXT_FONT);
+
+            addTableCell(kiTable, "Fragile Parameter:", BOLD_FONT);
+            addTableCell(kiTable, kiResult.fragile, TEXT_FONT);
+
+            addTableCell(kiTable, "KI Fazit:", BOLD_FONT);
+            addTableCell(kiTable, kiResult.fazit, TEXT_FONT);
+
+            document.add(kiTable);
+
+            String passKiReview = extractPassKiReport(kiReportText, passNum);
+            Paragraph kiPara = new Paragraph("Detail-Begründung:\n" + passKiReview, TEXT_FONT);
+            kiPara.setSpacingAfter(20);
+            document.add(kiPara);
+        }
 
         // Section 6: Sensitivity Curves (if available)
         List<ParameterSweep> sweeps = loadParameterSweeps(passNum, engine.getExpert(), engine.getSymbol());
@@ -500,6 +529,44 @@ public class PdfReportGenerator {
             }
         }
         return "Keine detaillierte KI-Begründung für Pass " + passNum + " gefunden.";
+    }
+
+    public static class KiTableResult {
+        public String status = "-";
+        public String score = "-";
+        public String profit = "-";
+        public String trades = "-";
+        public String cvWorst = "-";
+        public String fragile = "-";
+        public String kurvenform = "-";
+        public String fazit = "-";
+    }
+
+    private static KiTableResult parseKiTableResult(String fullReport, int passNum) {
+        KiTableResult result = new KiTableResult();
+        if (fullReport == null || fullReport.isEmpty()) {
+            return result;
+        }
+        String passStr = String.valueOf(passNum);
+        String[] lines = fullReport.split("\n");
+        for (String line : lines) {
+            String trimmed = line.trim();
+            if (trimmed.startsWith("|")) {
+                String[] parts = trimmed.split("\\|");
+                if (parts.length >= 10 && parts[1].trim().equals(passStr)) {
+                    result.status = parts[2].trim();
+                    result.score = parts[3].trim();
+                    result.profit = parts[4].trim();
+                    result.trades = parts[5].trim();
+                    if (parts.length > 6) result.cvWorst = parts[6].trim();
+                    if (parts.length > 7) result.fragile = parts[7].trim();
+                    if (parts.length > 8) result.kurvenform = parts[8].trim();
+                    if (parts.length > 9) result.fazit = parts[9].trim();
+                    break;
+                }
+            }
+        }
+        return result;
     }
 
     private static List<Point2D> parseCurveJson(String curveJson) {

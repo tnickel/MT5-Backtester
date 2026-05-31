@@ -155,6 +155,18 @@ public class AppConfig {
         set("export.directory", path);
     }
 
+    public Path getBestExportDirectory() {
+        // Default to a sibling of the export directory: "export gut"
+        String defaultDir = getExportDirectory().resolveSibling("export gut").toAbsolutePath().toString();
+        String dir = get("export.best.directory", defaultDir);
+        Path p = Paths.get(dir);
+        return p.isAbsolute() ? p : basePath.resolve(p);
+    }
+
+    public void setBestExportDirectory(String path) {
+        set("export.best.directory", path);
+    }
+
     public boolean isPortableMode() {
         return getBoolean("mt5.portable.mode", true);
     }

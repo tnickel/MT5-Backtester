@@ -213,4 +213,33 @@ public class UiComponentsCoverageTest {
             assertNotNull(dialog);
         });
     }
+
+    @Test
+    public void testProgressBarStyling() throws Exception {
+        runAndWait(() -> {
+            try {
+                javafx.scene.control.ProgressBar pb = new javafx.scene.control.ProgressBar(0.8);
+                pb.setId("workflow-progress-bar");
+                pb.setPrefWidth(300);
+                javafx.scene.layout.VBox root = new javafx.scene.layout.VBox(pb);
+                javafx.scene.Scene scene = new javafx.scene.Scene(root, 400, 100);
+                java.net.URL cssUrl = getClass().getResource("/css/antigravity.css");
+                assertNotNull("CSS URL should not be null", cssUrl);
+                scene.getStylesheets().add(cssUrl.toExternalForm());
+                root.applyCss();
+                root.layout();
+                
+                System.out.println("==================================================");
+                System.out.println("TESTING PROGRESSBAR:");
+                System.out.println("pb width: " + pb.getWidth() + ", height: " + pb.getHeight());
+                for (javafx.scene.Node node : pb.lookupAll("*")) {
+                    System.out.println("Child: " + node.getTypeSelector() + ", styleClass: " + node.getStyleClass() + ", visible: " + node.isVisible() + ", bounds: " + node.getBoundsInParent());
+                }
+                System.out.println("==================================================");
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+        });
+    }
 }
+
