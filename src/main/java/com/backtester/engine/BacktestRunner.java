@@ -72,7 +72,7 @@ public class BacktestRunner {
         Mt5LogTailer tailer = null;
 
         // Pre-flight: check for stale MT5 processes from previous runs
-        if (!Mt5ProcessGuard.ensureNoStaleProcesses(null, this::logMessage)) {
+        if (!Mt5ProcessGuard.ensureNoStaleProcesses(null, this::logMessage, btConfig.isAutoKillMt5())) {
             logMessage("Backtest aborted: user declined to kill stale MT5 process.");
             return null;
         }
@@ -100,7 +100,7 @@ public class BacktestRunner {
             // MT5 in portable mode only supports ONE instance per directory.
             // If one is already running, the new launch delegates to the existing instance
             // and the launcher exits immediately — breaking our waitFor() logic.
-            if (!checkAndKillExistingMt5(mt5Dir)) {
+            if (!checkAndKillExistingMt5(mt5Dir, btConfig.isAutoKillMt5())) {
                 logMessage("Backtest aborted: User chose not to terminate existing MT5 instance.");
                 return null;
             }
@@ -114,33 +114,27 @@ public class BacktestRunner {
             Files.copy(iniPath, mt5TesterIni, StandardCopyOption.REPLACE_EXISTING);
             logMessage("Copied tester.ini to MT5 directory: " + mt5TesterIni);
 
-            // 4. Build process command
-            ProcessBuilder pb;
+            // 4. Build process arguments
+            java.util.List<String> mt5Args = new java.util.ArrayList<>();
             if (config.isPortableMode()) {
-                pb = new ProcessBuilder(
-                    terminalPath,
-                    "/portable",
-                    "/config:tester_backtest.ini"
-                );
-            } else {
-                pb = new ProcessBuilder(
-                    terminalPath,
-                    "/config:tester_backtest.ini"
-                );
+                mt5Args.add("/portable");
             }
+            mt5Args.add("/config:tester_backtest.ini");
 
-            // CRITICAL: Merge stderr into stdout to prevent 64KB deadlock
-            pb.redirectErrorStream(true);
-            pb.directory(mt5Dir.toFile());
+            logMessage("Starting MT5: " + terminalPath + " " + String.join(" ", mt5Args));
 
-            logMessage("Starting MT5: " + String.join(" ", pb.command()));
-
-            // 4. Start process and log tailer
+            // 4. Start process on Desktop 2 and log tailer
             tailer = new Mt5LogTailer(mt5Dir, this::logMessage);
             tailer.start();
 
-            currentProcess = pb.start();
-            Mt5ProcessGuard.registerProcess(currentProcess);
+            if (btConfig.isUseVirtualDesktop()) {
+                currentProcess = VirtualDesktopHelper.startOnDesktop2(terminalPath, mt5Args, mt5Dir);
+            } else {
+                currentProcess = VirtualDesktopHelper.startNormally(terminalPath, mt5Args, mt5Dir);
+            }
+            if (currentProcess != null) {
+                Mt5ProcessGuard.registerProcess(currentProcess);
+            }
 
             // 5. Asynchronous stream consumer (prevents 64KB buffer deadlock)
             Thread outputConsumer = new Thread(() -> {
@@ -412,7 +406,7 @@ public class BacktestRunner {
      * @param mt5Dir the MT5 installation directory
      * @return true if no MT5 was running or user confirmed termination; false if user declined
      */
-    private boolean checkAndKillExistingMt5(Path mt5Dir) {
+    private boolean checkAndKillExistingMt5(Path mt5Dir, boolean autoKill) {
         try {
             logMessage("Checking for existing MT5 processes...");
 
@@ -435,27 +429,31 @@ public class BacktestRunner {
                 return true;
             }
 
-            // MT5 is running — ask the user for confirmation
+            // MT5 is running — ask the user for confirmation (or auto-kill)
             logMessage("Found running MT5 process(es): PID " + output.replace("\n", ", "));
 
             AtomicBoolean userConfirmed = new AtomicBoolean(false);
-            try {
-                SwingUtilities.invokeAndWait(() -> {
-                    int choice = JOptionPane.showConfirmDialog(
-                        null,
-                        "MetaTrader 5 is already running (PID: " + output.replace("\n", ", ").replace("\r", "") + ").\n\n" +
-                        "MT5 supports only one instance per directory in portable mode.\n" +
-                        "The existing instance must be closed before starting a backtest.\n\n" +
-                        "Terminate the running MT5 instance?",
-                        "MT5 Already Running",
-                        JOptionPane.YES_NO_OPTION,
-                        JOptionPane.WARNING_MESSAGE
-                    );
-                    userConfirmed.set(choice == JOptionPane.YES_OPTION);
-                });
-            } catch (Exception e) {
-                log.error("Error showing confirmation dialog", e);
-                return false;
+            if (autoKill) {
+                userConfirmed.set(true);
+            } else {
+                try {
+                    SwingUtilities.invokeAndWait(() -> {
+                        int choice = JOptionPane.showConfirmDialog(
+                            null,
+                            "MetaTrader 5 is already running (PID: " + output.replace("\n", ", ").replace("\r", "") + ").\n\n" +
+                            "MT5 supports only one instance per directory in portable mode.\n" +
+                            "The existing instance must be closed before starting a backtest.\n\n" +
+                            "Terminate the running MT5 instance?",
+                            "MT5 Already Running",
+                            JOptionPane.YES_NO_OPTION,
+                            JOptionPane.WARNING_MESSAGE
+                        );
+                        userConfirmed.set(choice == JOptionPane.YES_OPTION);
+                    });
+                } catch (Exception e) {
+                    log.error("Error showing confirmation dialog", e);
+                    return false;
+                }
             }
 
             if (!userConfirmed.get()) {

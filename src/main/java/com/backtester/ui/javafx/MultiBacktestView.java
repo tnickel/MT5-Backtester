@@ -1,6 +1,8 @@
 package com.backtester.ui.javafx;
 
 import com.backtester.config.AppConfig;
+import com.backtester.config.Preset;
+import com.backtester.config.PresetManager;
 import com.backtester.engine.BacktestConfig;
 import javafx.collections.FXCollections;
 import javafx.geometry.Insets;
@@ -184,10 +186,268 @@ public class MultiBacktestView {
 
         // Row 4: Presets
         grid.add(new Label("Presets:"), 0, 4);
-        Button set1Btn = new Button("Set 1 (M5 Core Pairs)");
-        set1Btn.getStyleClass().add("button");
-        set1Btn.setOnAction(e -> applySet1Preset());
-        grid.add(set1Btn, 1, 4, 3, 1);
+        ComboBox<Preset> presetCombo = new ComboBox<>();
+        presetCombo.setPrefWidth(220);
+        presetCombo.setPromptText("Preset wählen...");
+        presetCombo.getItems().setAll(PresetManager.getInstance().getPresets());
+
+        Button addPresetBtn = new Button("➕ Neu");
+        addPresetBtn.getStyleClass().add("button");
+
+        Button savePresetBtn = new Button("💾 Speichern");
+        savePresetBtn.getStyleClass().add("button");
+
+        Button editPresetBtn = new Button("✏ Ändern");
+        editPresetBtn.getStyleClass().add("button");
+
+        Button deletePresetBtn = new Button("🗑 Löschen");
+        deletePresetBtn.getStyleClass().add("button");
+
+        HBox presetBox = new HBox(8, presetCombo, addPresetBtn, savePresetBtn, editPresetBtn, deletePresetBtn);
+        presetBox.setAlignment(Pos.CENTER_LEFT);
+        grid.add(presetBox, 1, 4, 3, 1);
+
+        presetCombo.setOnShowing(evt -> {
+            Preset currentSel = presetCombo.getValue();
+            presetCombo.getItems().setAll(PresetManager.getInstance().getPresets());
+            if (currentSel != null) {
+                for (Preset p : presetCombo.getItems()) {
+                    if (p.getName().equals(currentSel.getName())) {
+                        presetCombo.setValue(p);
+                        break;
+                    }
+                }
+            }
+        });
+
+        presetCombo.setOnAction(evt -> {
+            Preset sel = presetCombo.getValue();
+            if (sel != null) {
+                applyPreset(sel);
+            }
+        });
+
+        savePresetBtn.setOnAction(evt -> {
+            Preset sel = presetCombo.getValue();
+            if (sel == null) {
+                Alert alert = new Alert(Alert.AlertType.WARNING, "Bitte wählen Sie zuerst ein Preset aus, auf dem gespeichert werden soll.");
+                if (expertField.getScene() != null) {
+                    alert.initOwner(expertField.getScene().getWindow());
+                }
+                alert.show();
+                return;
+            }
+
+            // Snapshot parameters
+            java.util.List<com.backtester.config.EaParameter> currentParams = new java.util.ArrayList<>();
+            if (paramTable != null && !paramTable.getItems().isEmpty()) {
+                for (com.backtester.config.EaParameter p : paramTable.getItems()) {
+                    com.backtester.config.EaParameter copy = new com.backtester.config.EaParameter();
+                    copy.setName(p.getName());
+                    copy.setValue(p.getValue());
+                    copy.setDefaultValue(p.getDefaultValue() != null ? p.getDefaultValue() : p.getValue());
+                    copy.setSection(p.getSection());
+                    copy.setOptimizeStart(p.getOptimizeStart());
+                    copy.setOptimizeStep(p.getOptimizeStep());
+                    copy.setOptimizeEnd(p.getOptimizeEnd());
+                    copy.setOptimizeEnabled(p.isOptimizeEnabled());
+                    copy.setStringType(p.isStringType());
+                    currentParams.add(copy);
+                }
+            }
+
+            sel.setEaName(expertField.getText().trim());
+            
+            java.util.List<String> selectedSyms = new java.util.ArrayList<>();
+            for (CheckBox cb : symbolBoxes) {
+                if (cb.isSelected()) selectedSyms.add(cb.getText());
+            }
+            sel.setSymbols(String.join(",", selectedSyms));
+            
+            java.util.List<String> selectedTfs = new java.util.ArrayList<>();
+            for (CheckBox cb : timeframeBoxes) {
+                if (cb.isSelected()) selectedTfs.add(cb.getText());
+            }
+            sel.setPeriod(String.join(",", selectedTfs));
+            sel.setEaParameters(currentParams);
+
+            PresetManager.getInstance().savePresets();
+
+            Alert alert = new Alert(Alert.AlertType.INFORMATION, "Preset \"" + sel.getName() + "\" erfolgreich mit den aktuellen Parametern gespeichert.");
+            if (expertField.getScene() != null) {
+                alert.initOwner(expertField.getScene().getWindow());
+            }
+            alert.show();
+        });
+
+        addPresetBtn.setOnAction(evt -> {
+            TextInputDialog inputDialog = new TextInputDialog("Set " + (PresetManager.getInstance().getPresets().size() + 1));
+            inputDialog.setTitle("Neues Preset erstellen");
+            inputDialog.setHeaderText("Preset-Namen eingeben");
+            inputDialog.setContentText("Name:");
+            
+            inputDialog.getDialogPane().setStyle("-fx-background-color: #0b0d13;");
+            inputDialog.getDialogPane().lookup(".content.label").setStyle("-fx-text-fill: #e6e9f0;");
+            inputDialog.getDialogPane().lookup(".header-panel").setStyle("-fx-background-color: #0b0d13;");
+            if (inputDialog.getDialogPane().lookup(".header-panel").lookup(".label") != null) {
+                inputDialog.getDialogPane().lookup(".header-panel").lookup(".label").setStyle("-fx-text-fill: #00e5ff;");
+            }
+            if (expertField.getScene() != null) {
+                inputDialog.initOwner(expertField.getScene().getWindow());
+                if (!expertField.getScene().getStylesheets().isEmpty()) {
+                    inputDialog.getDialogPane().getStylesheets().addAll(expertField.getScene().getStylesheets());
+                }
+            }
+
+            java.util.Optional<String> result = inputDialog.showAndWait();
+            if (result.isPresent() && !result.get().trim().isEmpty()) {
+                String name = result.get().trim();
+                String ea = expertField.getText().trim();
+                
+                java.util.List<String> selectedSyms = new java.util.ArrayList<>();
+                for (CheckBox cb : symbolBoxes) {
+                    if (cb.isSelected()) selectedSyms.add(cb.getText());
+                }
+                String syms = String.join(",", selectedSyms);
+                
+                java.util.List<String> selectedTfs = new java.util.ArrayList<>();
+                for (CheckBox cb : timeframeBoxes) {
+                    if (cb.isSelected()) selectedTfs.add(cb.getText());
+                }
+                String per = String.join(",", selectedTfs);
+                
+                // Snapshot parameters
+                java.util.List<com.backtester.config.EaParameter> currentParams = new java.util.ArrayList<>();
+                if (paramTable != null && !paramTable.getItems().isEmpty()) {
+                    for (com.backtester.config.EaParameter p : paramTable.getItems()) {
+                        com.backtester.config.EaParameter copy = new com.backtester.config.EaParameter();
+                        copy.setName(p.getName());
+                        copy.setValue(p.getValue());
+                        copy.setDefaultValue(p.getDefaultValue() != null ? p.getDefaultValue() : p.getValue());
+                        copy.setSection(p.getSection());
+                        copy.setOptimizeStart(p.getOptimizeStart());
+                        copy.setOptimizeStep(p.getOptimizeStep());
+                        copy.setOptimizeEnd(p.getOptimizeEnd());
+                        copy.setOptimizeEnabled(p.isOptimizeEnabled());
+                        copy.setStringType(p.isStringType());
+                        currentParams.add(copy);
+                    }
+                }
+                
+                Preset newPreset = new Preset(name, ea, syms, per, currentParams);
+                PresetManager.getInstance().addPreset(newPreset);
+                presetCombo.getItems().setAll(PresetManager.getInstance().getPresets());
+                presetCombo.setValue(newPreset);
+            }
+        });
+
+        editPresetBtn.setOnAction(evt -> {
+            Preset sel = presetCombo.getValue();
+            if (sel == null) {
+                Alert alert = new Alert(Alert.AlertType.WARNING, "Bitte wählen Sie zuerst ein Preset aus, das geändert werden soll.");
+                if (expertField.getScene() != null) {
+                    alert.initOwner(expertField.getScene().getWindow());
+                }
+                alert.show();
+                return;
+            }
+
+            TextInputDialog inputDialog = new TextInputDialog(sel.getName());
+            inputDialog.setTitle("Preset bearbeiten");
+            inputDialog.setHeaderText("Ggf. Namen anpassen. Die aktuellen Werte des Formulars\n(EA, Symbole, Periode) werden im Preset gespeichert.");
+            inputDialog.setContentText("Name:");
+
+            inputDialog.getDialogPane().setStyle("-fx-background-color: #0b0d13;");
+            inputDialog.getDialogPane().lookup(".content.label").setStyle("-fx-text-fill: #e6e9f0;");
+            inputDialog.getDialogPane().lookup(".header-panel").setStyle("-fx-background-color: #0b0d13;");
+            if (inputDialog.getDialogPane().lookup(".header-panel").lookup(".label") != null) {
+                inputDialog.getDialogPane().lookup(".header-panel").lookup(".label").setStyle("-fx-text-fill: #00e5ff;");
+            }
+            if (expertField.getScene() != null) {
+                inputDialog.initOwner(expertField.getScene().getWindow());
+                if (!expertField.getScene().getStylesheets().isEmpty()) {
+                    inputDialog.getDialogPane().getStylesheets().addAll(expertField.getScene().getStylesheets());
+                }
+            }
+
+            java.util.Optional<String> result = inputDialog.showAndWait();
+            if (result.isPresent() && !result.get().trim().isEmpty()) {
+                sel.setName(result.get().trim());
+                sel.setEaName(expertField.getText().trim());
+                
+                java.util.List<String> selectedSyms = new java.util.ArrayList<>();
+                for (CheckBox cb : symbolBoxes) {
+                    if (cb.isSelected()) selectedSyms.add(cb.getText());
+                }
+                sel.setSymbols(String.join(",", selectedSyms));
+                
+                java.util.List<String> selectedTfs = new java.util.ArrayList<>();
+                for (CheckBox cb : timeframeBoxes) {
+                    if (cb.isSelected()) selectedTfs.add(cb.getText());
+                }
+                sel.setPeriod(String.join(",", selectedTfs));
+                
+                // Snapshot parameters
+                java.util.List<com.backtester.config.EaParameter> currentParams = new java.util.ArrayList<>();
+                if (paramTable != null && !paramTable.getItems().isEmpty()) {
+                    for (com.backtester.config.EaParameter p : paramTable.getItems()) {
+                        com.backtester.config.EaParameter copy = new com.backtester.config.EaParameter();
+                        copy.setName(p.getName());
+                        copy.setValue(p.getValue());
+                        copy.setDefaultValue(p.getDefaultValue() != null ? p.getDefaultValue() : p.getValue());
+                        copy.setSection(p.getSection());
+                        copy.setOptimizeStart(p.getOptimizeStart());
+                        copy.setOptimizeStep(p.getOptimizeStep());
+                        copy.setOptimizeEnd(p.getOptimizeEnd());
+                        copy.setOptimizeEnabled(p.isOptimizeEnabled());
+                        copy.setStringType(p.isStringType());
+                        currentParams.add(copy);
+                    }
+                }
+                sel.setEaParameters(currentParams);
+                
+                PresetManager.getInstance().savePresets();
+                presetCombo.getItems().setAll(PresetManager.getInstance().getPresets());
+                presetCombo.setValue(sel);
+            }
+        });
+
+        deletePresetBtn.setOnAction(evt -> {
+            Preset sel = presetCombo.getValue();
+            if (sel == null) {
+                Alert alert = new Alert(Alert.AlertType.WARNING, "Bitte wählen Sie zuerst ein Preset aus, das gelöscht werden soll.");
+                if (expertField.getScene() != null) {
+                    alert.initOwner(expertField.getScene().getWindow());
+                }
+                alert.show();
+                return;
+            }
+
+            Alert confirm = new Alert(Alert.AlertType.CONFIRMATION, "Möchten Sie das Preset \"" + sel.getName() + "\" wirklich löschen?", ButtonType.YES, ButtonType.NO);
+            confirm.setTitle("Preset löschen");
+            confirm.setHeaderText("Bestätigung erforderlich");
+            if (expertField.getScene() != null) {
+                confirm.initOwner(expertField.getScene().getWindow());
+            }
+
+            confirm.getDialogPane().setStyle("-fx-background-color: #0b0d13;");
+            confirm.getDialogPane().lookup(".content.label").setStyle("-fx-text-fill: #e6e9f0;");
+            confirm.getDialogPane().lookup(".header-panel").setStyle("-fx-background-color: #0b0d13;");
+            if (confirm.getDialogPane().lookup(".header-panel").lookup(".label") != null) {
+                confirm.getDialogPane().lookup(".header-panel").lookup(".label").setStyle("-fx-text-fill: #00e5ff;");
+            }
+            if (expertField.getScene() != null && !expertField.getScene().getStylesheets().isEmpty()) {
+                confirm.getDialogPane().getStylesheets().addAll(expertField.getScene().getStylesheets());
+            }
+
+            confirm.showAndWait().ifPresent(response -> {
+                if (response == ButtonType.YES) {
+                    PresetManager.getInstance().removePreset(sel);
+                    presetCombo.getItems().setAll(PresetManager.getInstance().getPresets());
+                    presetCombo.setValue(null);
+                }
+            });
+        });
 
         // Middle: Checkbox Selections
         HBox selectionBox = new HBox(20);
@@ -705,23 +965,32 @@ public class MultiBacktestView {
         }
     }
 
-    private void applySet1Preset() {
-        java.util.List<String> corePairs = java.util.List.of(
-            "AUDJPY", "AUDUSD", "EURAUD", "EURCHF", "EURGBP", "EURJPY", "EURUSD",
-            "GBPCHF", "GBPJPY", "GBPUSD", "NZDUSD", "USDCAD", "USDCHF", "USDJPY"
-        );
+    private void applyPreset(Preset sel) {
+        if (sel == null) return;
 
-        // 1. Manage timeframes: only check M5
-        for (CheckBox cb : timeframeBoxes) {
-            if ("M5".equals(cb.getText())) {
-                cb.setSelected(true);
-            } else {
-                cb.setSelected(false);
-            }
+        if (sel.getEaName() != null && !sel.getEaName().isEmpty()) {
+            expertField.setText(sel.getEaName());
         }
 
-        // 2. Manage symbols: check core 14, uncheck others, dynamically add missing ones
-        for (String sym : corePairs) {
+        // 1. Manage timeframes: split by comma, select matched, uncheck others
+        java.util.List<String> targetTfs = new java.util.ArrayList<>();
+        if (sel.getPeriod() != null && !sel.getPeriod().trim().isEmpty()) {
+            for (String tf : sel.getPeriod().split(",\\s*")) {
+                targetTfs.add(tf.trim().toUpperCase());
+            }
+        }
+        for (CheckBox cb : timeframeBoxes) {
+            cb.setSelected(targetTfs.contains(cb.getText().toUpperCase()));
+        }
+
+        // 2. Manage symbols: split by comma, select matched, uncheck others, dynamically add if missing
+        java.util.List<String> targetSymbols = new java.util.ArrayList<>();
+        if (sel.getSymbols() != null && !sel.getSymbols().trim().isEmpty()) {
+            for (String sym : sel.getSymbols().split(",\\s*")) {
+                targetSymbols.add(sym.trim().toUpperCase());
+            }
+        }
+        for (String sym : targetSymbols) {
             CheckBox found = null;
             for (CheckBox cb : symbolBoxes) {
                 if (cb.getText().equals(sym)) {
@@ -736,17 +1005,39 @@ public class MultiBacktestView {
             found.setSelected(true);
         }
 
-        // Uncheck any symbols NOT in the core list
+        // Uncheck any symbols NOT in the target list
         for (CheckBox cb : symbolBoxes) {
-            if (!corePairs.contains(cb.getText())) {
+            if (!targetSymbols.contains(cb.getText())) {
                 cb.setSelected(false);
             }
         }
 
         updateSymbolsPaneTitle();
         updateTimeframesPaneTitle();
+
+        if (sel.getEaParameters() != null && !sel.getEaParameters().isEmpty() && paramTable != null) {
+            java.util.List<com.backtester.config.EaParameter> tableCopy = new java.util.ArrayList<>();
+            for (com.backtester.config.EaParameter p : sel.getEaParameters()) {
+                com.backtester.config.EaParameter copy = new com.backtester.config.EaParameter();
+                copy.setName(p.getName());
+                copy.setValue(p.getValue());
+                copy.setDefaultValue(p.getDefaultValue() != null ? p.getDefaultValue() : p.getValue());
+                copy.setSection(p.getSection());
+                copy.setOptimizeStart(p.getOptimizeStart());
+                copy.setOptimizeStep(p.getOptimizeStep());
+                copy.setOptimizeEnd(p.getOptimizeEnd());
+                copy.setOptimizeEnabled(p.isOptimizeEnabled());
+                copy.setStringType(p.isStringType());
+                tableCopy.add(copy);
+            }
+            paramTable.getItems().setAll(tableCopy);
+            logView.log("INFO", "Loaded " + tableCopy.size() + " parameters directly from preset: " + sel.getName());
+        } else {
+            loadParameters();
+        }
+
         savePreferences();
-        logView.log("INFO", "Applied Set 1 preset (M5 and 14 core currency pairs).");
+        logView.log("INFO", "Applied preset: " + sel.getName());
     }
 
     private void loadBatchesFromDb() {

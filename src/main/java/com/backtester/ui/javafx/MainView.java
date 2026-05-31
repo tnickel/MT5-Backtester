@@ -75,15 +75,23 @@ public class MainView {
         tabPane.getSelectionModel().select(workflowTab);
         workflowView.bindTab(workflowTab);
         
+        // Controlling View
+        ControllingView controllingView = new ControllingView(logView, workflowView);
+        Tab controllingTab = new Tab("📊 Controlling", controllingView.getView());
+        tabPane.getTabs().add(controllingTab);
+        controllingView.bindTab(controllingTab);
+        
         HistoryView historyView = new HistoryView(workflowView);
         Tab databaseTab = new Tab("Database", historyView.getView());
         tabPane.getTabs().add(databaseTab);
         historyView.bindTab(databaseTab);
         
-        // Auto-refresh Database tab when selected
+        // Auto-refresh tabs when selected
         tabPane.getSelectionModel().selectedItemProperty().addListener((obs, oldTab, newTab) -> {
             if (newTab == databaseTab) {
                 historyView.reloadTree();
+            } else if (newTab == controllingTab) {
+                controllingView.refreshResults();
             }
         });
         

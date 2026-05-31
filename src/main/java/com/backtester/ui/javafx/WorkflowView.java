@@ -64,6 +64,7 @@ public class WorkflowView {
     private final BorderPane root;
     private final LogView globalLogView;
     private final WorkflowEngine engine;
+    private Tab workflowTab;
 
     // UI elements
     private VBox flowchartBox;
@@ -154,7 +155,23 @@ public class WorkflowView {
     }
 
     public void bindTab(Tab tab) {
-        // Tab specific binding if needed
+        this.workflowTab = tab;
+    }
+
+    private void setTabRunning(boolean running) {
+        if (workflowTab != null) {
+            Platform.runLater(() -> {
+                if (running) {
+                    if (!workflowTab.getStyleClass().contains("workflow-running-tab")) {
+                        workflowTab.getStyleClass().add("workflow-running-tab");
+                    }
+                    workflowTab.setText("⚡ Workflow Automator [LÄUFT]");
+                } else {
+                    workflowTab.getStyleClass().remove("workflow-running-tab");
+                    workflowTab.setText("🔄 Workflow Automator");
+                }
+            });
+        }
     }
 
     // --- UI Construction ---
@@ -466,6 +483,7 @@ public class WorkflowView {
         clearResultsBtn.setOnAction(e -> clearWorkflowResults());
 
         progressBar = new ProgressBar(0);
+        progressBar.setId("workflow-progress-bar");
         progressBar.setPrefWidth(300);
         HBox.setHgrow(progressBar, Priority.ALWAYS);
 
@@ -1316,6 +1334,44 @@ public class WorkflowView {
 
         logToConsole("WORKFLOW", "=== AUTOMATION GESTARTET ===");
 
+        // Show Desktop 2 info toast, then start the workflow after it disappears
+        showDesktop2Notification(() -> launchWorkflowTask());
+    }
+
+    /**
+     * Shows a brief notification telling the user that MT5 runs on Desktop 2.
+     * Auto-dismisses after 2 seconds, then calls the onDismissed callback.
+     */
+    private void showDesktop2Notification(Runnable onDismissed) {
+        Alert alert = new Alert(Alert.AlertType.INFORMATION);
+        alert.setTitle("MetaTrader 5 — Desktop 2");
+        alert.setHeaderText("MetaTrader 5 läuft auf Desktop 2");
+        alert.setContentText(
+            "Um den MetaTrader zu sehen, drücke:\n\n" +
+            "        Strg  +  Win  +  →\n\n" +
+            "Der Workflow startet automatisch..."
+        );
+        alert.initOwner(root.getScene() != null ? root.getScene().getWindow() : null);
+
+        // Style the alert with dark theme
+        alert.getDialogPane().setStyle(
+            "-fx-background-color: #1a1e28; -fx-border-color: #00e5ff; -fx-border-width: 1.5;"
+        );
+
+        alert.show();
+
+        // Auto-dismiss after 2 seconds
+        javafx.animation.PauseTransition pause = new javafx.animation.PauseTransition(javafx.util.Duration.seconds(2));
+        pause.setOnFinished(e -> {
+            alert.setResult(javafx.scene.control.ButtonType.OK);
+            alert.hide();
+            onDismissed.run();
+        });
+        pause.play();
+    }
+
+    private void launchWorkflowTask() {
+        setTabRunning(true);
         activeWorkflowTask = new Task<Void>() {
             @Override
             protected Void call() throws Exception {
@@ -1356,7 +1412,16 @@ public class WorkflowView {
                     final double baseProgress = (double) i / symbols.length;
                     engine.runStep2(
                         logMsg -> logToConsole("MT5-OPT [" + symPrefix + "]", logMsg),
-                        (curr, tot) -> updateProgressUI(baseProgress + (0.10 / symbols.length) + (0.45 / symbols.length) * ((double) curr / Math.max(tot, 1)), "[" + symPrefix + "] Optimierung: Pass " + curr + " / " + tot)
+                        (curr, tot) -> {
+                            if (tot <= 0) {
+                                Platform.runLater(() -> {
+                                    progressBar.setProgress(ProgressBar.INDETERMINATE_PROGRESS);
+                                    progressLabel.setText("[" + symPrefix + "] Optimierung: Pass " + curr);
+                                });
+                            } else {
+                                updateProgressUI(baseProgress + (0.10 / symbols.length) + (0.45 / symbols.length) * ((double) curr / Math.max(tot, 1)), "[" + symPrefix + "] Optimierung: Pass " + curr + " / " + tot);
+                            }
+                        }
                     );
                     
                     Platform.runLater(() -> {
@@ -1489,6 +1554,7 @@ public class WorkflowView {
         resetBtn.setDisable(false);
         clearResultsBtn.setDisable(false);
         activeWorkflowTask = null;
+        setTabRunning(false);
     }
 
     private void cancelWorkflow() {
@@ -1552,6 +1618,7 @@ public class WorkflowView {
 
         logToConsole("WORKFLOW", "=== EINZELSCHRITT " + stepNum + " START ===");
 
+        setTabRunning(true);
         activeWorkflowTask = new Task<Void>() {
             @Override
             protected Void call() throws Exception {
@@ -1565,7 +1632,16 @@ public class WorkflowView {
                         updateProgressUI(0.10, "Führe Schritt 2: MT5 Optimierung aus...");
                         engine.runStep2(
                             logMsg -> logToConsole("MT5-OPT", logMsg),
-                            (curr, tot) -> updateProgressUI(0.10 + 0.90 * ((double) curr / Math.max(tot, 1)), "Optimierung: Pass " + curr + " / " + tot)
+                            (curr, tot) -> {
+                                if (tot <= 0) {
+                                    Platform.runLater(() -> {
+                                        progressBar.setProgress(ProgressBar.INDETERMINATE_PROGRESS);
+                                        progressLabel.setText("Optimierung: Pass " + curr);
+                                    });
+                                } else {
+                                    updateProgressUI(0.10 + 0.90 * ((double) curr / Math.max(tot, 1)), "Optimierung: Pass " + curr + " / " + tot);
+                                }
+                            }
                         );
                         break;
                     case 3:
@@ -2645,6 +2721,10 @@ public class WorkflowView {
 
     public WorkflowEngine getEngine() {
         return engine;
+    }
+
+    public boolean isWorkflowRunning() {
+        return activeWorkflowTask != null;
     }
 
     public void refreshUI() {

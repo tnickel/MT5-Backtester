@@ -59,6 +59,12 @@ public class BacktestConfig {
     /** Shutdown terminal after test */
     private boolean shutdownTerminal = true;
 
+    /** Use virtual desktop 2 for execution (default true) */
+    private boolean useVirtualDesktop = true;
+
+    /** Bypasses MT5 confirmation dialogs and kills processes automatically */
+    private boolean autoKillMt5 = false;
+
     // --- Getters & Setters ---
 
     public String getExpert() { return expert; }
@@ -105,6 +111,12 @@ public class BacktestConfig {
 
     public boolean isShutdownTerminal() { return shutdownTerminal; }
     public void setShutdownTerminal(boolean shutdownTerminal) { this.shutdownTerminal = shutdownTerminal; }
+
+    public boolean isUseVirtualDesktop() { return useVirtualDesktop; }
+    public void setUseVirtualDesktop(boolean useVirtualDesktop) { this.useVirtualDesktop = useVirtualDesktop; }
+
+    public boolean isAutoKillMt5() { return autoKillMt5; }
+    public void setAutoKillMt5(boolean autoKillMt5) { this.autoKillMt5 = autoKillMt5; }
 
     /**
      * Creates a directory-safe name for this backtest configuration.

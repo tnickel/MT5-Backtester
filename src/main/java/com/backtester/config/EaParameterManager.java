@@ -248,18 +248,15 @@ public class EaParameterManager {
                 writer.write("ShutdownTerminal=1\r\n");
             }
 
-            // Start MT5 with this config
-            ProcessBuilder pb;
+            // Start MT5 with this config on Desktop 2
+            java.util.List<String> mt5Args = new java.util.ArrayList<>();
             if (appConfig.isPortableMode()) {
-                pb = new ProcessBuilder(terminalPath, "/portable", "/config:" + tempIni.toAbsolutePath());
-            } else {
-                pb = new ProcessBuilder(terminalPath, "/config:" + tempIni.toAbsolutePath());
+                mt5Args.add("/portable");
             }
-            pb.redirectErrorStream(true);
-            pb.directory(mt5Dir.toFile());
+            mt5Args.add("/config:" + tempIni.toAbsolutePath());
 
             log.info("Starting MT5 to generate default config...");
-            Process process = pb.start();
+            Process process = com.backtester.engine.VirtualDesktopHelper.startOnDesktop2(terminalPath, mt5Args, mt5Dir);
 
             // Consume output to prevent deadlock
             Thread outputConsumer = new Thread(() -> {

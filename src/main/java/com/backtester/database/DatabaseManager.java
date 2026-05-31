@@ -156,12 +156,36 @@ public class DatabaseManager {
                 "updated_at INTEGER" +
                 ");";
 
+        String sqlStrategyReviews = "CREATE TABLE IF NOT EXISTS STRATEGY_REVIEWS (" +
+                "expert_name TEXT," +
+                "symbol TEXT," +
+                "period TEXT," +
+                "run_timestamp INTEGER," +
+                "pass_number INTEGER," +
+                "review_text TEXT," +
+                "color_rating TEXT," +
+                "PRIMARY KEY (expert_name, symbol, period, run_timestamp, pass_number)" +
+                ");";
+
+        String sqlStrategyAutomaticReviews = "CREATE TABLE IF NOT EXISTS STRATEGY_AUTOMATIC_REVIEWS (" +
+                "expert_name TEXT," +
+                "symbol TEXT," +
+                "period TEXT," +
+                "run_timestamp INTEGER," +
+                "pass_number INTEGER," +
+                "result_1y_json TEXT," +
+                "result_2y_json TEXT," +
+                "PRIMARY KEY (expert_name, symbol, period, run_timestamp, pass_number)" +
+                ");";
+
         try (Connection conn = connect(); Statement stmt = conn.createStatement()) {
             stmt.execute(sqlHistory);
             stmt.execute(sqlSavedConfig);
             stmt.execute(sqlEaParamSettings);
             stmt.execute(sqlWorkflowState);
             stmt.execute(sqlWorkflowStrategyConfigs);
+            stmt.execute(sqlStrategyReviews);
+            stmt.execute(sqlStrategyAutomaticReviews);
 
             // Check if OPTIMIZATION_STATE has the sensitivity_results_json column, otherwise recreate it
             try {
@@ -839,5 +863,228 @@ public class DatabaseManager {
             log.error("Failed to fetch strategy config from database for: " + expertName, e);
         }
         return null;
+    }
+
+    public static class StrategyReview {
+        private final String expertName;
+        private final String symbol;
+        private final String period;
+        private final long runTimestamp;
+        private final int passNumber;
+        private final String reviewText;
+        private final String colorRating;
+
+        public StrategyReview(String expertName, String symbol, String period, long runTimestamp, int passNumber, String reviewText, String colorRating) {
+            this.expertName = expertName;
+            this.symbol = symbol;
+            this.period = period;
+            this.runTimestamp = runTimestamp;
+            this.passNumber = passNumber;
+            this.reviewText = reviewText;
+            this.colorRating = colorRating;
+        }
+
+        public String getExpertName() { return expertName; }
+        public String getSymbol() { return symbol; }
+        public String getPeriod() { return period; }
+        public long getRunTimestamp() { return runTimestamp; }
+        public int getPassNumber() { return passNumber; }
+        public String getReviewText() { return reviewText; }
+        public String getColorRating() { return colorRating; }
+    }
+
+    public void saveStrategyReview(String expertName, String symbol, String period, long runTimestamp, int passNumber, String reviewText, String colorRating) {
+        String sql = "INSERT OR REPLACE INTO STRATEGY_REVIEWS(expert_name, symbol, period, run_timestamp, pass_number, review_text, color_rating) VALUES(?,?,?,?,?,?,?)";
+        try (Connection conn = connect(); PreparedStatement pstmt = conn.prepareStatement(sql)) {
+            pstmt.setString(1, expertName);
+            pstmt.setString(2, symbol);
+            pstmt.setString(3, period);
+            pstmt.setLong(4, runTimestamp);
+            pstmt.setInt(5, passNumber);
+            pstmt.setString(6, reviewText);
+            pstmt.setString(7, colorRating);
+            pstmt.executeUpdate();
+            log.info("Saved strategy review for {} (Pass {}) with rating {}.", expertName, passNumber, colorRating);
+        } catch (SQLException e) {
+            log.error("Failed to save strategy review", e);
+        }
+    }
+
+    public List<StrategyReview> getAllStrategyReviews() {
+        String sql = "SELECT * FROM STRATEGY_REVIEWS";
+        List<StrategyReview> reviews = new ArrayList<>();
+        try (Connection conn = connect(); Statement stmt = conn.createStatement(); ResultSet rs = stmt.executeQuery(sql)) {
+            while (rs.next()) {
+                reviews.add(new StrategyReview(
+                    rs.getString("expert_name"),
+                    rs.getString("symbol"),
+                    rs.getString("period"),
+                    rs.getLong("run_timestamp"),
+                    rs.getInt("pass_number"),
+                    rs.getString("review_text"),
+                    rs.getString("color_rating")
+                ));
+            }
+        } catch (SQLException e) {
+            log.error("Failed to fetch strategy reviews", e);
+        }
+        return reviews;
+    }
+
+    public HistoryRun getRunById(int id) {
+        String sql = "SELECT * FROM HISTORY_RUNS WHERE id = ?";
+        try (Connection conn = connect(); PreparedStatement pstmt = conn.prepareStatement(sql)) {
+            pstmt.setInt(1, id);
+            try (ResultSet rs = pstmt.executeQuery()) {
+                if (rs.next()) {
+                    return new HistoryRun(
+                        rs.getInt("id"),
+                        rs.getString("run_type"),
+                        rs.getString("expert_name"),
+                        rs.getLong("timestamp"),
+                        rs.getString("result_json"),
+                        rs.getString("html_path")
+                    );
+                }
+            }
+        } catch (SQLException e) {
+            log.error("Failed to fetch run by ID: " + id, e);
+        }
+        return null;
+    }
+
+    public void updateRunResultJson(int id, String resultJson) {
+        String sql = "UPDATE HISTORY_RUNS SET result_json = ? WHERE id = ?";
+        try (Connection conn = connect(); PreparedStatement pstmt = conn.prepareStatement(sql)) {
+            pstmt.setString(1, resultJson);
+            pstmt.setInt(2, id);
+            pstmt.executeUpdate();
+            log.info("Updated result_json for history run ID {}.", id);
+        } catch (SQLException e) {
+            log.error("Failed to update history run result_json", e);
+        }
+    }
+
+    public void deleteStrategyReview(String expertName, String symbol, String period, long runTimestamp, int passNumber) {
+        String sql = "DELETE FROM STRATEGY_REVIEWS WHERE expert_name = ? AND symbol = ? AND period = ? AND run_timestamp = ? AND pass_number = ?";
+        try (Connection conn = connect(); PreparedStatement pstmt = conn.prepareStatement(sql)) {
+            pstmt.setString(1, expertName);
+            pstmt.setString(2, symbol);
+            pstmt.setString(3, period);
+            pstmt.setLong(4, runTimestamp);
+            pstmt.setInt(5, passNumber);
+            pstmt.executeUpdate();
+            log.info("Deleted strategy review for {} (Pass {}).", expertName, passNumber);
+        } catch (SQLException e) {
+            log.error("Failed to delete strategy review", e);
+        }
+    }
+
+    public static class AutomaticReview {
+        private final String expertName;
+        private final String symbol;
+        private final String period;
+        private final long runTimestamp;
+        private final int passNumber;
+        private final String result1yJson;
+        private final String result2yJson;
+
+        public AutomaticReview(String expertName, String symbol, String period, long runTimestamp, int passNumber, String result1yJson, String result2yJson) {
+            this.expertName = expertName;
+            this.symbol = symbol;
+            this.period = period;
+            this.runTimestamp = runTimestamp;
+            this.passNumber = passNumber;
+            this.result1yJson = result1yJson;
+            this.result2yJson = result2yJson;
+        }
+
+        public String getExpertName() { return expertName; }
+        public String getSymbol() { return symbol; }
+        public String getPeriod() { return period; }
+        public long getRunTimestamp() { return runTimestamp; }
+        public int getPassNumber() { return passNumber; }
+        public String getResult1yJson() { return result1yJson; }
+        public String getResult2yJson() { return result2yJson; }
+    }
+
+    public void saveAutomaticReview(String expertName, String symbol, String period, long runTimestamp, int passNumber, String result1yJson, String result2yJson) {
+        String sql = "INSERT OR REPLACE INTO STRATEGY_AUTOMATIC_REVIEWS(expert_name, symbol, period, run_timestamp, pass_number, result_1y_json, result_2y_json) VALUES(?,?,?,?,?,?,?)";
+        try (Connection conn = connect(); PreparedStatement pstmt = conn.prepareStatement(sql)) {
+            pstmt.setString(1, expertName);
+            pstmt.setString(2, symbol);
+            pstmt.setString(3, period);
+            pstmt.setLong(4, runTimestamp);
+            pstmt.setInt(5, passNumber);
+            pstmt.setString(6, result1yJson);
+            pstmt.setString(7, result2yJson);
+            pstmt.executeUpdate();
+            log.info("Saved automatic review for {} (Pass {}).", expertName, passNumber);
+        } catch (SQLException e) {
+            log.error("Failed to save automatic review", e);
+        }
+    }
+
+    public AutomaticReview getAutomaticReview(String expertName, String symbol, String period, long runTimestamp, int passNumber) {
+        String sql = "SELECT * FROM STRATEGY_AUTOMATIC_REVIEWS WHERE expert_name = ? AND symbol = ? AND period = ? AND run_timestamp = ? AND pass_number = ?";
+        try (Connection conn = connect(); PreparedStatement pstmt = conn.prepareStatement(sql)) {
+            pstmt.setString(1, expertName);
+            pstmt.setString(2, symbol);
+            pstmt.setString(3, period);
+            pstmt.setLong(4, runTimestamp);
+            pstmt.setInt(5, passNumber);
+            try (ResultSet rs = pstmt.executeQuery()) {
+                if (rs.next()) {
+                    return new AutomaticReview(
+                        rs.getString("expert_name"),
+                        rs.getString("symbol"),
+                        rs.getString("period"),
+                        rs.getLong("run_timestamp"),
+                        rs.getInt("pass_number"),
+                        rs.getString("result_1y_json"),
+                        rs.getString("result_2y_json")
+                    );
+                }
+            }
+        } catch (SQLException e) {
+            log.error("Failed to fetch automatic review", e);
+        }
+        return null;
+    }
+
+    public List<AutomaticReview> getAllAutomaticReviews() {
+        String sql = "SELECT * FROM STRATEGY_AUTOMATIC_REVIEWS";
+        List<AutomaticReview> reviews = new ArrayList<>();
+        try (Connection conn = connect(); Statement stmt = conn.createStatement(); ResultSet rs = stmt.executeQuery(sql)) {
+            while (rs.next()) {
+                reviews.add(new AutomaticReview(
+                    rs.getString("expert_name"),
+                    rs.getString("symbol"),
+                    rs.getString("period"),
+                    rs.getLong("run_timestamp"),
+                    rs.getInt("pass_number"),
+                    rs.getString("result_1y_json"),
+                    rs.getString("result_2y_json")
+                ));
+            }
+        } catch (SQLException e) {
+            log.error("Failed to fetch automatic reviews", e);
+        }
+        return reviews;
+    }
+
+    public void deleteAutomaticReview(String expertName, String symbol, String period, long runTimestamp, int passNumber) {
+        String sql = "DELETE FROM STRATEGY_AUTOMATIC_REVIEWS WHERE expert_name = ? AND symbol = ? AND period = ? AND run_timestamp = ? AND pass_number = ?";
+        try (Connection conn = connect(); PreparedStatement pstmt = conn.prepareStatement(sql)) {
+            pstmt.setString(1, expertName);
+            pstmt.setString(2, symbol);
+            pstmt.setString(3, period);
+            pstmt.setLong(4, runTimestamp);
+            pstmt.setInt(5, passNumber);
+            pstmt.executeUpdate();
+            log.info("Deleted automatic review for {} (Pass {}).", expertName, passNumber);
+        } catch (SQLException e) {
+            log.error("Failed to delete automatic review", e);
+        }
     }
 }

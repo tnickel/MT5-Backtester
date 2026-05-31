@@ -62,10 +62,31 @@ public class Mt5ProcessGuard {
      *         false if user cancelled
      */
     public static boolean ensureNoStaleProcesses(Component parentComponent, java.util.function.Consumer<String> logCallback) {
+        return ensureNoStaleProcesses(parentComponent, logCallback, false);
+    }
+
+    public static boolean ensureNoStaleProcesses(Component parentComponent, java.util.function.Consumer<String> logCallback, boolean autoKill) {
         Set<Long> alive = getAliveOurProcesses();
 
         if (alive.isEmpty()) {
             return true; // All clear
+        }
+
+        if (autoKill) {
+            for (Long pid : alive) {
+                ProcessHandle.of(pid).ifPresent(ph -> {
+                    if (logCallback != null) {
+                        logCallback.accept("Beende alten MT5-Prozess (PID " + pid + ")...");
+                    }
+                    ph.destroyForcibly();
+                });
+            }
+            ourPids.removeAll(alive);
+            try { Thread.sleep(500); } catch (InterruptedException ignored) {}
+            if (logCallback != null) {
+                logCallback.accept("Alte MT5-Prozesse wurden automatisch beendet.");
+            }
+            return true;
         }
 
         // Build message

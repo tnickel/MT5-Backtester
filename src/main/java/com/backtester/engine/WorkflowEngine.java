@@ -690,6 +690,11 @@ public class WorkflowEngine {
      * Exports all final selected strategies (sets + PDF reports) to the target directory.
      */
     public void exportPortfolio(String exportDirStr) {
+        String bestDirStr = com.backtester.config.AppConfig.getInstance().getBestExportDirectory().toString();
+        exportPortfolio(exportDirStr, bestDirStr);
+    }
+
+    public void exportPortfolio(String exportDirStr, String bestDirStr) {
         if (finalSelectedPasses == null || finalSelectedPasses.isEmpty()) {
             log.warn("No final selected passes to export.");
             return;
@@ -698,13 +703,12 @@ public class WorkflowEngine {
         try {
             String eaName = com.backtester.config.EaParameterManager.extractEaBaseName(getExpert());
             String dateStr = java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd_HH-mm").format(java.time.LocalDateTime.now());
-            String subDirName = String.format("%s_%s", eaName, dateStr);
+            String symbol = getSymbol().replaceAll("[^a-zA-Z0-9_.-]", "_");
+            String timeframe = getPeriod().replaceAll("[^a-zA-Z0-9_.-]", "_");
+            String subDirName = String.format("%s_%s_%s_%s", eaName, symbol, timeframe, dateStr);
             
             java.nio.file.Path exportPath = java.nio.file.Paths.get(exportDirStr).resolve(subDirName);
             java.nio.file.Files.createDirectories(exportPath);
-
-            String symbol = getSymbol();
-            String timeframe = getPeriod();
 
             // 1. Export individual set files & detailed PDF reports
             for (CombinedPass cp : finalSelectedPasses) {
@@ -741,6 +745,36 @@ public class WorkflowEngine {
             java.io.File combinedPdfFile = exportPath.resolve(combinedReportName).toFile();
             com.backtester.report.PdfReportGenerator.generatePortfolioReport(this, finalSelectedPasses, combinedPdfFile);
             log.info("Exported combined portfolio report to {}", combinedPdfFile);
+
+            // 3. Copy good and stable strategies (KI score >= 70) to the target best directory
+            java.nio.file.Path bestPath = java.nio.file.Paths.get(bestDirStr);
+            boolean createdBestDir = false;
+
+            for (CombinedPass cp : finalSelectedPasses) {
+                int kiScore = getKiScore(cp.getPassNumber());
+                if (kiScore >= 70) {
+                    if (!createdBestDir) {
+                        java.nio.file.Files.createDirectories(bestPath);
+                        createdBestDir = true;
+                    }
+                    int passNum = cp.getPassNumber();
+                    String baseFileName = String.format("%s_%s_%s_Pass%d", eaName, symbol, timeframe, passNum);
+
+                    java.nio.file.Path srcSet = exportPath.resolve(baseFileName + ".set");
+                    java.nio.file.Path destSet = bestPath.resolve(baseFileName + ".set");
+                    if (java.nio.file.Files.exists(srcSet)) {
+                        java.nio.file.Files.copy(srcSet, destSet, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                        log.info("Copied stable preset file to best folder: {}", destSet);
+                    }
+
+                    java.nio.file.Path srcPdf = exportPath.resolve(baseFileName + "_Report.pdf");
+                    java.nio.file.Path destPdf = bestPath.resolve(baseFileName + "_Report.pdf");
+                    if (java.nio.file.Files.exists(srcPdf)) {
+                        java.nio.file.Files.copy(srcPdf, destPdf, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                        log.info("Copied stable detailed report to best folder: {}", destPdf);
+                    }
+                }
+            }
 
         } catch (Exception e) {
             log.error("Failed to export portfolio to " + exportDirStr, e);

@@ -102,28 +102,36 @@ public class OptimizationRunner {
             Files.copy(iniPath, mt5TesterIni, StandardCopyOption.REPLACE_EXISTING);
             logMessage("Copied tester.ini to MT5 directory: " + mt5TesterIni);
 
-            // 5. Build and start process
-            ProcessBuilder pb;
+            // 5. Build and start process on Desktop 2
+            java.util.List<String> mt5Args = new java.util.ArrayList<>();
             if (config.isPortableMode()) {
-                pb = new ProcessBuilder(terminalPath, "/portable", "/config:tester_optimization.ini");
-            } else {
-                pb = new ProcessBuilder(terminalPath, "/config:tester_optimization.ini");
+                mt5Args.add("/portable");
             }
-            pb.directory(mt5Dir.toFile());
+            mt5Args.add("/config:tester_optimization.ini");
 
             final java.util.concurrent.atomic.AtomicInteger currentProgressVal = new java.util.concurrent.atomic.AtomicInteger(0);
             tailer = new Mt5LogTailer(mt5Dir, this::logMessage);
-            tailer.setProgressCallback((current, ignored) -> {
+            tailer.setProgressCallback((current, total) -> {
                 currentProgressVal.set(current);
                 if (progressCallback != null) {
-                    progressCallback.accept(current, (int) totalPasses);
+                    int effectiveTotal = total;
+                    if (effectiveTotal <= 0) {
+                        if (optConfig.getOptimizationMode() == 1 && current <= totalPasses) {
+                            effectiveTotal = (int) totalPasses;
+                        } else {
+                            effectiveTotal = -1;
+                        }
+                    }
+                    progressCallback.accept(current, effectiveTotal);
                 }
             });
             tailer.start();
 
             logMessage("Starting MT5 optimization...");
-            currentProcess = pb.start();
-            Mt5ProcessGuard.registerProcess(currentProcess);
+            currentProcess = VirtualDesktopHelper.startOnDesktop2(terminalPath, mt5Args, mt5Dir);
+            if (currentProcess != null) {
+                Mt5ProcessGuard.registerProcess(currentProcess);
+            }
 
             // Wait for completion
             Path reportXml = mt5Dir.resolve(REPORT_FILENAME + ".xml");
