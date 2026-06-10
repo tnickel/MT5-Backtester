@@ -537,7 +537,34 @@ public class WorkflowView {
         optCol.setPrefWidth(50);
 
         TableColumn<EaParameter, String> nameCol = new TableColumn<>("Variable");
-        nameCol.setCellValueFactory(new PropertyValueFactory<>("name"));
+        nameCol.setCellValueFactory(cellData -> {
+            EaParameter param = cellData.getValue();
+            String display = param.getDisplayName();
+            if (display == null || display.trim().isEmpty()) {
+                display = param.getName();
+            }
+            return new javafx.beans.property.SimpleStringProperty(display);
+        });
+        nameCol.setCellFactory(column -> new TableCell<EaParameter, String>() {
+            private final Tooltip tooltip = new Tooltip();
+            @Override
+            protected void updateItem(String item, boolean empty) {
+                super.updateItem(item, empty);
+                if (empty || item == null) {
+                    setText(null);
+                    setTooltip(null);
+                } else {
+                    setText(item);
+                    EaParameter param = getTableRow() != null ? getTableRow().getItem() : null;
+                    if (param != null) {
+                        tooltip.setText("Variable: " + param.getName());
+                        setTooltip(tooltip);
+                    } else {
+                        setTooltip(null);
+                    }
+                }
+            }
+        });
         nameCol.setPrefWidth(220);
 
         TableColumn<EaParameter, String> valCol = new TableColumn<>("Wert");
@@ -2518,6 +2545,7 @@ public class WorkflowView {
         btConfig.setCurrency(currency);
         btConfig.setLeverage(leverage);
         btConfig.setShutdownTerminal(!visual);
+        btConfig.setVisualMode(visual);
 
         // 2. Prepare parameter override file
         String eaName = EaParameterManager.extractEaBaseName(expert);

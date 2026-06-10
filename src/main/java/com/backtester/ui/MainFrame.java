@@ -124,14 +124,39 @@ public class MainFrame extends JFrame {
         com.backtester.config.AppConfig config = com.backtester.config.AppConfig.getInstance();
         java.util.List<String> warnings = new java.util.ArrayList<>();
 
-        // Check MT5 terminal
-        java.nio.file.Path mt5Path = java.nio.file.Paths.get(config.getMt5TerminalPath());
-        if (!java.nio.file.Files.exists(mt5Path) || !java.nio.file.Files.isRegularFile(mt5Path)) {
-            warnings.add("MetaTrader 5 terminal not found at:\n" + mt5Path + "\n(Please update the path in Settings)");
-            logPanel.log("ERROR", "MT5 Terminal not found: " + mt5Path);
-        } else if (!mt5Path.getFileName().toString().toLowerCase().equals("terminal64.exe")) {
-            warnings.add("Invalid terminal executable. It MUST be named terminal64.exe:\n" + mt5Path + "\n(Please update the path in Settings)");
-            logPanel.log("ERROR", "Invalid MT5 executable named: " + mt5Path.getFileName());
+        // Check MT4/MT5 terminal
+        String mt5PathStr = config.getMt5TerminalPath().trim();
+        if (mt5PathStr.isEmpty()) {
+            if (config.getMt4TerminalPath().trim().isEmpty()) {
+                warnings.add("No MetaTrader terminal paths are configured. Please set them in Settings.");
+            }
+        } else {
+            java.nio.file.Path mt5Path = java.nio.file.Paths.get(mt5PathStr);
+            if (!java.nio.file.Files.exists(mt5Path) || !java.nio.file.Files.isRegularFile(mt5Path)) {
+                warnings.add("MetaTrader 5 terminal not found at:\n" + mt5Path + "\n(Please update the path in Settings)");
+                logPanel.log("ERROR", "MT5 Terminal not found: " + mt5Path);
+            } else {
+                String fileName = mt5Path.getFileName().toString().toLowerCase();
+                if (!fileName.equals("terminal64.exe")) {
+                    warnings.add("Invalid MT5 terminal executable. It MUST be named terminal64.exe:\n" + mt5Path + "\n(Please update the path in Settings)");
+                    logPanel.log("ERROR", "Invalid MT5 executable named: " + mt5Path.getFileName());
+                }
+            }
+        }
+
+        String mt4PathStr = config.getMt4TerminalPath().trim();
+        if (!mt4PathStr.isEmpty()) {
+            java.nio.file.Path mt4Path = java.nio.file.Paths.get(mt4PathStr);
+            if (!java.nio.file.Files.exists(mt4Path) || !java.nio.file.Files.isRegularFile(mt4Path)) {
+                warnings.add("MetaTrader 4 terminal not found at:\n" + mt4Path + "\n(Please update the path in Settings)");
+                logPanel.log("ERROR", "MT4 Terminal not found: " + mt4Path);
+            } else {
+                String fileName = mt4Path.getFileName().toString().toLowerCase();
+                if (!fileName.equals("terminal.exe")) {
+                    warnings.add("Invalid MT4 terminal executable. It MUST be named terminal.exe:\n" + mt4Path + "\n(Please update the path in Settings)");
+                    logPanel.log("ERROR", "Invalid MT4 executable named: " + mt4Path.getFileName());
+                }
+            }
         }
 
         // Check Reports Directory

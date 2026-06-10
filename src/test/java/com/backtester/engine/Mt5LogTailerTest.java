@@ -56,7 +56,7 @@ public class Mt5LogTailerTest {
     @Test
     public void testProcessProgressParsing() {
         java.util.concurrent.atomic.AtomicInteger lastProgress = new java.util.concurrent.atomic.AtomicInteger(-1);
-        Mt5LogTailer tailer = new Mt5LogTailer(java.nio.file.Paths.get("."), msg -> {});
+        Mt5LogTailer tailer = new Mt5LogTailer(java.nio.file.Paths.get("."), com.backtester.config.MetaTraderPlatform.MT5, msg -> {});
         tailer.setProgressCallback((current, total) -> lastProgress.set(current));
 
         // Test standard pass
@@ -66,5 +66,9 @@ public class Mt5LogTailerTest {
         // Test genetic generation
         tailer.processNewLines("Best result 8.3814 produced at generation 39. Next generation 40", "[Tester] ");
         assertEquals(40, lastProgress.get());
+
+        // Test genetic processing percentage
+        tailer.processNewLines("AutoTesting processing 23 %", "[Tester] ");
+        assertEquals(23, lastProgress.get());
     }
 }

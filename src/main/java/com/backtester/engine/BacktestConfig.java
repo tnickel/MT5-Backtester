@@ -65,7 +65,13 @@ public class BacktestConfig {
     /** Bypasses MT5 confirmation dialogs and kills processes automatically */
     private boolean autoKillMt5 = false;
 
+    /** Runs the strategy tester in visual mode */
+    private boolean visualMode = false;
+
     // --- Getters & Setters ---
+
+    public boolean isVisualMode() { return visualMode; }
+    public void setVisualMode(boolean visualMode) { this.visualMode = visualMode; }
 
     public String getExpert() { return expert; }
     public void setExpert(String expert) { this.expert = expert; }
@@ -131,8 +137,8 @@ public class BacktestConfig {
         if (expertName.contains("/")) {
             expertName = expertName.substring(expertName.lastIndexOf('/') + 1);
         }
-        // Remove .ex5 extension if present
-        if (expertName.toLowerCase().endsWith(".ex5")) {
+        // Remove .ex5 or .ex4 extension if present
+        if (expertName.toLowerCase().endsWith(".ex5") || expertName.toLowerCase().endsWith(".ex4")) {
             expertName = expertName.substring(0, expertName.length() - 4);
         }
         return String.format("%s_%s_%s_%s", expertName, period, symbol,

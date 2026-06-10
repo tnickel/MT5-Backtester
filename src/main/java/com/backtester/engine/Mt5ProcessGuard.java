@@ -6,7 +6,7 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * Tracks MT5 processes started by this application and provides a pre-flight check
+ * Tracks MetaTrader processes (MT4/MT5) started by this application and provides a pre-flight check
  * to detect and optionally kill stale processes before launching a new one.
  * 
  * Uses Java's ProcessHandle API for fast, native process lookups (no shell commands).
@@ -32,7 +32,7 @@ public class Mt5ProcessGuard {
     }
 
     /**
-     * Quick check: are any of our previously started MT5 processes still alive?
+     * Quick check: are any of our previously started MetaTrader processes still alive?
      * Uses ProcessHandle.of(pid).isPresent() which is a fast native call.
      * 
      * @return set of still-alive PIDs that we started
@@ -52,8 +52,8 @@ public class Mt5ProcessGuard {
     }
 
     /**
-     * Pre-flight check before starting a new MT5 process.
-     * If any of our previously started MT5 processes are still alive,
+     * Pre-flight check before starting a new MetaTrader process.
+     * If any of our previously started MetaTrader processes are still alive,
      * shows a dialog asking the user whether to kill them.
      * 
      * @param parentComponent the parent component for the dialog (can be null)
@@ -76,7 +76,7 @@ public class Mt5ProcessGuard {
             for (Long pid : alive) {
                 ProcessHandle.of(pid).ifPresent(ph -> {
                     if (logCallback != null) {
-                        logCallback.accept("Beende alten MT5-Prozess (PID " + pid + ")...");
+                        logCallback.accept("Beende alten MetaTrader-Prozess (PID " + pid + ")...");
                     }
                     ph.destroyForcibly();
                 });
@@ -84,20 +84,28 @@ public class Mt5ProcessGuard {
             ourPids.removeAll(alive);
             try { Thread.sleep(500); } catch (InterruptedException ignored) {}
             if (logCallback != null) {
-                logCallback.accept("Alte MT5-Prozesse wurden automatisch beendet.");
+                logCallback.accept("Alte MetaTrader-Prozesse wurden automatisch beendet.");
+            }
+            return true;
+        }
+
+        boolean isCli = "true".equals(System.getProperty("backtester.cli")) || java.awt.GraphicsEnvironment.isHeadless();
+        if (isCli) {
+            if (logCallback != null) {
+                logCallback.accept("CLI Mode: Stale MetaTrader process(es) detected (PIDs: " + alive + "), but autoKill is false. Proceeding without killing.");
             }
             return true;
         }
 
         // Build message
-        String message = "Es läuft noch ein MetaTrader 5 Prozess aus einem vorherigen Lauf.\n\n"
+        String message = "Es läuft noch ein MetaTrader Prozess aus einem vorherigen Lauf.\n\n"
                 + "Aktive Prozess-IDs: " + alive + "\n\n"
                 + "Soll der alte Prozess beendet werden, bevor ein neuer gestartet wird?";
 
         int choice = JOptionPane.showConfirmDialog(
                 parentComponent,
                 message,
-                "MetaTrader 5 läuft noch",
+                "MetaTrader läuft noch",
                 JOptionPane.OK_CANCEL_OPTION,
                 JOptionPane.WARNING_MESSAGE
         );
@@ -106,7 +114,7 @@ public class Mt5ProcessGuard {
             for (Long pid : alive) {
                 ProcessHandle.of(pid).ifPresent(ph -> {
                     if (logCallback != null) {
-                        logCallback.accept("Beende alten MT5-Prozess (PID " + pid + ")...");
+                        logCallback.accept("Beende alten MetaTrader-Prozess (PID " + pid + ")...");
                     }
                     ph.destroyForcibly();
                 });
@@ -117,12 +125,12 @@ public class Mt5ProcessGuard {
             try { Thread.sleep(500); } catch (InterruptedException ignored) {}
 
             if (logCallback != null) {
-                logCallback.accept("Alte MT5-Prozesse wurden beendet.");
+                logCallback.accept("Alte MetaTrader-Prozesse wurden beendet.");
             }
             return true;
         } else {
             if (logCallback != null) {
-                logCallback.accept("Abbruch: Benutzer hat das Beenden des alten Prozesses abgelehnt.");
+                logCallback.accept("Abbruch: Benutzer hat das Beenden des alten MetaTrader-Prozesses abgelehnt.");
             }
             return false;
         }

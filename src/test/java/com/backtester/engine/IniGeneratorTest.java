@@ -1,5 +1,6 @@
 package com.backtester.engine;
 
+import com.backtester.config.AppConfig;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
@@ -64,5 +65,38 @@ public class IniGeneratorTest {
         assertTrue(lines.contains("OptimizationCriterion=1"));
         assertTrue(lines.contains("ForwardMode=2"));
         assertTrue(lines.contains("UseLocal=1"));
+    }
+
+    @Test
+    public void testGenerateBacktestIniMt4() throws IOException {
+        String originalPath = AppConfig.getInstance().getMt5TerminalPath();
+        try {
+            AppConfig.getInstance().setMt5TerminalPath("C:\\MT4\\terminal.exe");
+            
+            IniGenerator generator = new IniGenerator();
+            BacktestConfig config = new BacktestConfig();
+            config.setExpert("ScraperTemp\\MyEA.ex4");
+            config.setSymbol("GBPUSD");
+            config.setPeriod("M15");
+            config.setFromDate(LocalDate.of(2023, 1, 1));
+            config.setToDate(LocalDate.of(2023, 1, 31));
+            
+            Path iniPath = tempFolder.newFile("tester_mt4.ini").toPath();
+            generator.generate(config, iniPath, "report_path");
+            
+            assertTrue(Files.exists(iniPath));
+            List<String> lines = Files.readAllLines(iniPath);
+            
+            assertTrue(lines.contains("[Tester]"));
+            assertTrue(lines.contains("TestExpert=ScraperTemp\\MyEA"));
+            assertTrue(lines.contains("TestSymbol=GBPUSD"));
+            assertTrue(lines.contains("TestPeriod=M15"));
+            assertTrue(lines.contains("TestFromDate=2023.01.01"));
+            assertTrue(lines.contains("TestToDate=2023.01.31"));
+            assertTrue(lines.contains("TestReport=report_path"));
+            assertTrue(lines.contains("TestOptimization=false"));
+        } finally {
+            AppConfig.getInstance().setMt5TerminalPath(originalPath);
+        }
     }
 }

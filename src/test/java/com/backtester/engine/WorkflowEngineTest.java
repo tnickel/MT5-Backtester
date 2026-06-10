@@ -585,10 +585,10 @@ public class WorkflowEngineTest {
             assertTrue("export gut directory should exist", bestDir.exists());
 
             // Verify normal folder has files for both passes
-            File pass1Set = new File(subDir, "CC_ADR_Stoch_Grid_EURUSD_H1_Pass1.set");
-            File pass2Set = new File(subDir, "CC_ADR_Stoch_Grid_EURUSD_H1_Pass2.set");
-            File pass1Report = new File(subDir, "CC_ADR_Stoch_Grid_EURUSD_H1_Pass1_Report.pdf");
-            File pass2Report = new File(subDir, "CC_ADR_Stoch_Grid_EURUSD_H1_Pass2_Report.pdf");
+            File pass1Set = new File(subDir, "CC_ADR_Stoch_Grid_EURUSD_H1_10proz_Pass1.set");
+            File pass2Set = new File(subDir, "CC_ADR_Stoch_Grid_EURUSD_H1_15proz_Pass2.set");
+            File pass1Report = new File(subDir, "CC_ADR_Stoch_Grid_EURUSD_H1_10proz_Pass1_Report.pdf");
+            File pass2Report = new File(subDir, "CC_ADR_Stoch_Grid_EURUSD_H1_15proz_Pass2_Report.pdf");
             File portfolioReport = new File(subDir, "Portfolio_Report_CC_ADR_Stoch_Grid_EURUSD_H1.pdf");
 
             assertTrue(pass1Set.exists());
@@ -598,10 +598,10 @@ public class WorkflowEngineTest {
             assertTrue(portfolioReport.exists());
 
             // Verify "export gut" folder only has files for pass 1 (KI score >= 70), not pass 2
-            File bestPass1Set = new File(bestDir, "CC_ADR_Stoch_Grid_EURUSD_H1_Pass1.set");
-            File bestPass2Set = new File(bestDir, "CC_ADR_Stoch_Grid_EURUSD_H1_Pass2.set");
-            File bestPass1Report = new File(bestDir, "CC_ADR_Stoch_Grid_EURUSD_H1_Pass1_Report.pdf");
-            File bestPass2Report = new File(bestDir, "CC_ADR_Stoch_Grid_EURUSD_H1_Pass2_Report.pdf");
+            File bestPass1Set = new File(bestDir, "CC_ADR_Stoch_Grid_EURUSD_H1_10proz_Pass1.set");
+            File bestPass2Set = new File(bestDir, "CC_ADR_Stoch_Grid_EURUSD_H1_15proz_Pass2.set");
+            File bestPass1Report = new File(bestDir, "CC_ADR_Stoch_Grid_EURUSD_H1_10proz_Pass1_Report.pdf");
+            File bestPass2Report = new File(bestDir, "CC_ADR_Stoch_Grid_EURUSD_H1_15proz_Pass2_Report.pdf");
 
             assertTrue("Pass 1 (stable) should be copied to export gut", bestPass1Set.exists());
             assertTrue("Pass 1 report should be copied to export gut", bestPass1Report.exists());
@@ -762,10 +762,10 @@ public class WorkflowEngineTest {
             assertTrue("export gut folder should exist", bestDir.exists());
 
             // Both should be in best folder
-            File bestPass1Set = new File(bestDir, "CC_ADR_Stoch_Grid_EURUSD_H1_Pass1.set");
-            File bestPass2Set = new File(bestDir, "CC_ADR_Stoch_Grid_EURUSD_H1_Pass2.set");
-            File bestPass1Report = new File(bestDir, "CC_ADR_Stoch_Grid_EURUSD_H1_Pass1_Report.pdf");
-            File bestPass2Report = new File(bestDir, "CC_ADR_Stoch_Grid_EURUSD_H1_Pass2_Report.pdf");
+            File bestPass1Set = new File(bestDir, "CC_ADR_Stoch_Grid_EURUSD_H1_0proz_Pass1.set");
+            File bestPass2Set = new File(bestDir, "CC_ADR_Stoch_Grid_EURUSD_H1_0proz_Pass2.set");
+            File bestPass1Report = new File(bestDir, "CC_ADR_Stoch_Grid_EURUSD_H1_0proz_Pass1_Report.pdf");
+            File bestPass2Report = new File(bestDir, "CC_ADR_Stoch_Grid_EURUSD_H1_0proz_Pass2_Report.pdf");
 
             assertTrue(bestPass1Set.exists());
             assertTrue(bestPass2Set.exists());

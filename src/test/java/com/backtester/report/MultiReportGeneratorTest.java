@@ -39,6 +39,8 @@ public class MultiReportGeneratorTest {
         r1.setInitialDeposit(10000.0);
         r1.setTotalProfit(500.0);
         r1.setTotalTrades(3);
+        r1.setMaxDrawdown(15.0);
+        r1.setProfitFactor(2.8);
 
         List<double[]> hist1 = new ArrayList<>();
         // double[] format: [index, balance, equity, timestamp]
@@ -58,6 +60,8 @@ public class MultiReportGeneratorTest {
         r2.setInitialDeposit(10000.0);
         r2.setTotalProfit(-200.0);
         r2.setTotalTrades(2);
+        r2.setMaxDrawdown(45.0);
+        r2.setProfitFactor(0.65);
 
         List<double[]> hist2 = new ArrayList<>();
         // 2025-06-10: 1749513600000 ms
@@ -113,6 +117,22 @@ public class MultiReportGeneratorTest {
         assertTrue(htmlContent.contains("TestRobot1"));
         assertTrue(htmlContent.contains("TestRobot2"));
         assertTrue(htmlContent.contains("FAILED: Metatrader did not launch"));
+
+        // Verify Drawdown formatting colors and styles are outputted
+        assertTrue(htmlContent.contains(".dd-low { color: #12b886; font-weight: bold; }"));
+        assertTrue(htmlContent.contains(".dd-medium { color: #fab005; font-weight: bold; }"));
+        assertTrue(htmlContent.contains(".dd-high { color: #fd7e14; font-weight: bold; }"));
+        assertTrue(htmlContent.contains(".dd-critical { color: #fa5252; font-weight: bold; }"));
+        assertTrue(htmlContent.contains(".neg-profit { color: #fa5252; font-weight: bold; }"));
+        assertTrue(htmlContent.contains(".low-pf { color: #fa5252; font-weight: bold; }"));
+        assertTrue(htmlContent.contains("class='dd-low'"));
+        assertTrue(htmlContent.contains("class='dd-medium'"));
+        assertTrue(htmlContent.contains("class='neg-profit'"));
+        assertTrue(htmlContent.contains("class='low-pf'"));
+
+        // Verify Export to PDF button and styles are present
+        assertTrue(htmlContent.contains("class='export-btn no-print'"));
+        assertTrue(htmlContent.contains("@media print"));
     }
 
     @Test

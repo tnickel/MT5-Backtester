@@ -318,23 +318,37 @@ public class MultiBacktestPanel extends JPanel {
     }
 
     private void browseExpert() {
-        Path mt5Dir = config.getMt5InstallDir();
-        Path expertsDir = mt5Dir != null ? mt5Dir.resolve("MQL5").resolve("Experts") : null;
+        String currentExpert = expertsModel.isEmpty() ? "" : expertsModel.get(0);
+        Path expertsDir = null;
+        if (config.isMt4(currentExpert)) {
+            expertsDir = config.getExpertsDir("dummy.ex4");
+        } else {
+            expertsDir = config.getExpertsDir("dummy.ex5");
+        }
 
         JFileChooser chooser = new JFileChooser();
         if (expertsDir != null && Files.exists(expertsDir)) {
             chooser.setCurrentDirectory(expertsDir.toFile());
+        } else {
+            Path otherDir = config.isMt4(currentExpert) ? config.getExpertsDir("dummy.ex5") : config.getExpertsDir("dummy.ex4");
+            if (otherDir != null && Files.exists(otherDir)) {
+                chooser.setCurrentDirectory(otherDir.toFile());
+            }
         }
-        chooser.setFileFilter(new javax.swing.filechooser.FileNameExtensionFilter("MT5 Expert Advisor (*.ex5)", "ex5"));
-        chooser.setDialogTitle("Select Expert Advisor");
+        chooser.setFileFilter(new javax.swing.filechooser.FileNameExtensionFilter("MetaTrader Expert Advisor (*.ex5, *.ex4)", "ex5", "ex4"));
+        chooser.setDialogTitle("Select Expert Advisors");
         chooser.setMultiSelectionEnabled(true);
 
         if (chooser.showOpenDialog(this) == JFileChooser.APPROVE_OPTION) {
             File[] selectedFiles = chooser.getSelectedFiles();
             for (File selected : selectedFiles) {
-                if (expertsDir != null && selected.toPath().startsWith(expertsDir)) {
-                    String relative = expertsDir.relativize(selected.toPath()).toString();
-                    if (relative.toLowerCase().endsWith(".ex5")) {
+                String pathStr = selected.getAbsolutePath().toLowerCase();
+                boolean isEx4 = pathStr.endsWith(".ex4");
+                Path activeExpertsDir = isEx4 ? config.getExpertsDir("dummy.ex4") : config.getExpertsDir("dummy.ex5");
+
+                if (activeExpertsDir != null && selected.toPath().startsWith(activeExpertsDir)) {
+                    String relative = activeExpertsDir.relativize(selected.toPath()).toString();
+                    if (!isEx4 && relative.toLowerCase().endsWith(".ex5")) {
                         relative = relative.substring(0, relative.length() - 4);
                     }
                     if (!expertsModel.contains(relative)) expertsModel.addElement(relative);
@@ -370,7 +384,7 @@ public class MultiBacktestPanel extends JPanel {
         masterPanel.add(batchBtnP, BorderLayout.SOUTH);
 
         // ---- Detail View (Table of Runs) ----
-        String[] cols = {"Comb.", "Robot", "Symbol", "Period", "Trades", "Win Rate", "Drawdown", "Profit", "Status", "Config", "Directory", "ResultObject"};
+        String[] cols = {"Comb.", "Robot", "Symbol", "Period", "Trades", "Win Rate", "Drawdown", "Recovery Factor", "Profit", "Status", "Config", "Directory", "ResultObject"};
         resultsTableModel = new DefaultTableModel(cols, 0) {
             @Override public boolean isCellEditable(int r, int c) { return false; }
         };
@@ -380,13 +394,13 @@ public class MultiBacktestPanel extends JPanel {
         resultsTable.setSelectionMode(ListSelectionModel.MULTIPLE_INTERVAL_SELECTION);
         resultsTable.setAutoCreateRowSorter(true);
         
-        // Hide directory and result object columns (indices 10,11 now)
-        resultsTable.getColumnModel().getColumn(10).setMinWidth(0);
-        resultsTable.getColumnModel().getColumn(10).setMaxWidth(0);
-        resultsTable.getColumnModel().getColumn(10).setWidth(0);
+        // Hide directory and result object columns (indices 11,12 now)
         resultsTable.getColumnModel().getColumn(11).setMinWidth(0);
         resultsTable.getColumnModel().getColumn(11).setMaxWidth(0);
         resultsTable.getColumnModel().getColumn(11).setWidth(0);
+        resultsTable.getColumnModel().getColumn(12).setMinWidth(0);
+        resultsTable.getColumnModel().getColumn(12).setMaxWidth(0);
+        resultsTable.getColumnModel().getColumn(12).setWidth(0);
 
         resultsTable.addMouseListener(new java.awt.event.MouseAdapter() {
             @Override
@@ -438,6 +452,7 @@ public class MultiBacktestPanel extends JPanel {
                 result.getTotalTrades(),
                 String.format("%.1f%%", result.getWinRate()),
                 String.format("%.2f%%", result.getMaxDrawdown()),
+                String.format("%.2f", result.getRecoveryFactor()),
                 String.format("%.2f", result.getTotalProfit()),
                 result.isSuccess() ? "OK" : "FAIL",
                 result.getConfigInfo(),
@@ -632,6 +647,7 @@ public class MultiBacktestPanel extends JPanel {
                         result.getTotalTrades(),
                         String.format("%.1f%%", result.getWinRate()),
                         String.format("%.2f%%", result.getMaxDrawdown()),
+                        String.format("%.2f", result.getRecoveryFactor()),
                         String.format("%.2f", result.getTotalProfit()),
                         result.isSuccess() ? "OK" : "FAIL",
                         result.getConfigInfo(),

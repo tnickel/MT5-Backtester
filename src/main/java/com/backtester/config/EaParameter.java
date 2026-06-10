@@ -14,6 +14,7 @@ public class EaParameter {
     private String value;
     private String defaultValue;
     private String section;
+    private String displayName;
 
     // Optimization fields (from .set file format)
     private String optimizeStart = "";
@@ -36,6 +37,9 @@ public class EaParameter {
     }
 
     // --- Getters & Setters ---
+
+    public String getDisplayName() { return displayName; }
+    public void setDisplayName(String displayName) { this.displayName = displayName; }
 
     public String getName() { return name; }
     public void setName(String name) { this.name = name; }

@@ -1,5 +1,6 @@
 package com.backtester.engine;
 
+import com.backtester.config.MetaTraderPlatform;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -25,9 +26,25 @@ public class Mt5LogTailer implements Runnable {
     private static final Logger log = LoggerFactory.getLogger(Mt5LogTailer.class);
 
     private final Path mt5Dir;
+    private final MetaTraderPlatform platform;
     private final Consumer<String> logCallback;
     private java.util.function.BiConsumer<Integer, Integer> progressCallback;
     private final AtomicBoolean running = new AtomicBoolean(false);
+    private final AtomicBoolean criticalFailure = new AtomicBoolean(false);
+
+    public boolean hasCriticalFailure() {
+        return criticalFailure.get();
+    }
+
+    private volatile long lastActivityTime = System.currentTimeMillis();
+
+    public long getLastActivityTime() {
+        return lastActivityTime;
+    }
+
+    public void updateLastActivityTime() {
+        this.lastActivityTime = System.currentTimeMillis();
+    }
 
     private long terminalLogLastPos = 0;
     private long testerLogLastPos = 0;
@@ -38,20 +55,21 @@ public class Mt5LogTailer implements Runnable {
     private final java.util.Map<Path, Long> agentLogPositions = new java.util.HashMap<>();
     private int agentTotalPasses = 0;
 
-    public Mt5LogTailer(Path mt5Dir, Consumer<String> logCallback) {
+    public Mt5LogTailer(Path mt5Dir, MetaTraderPlatform platform, Consumer<String> logCallback) {
         this.mt5Dir = mt5Dir;
+        this.platform = platform;
         this.logCallback = logCallback;
         
         // Find newest log files initially, or fall back to today's date if none exist yet
         this.terminalLogPath = findNewestLogFile(mt5Dir.resolve("logs"));
-        this.testerLogPath = findNewestLogFile(mt5Dir.resolve("Tester").resolve("logs"));
+        this.testerLogPath = findNewestLogFile(mt5Dir.resolve(platform.getTesterLogsFolderName()));
         
         String dateStr = LocalDate.now().format(DateTimeFormatter.ofPattern("yyyyMMdd"));
         if (this.terminalLogPath == null) {
             this.terminalLogPath = mt5Dir.resolve("logs").resolve(dateStr + ".log");
         }
         if (this.testerLogPath == null) {
-            this.testerLogPath = mt5Dir.resolve("Tester").resolve("logs").resolve(dateStr + ".log");
+            this.testerLogPath = mt5Dir.resolve(platform.getTesterLogsFolderName()).resolve(dateStr + ".log");
         }
     }
 
@@ -90,7 +108,7 @@ public class Mt5LogTailer implements Runnable {
                     terminalLogLastPos = 0; // Start reading new file from beginning
                 }
                 
-                Path newTesterPath = findNewestLogFile(mt5Dir.resolve("Tester").resolve("logs"));
+                Path newTesterPath = findNewestLogFile(mt5Dir.resolve(platform.getTesterLogsFolderName()));
                 if (newTesterPath != null && !newTesterPath.equals(testerLogPath)) {
                     testerLogPath = newTesterPath;
                     testerLogLastPos = 0; // Start reading new file from beginning
@@ -148,16 +166,19 @@ public class Mt5LogTailer implements Runnable {
                 
                 // Ensure we read an even number of bytes for UTF-16LE
                 // If it's odd, MT5 might be mid-write. We'll leave the last byte for next time.
-                if (bytesToRead % 2 != 0) {
-                    bytesToRead--;
+                if (platform.getLogCharset() == StandardCharsets.UTF_16LE) {
+                    if (bytesToRead % 2 != 0) {
+                        bytesToRead--;
+                    }
                 }
                 
                 if (bytesToRead > 0) {
                     byte[] buffer = new byte[bytesToRead];
                     raf.readFully(buffer);
                     lastPos += bytesToRead;
+                    updateLastActivityTime();
 
-                    String newContent = new String(buffer, StandardCharsets.UTF_16LE);
+                    String newContent = new String(buffer, platform.getLogCharset());
                     processNewLines(newContent, prefix);
                 }
             }
@@ -188,6 +209,9 @@ public class Mt5LogTailer implements Runnable {
     }
 
     private void pollAgentLogs() {
+        if (!platform.supportsMultiThreadAgents()) {
+            return;
+        }
         Path testerDir = mt5Dir.resolve("Tester");
         if (!Files.exists(testerDir)) {
             return;
@@ -221,6 +245,7 @@ public class Mt5LogTailer implements Runnable {
                                     raf.readFully(buffer);
                                     lastPos += bytesToRead;
                                     agentLogPositions.put(newestLog, lastPos);
+                                    updateLastActivityTime();
                                     
                                     String content = new String(buffer, StandardCharsets.UTF_16LE);
                                     int newPasses = countOccurrences(content, "OnTester result");
@@ -286,7 +311,7 @@ public class Mt5LogTailer implements Runnable {
         
         // Show optimization progress (generation updates and completion)
         if (lower.contains("best result") || lower.contains("optimization finished") ||
-            lower.contains("optimization started")) {
+            lower.contains("optimization started") || lower.contains("processing")) {
             return true;
         }
         
@@ -315,6 +340,16 @@ public class Mt5LogTailer implements Runnable {
                             }
                         } catch (Exception e) {}
                     }
+                    // Genetic optimization: progress percentage "processing X %" or "processing X%"
+                    else if (lowerLine.contains("processing") && lowerLine.contains("%")) {
+                        try {
+                            java.util.regex.Matcher m = java.util.regex.Pattern.compile("processing\\s+(\\d+)\\s*%").matcher(lowerLine);
+                            if (m.find()) {
+                                int percent = Integer.parseInt(m.group(1));
+                                progressCallback.accept(percent, 100);
+                            }
+                        } catch (Exception e) {}
+                    }
                     // Genetic optimization finished: report 100%
                     else if (lowerLine.contains("genetic optimization finished")) {
                         progressCallback.accept(1, 1);
@@ -335,6 +370,16 @@ public class Mt5LogTailer implements Runnable {
                     }
                 }
 
+                // Check for critical failures that prevent backtest startup
+                if (lowerLine.contains("cannot load") || 
+                    lowerLine.contains("cannot start with configuration file") || 
+                    lowerLine.contains("global initialization failed") || 
+                    lowerLine.contains("expertremove") ||
+                    lowerLine.contains("removed itself within oninit") ||
+                    lowerLine.contains("tester stopped because oninit failed")) {
+                    criticalFailure.set(true);
+                }
+
                 if (shouldForwardToUi(line)) {
                     // If the line is an error, highlight it
                     if (lowerLine.contains("error") || lowerLine.contains("failed") || lowerLine.contains("cannot load")) {
@@ -343,7 +388,7 @@ public class Mt5LogTailer implements Runnable {
                         logCallback.accept(prefix + line);
                     }
                 } else {
-                    log.info(prefix + line);
+                    log.debug(prefix + line);
                 }
             }
         }

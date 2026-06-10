@@ -281,6 +281,9 @@ public class WorkflowEngine {
             this.leverage = sc.leverage != null ? sc.leverage : "1:100";
             this.tickModel = sc.tickModel;
             this.eaParameters = sc.eaParameters != null ? sc.eaParameters : new ArrayList<>();
+            if (this.eaParameters != null && !this.eaParameters.isEmpty()) {
+                eaParamManager.applyTranslations(this.expert, this.eaParameters);
+            }
             this.optimizationMode = sc.optimizationMode;
             this.optimizationCriterion = sc.optimizationCriterion;
             this.forwardMode = sc.forwardMode;
@@ -369,6 +372,9 @@ public class WorkflowEngine {
             String eaParamsJson = (String) data[9];
             if (eaParamsJson != null && !eaParamsJson.isEmpty()) {
                 this.eaParameters = gson.fromJson(eaParamsJson, paramType);
+                if (this.eaParameters != null) {
+                    eaParamManager.applyTranslations(this.expert, this.eaParameters);
+                }
             }
 
             String optResultJson = (String) data[10];
@@ -456,16 +462,16 @@ public class WorkflowEngine {
         OptimizationConfig optConfig = new OptimizationConfig();
         optConfig.setExpert(expert);
 
-        // Write the custom parameters directly to the MT5 tester profile folder as a .set file
+        // Write the custom parameters directly to the MetaTrader tester profile folder as a .set file
         String eaName = EaParameterManager.extractEaBaseName(expert);
-        java.nio.file.Path mt5Dir = config.getMt5InstallDir();
-        if (mt5Dir != null) {
-            java.nio.file.Path presetsDir = mt5Dir.resolve("MQL5").resolve("Profiles").resolve("Tester");
+        java.nio.file.Path mtDir = config.getMtInstallDir(expert);
+        if (mtDir != null) {
+            java.nio.file.Path presetsDir = config.getTesterProfilesDir(expert);
             java.nio.file.Files.createDirectories(presetsDir);
             String presetFileName = "Backtester_" + eaName + ".set";
             java.nio.file.Path destFile = presetsDir.resolve(presetFileName);
             
-            eaParamManager.writeSetFile(destFile, eaParameters, eaName);
+            eaParamManager.writeSetFile(destFile, eaParameters, expert);
             optConfig.setExpertParameters(presetFileName);
         }
 
@@ -686,6 +692,18 @@ public class WorkflowEngine {
         return finalSelectedPasses;
     }
 
+    private boolean isMagicNumberParameter(String name) {
+        if (name == null) return false;
+        String lower = name.toLowerCase();
+        return lower.equals("magic") || lower.equals("inpmagicnumber") || lower.equals("magicnumber");
+    }
+
+    private boolean isOrderCommentParameter(String name) {
+        if (name == null) return false;
+        String lower = name.toLowerCase();
+        return lower.equals("comment") || lower.equals("inp_order_comment") || lower.equals("ordercomment") || lower.equals("order_comment");
+    }
+
     /**
      * Exports all final selected strategies (sets + PDF reports) to the target directory.
      */
@@ -713,7 +731,9 @@ public class WorkflowEngine {
             // 1. Export individual set files & detailed PDF reports
             for (CombinedPass cp : finalSelectedPasses) {
                 int passNum = cp.getPassNumber();
-                String baseFileName = String.format("%s_%s_%s_Pass%d", eaName, symbol, timeframe, passNum);
+                double btDd = cp.getBtDd();
+                int ddPct = Double.isNaN(btDd) ? 0 : (int) Math.round(btDd);
+                String baseFileName = String.format("%s_%s_%s_%dproz_Pass%d", eaName, symbol, timeframe, ddPct, passNum);
 
                 // Set file
                 java.nio.file.Path setFile = exportPath.resolve(baseFileName + ".set");
@@ -727,6 +747,12 @@ public class WorkflowEngine {
                         p.setValue(passVal);
                     } else {
                         p.setValue(base.getValue());
+                    }
+                    if (isMagicNumberParameter(p.getName())) {
+                        p.setValue(String.valueOf(passNum));
+                    }
+                    if (isOrderCommentParameter(p.getName())) {
+                        p.setValue(String.format("%dproz_Pass%d", ddPct, passNum));
                     }
                     p.setOptimizeEnabled(false);
                     finalParams.add(p);
@@ -758,7 +784,9 @@ public class WorkflowEngine {
                         createdBestDir = true;
                     }
                     int passNum = cp.getPassNumber();
-                    String baseFileName = String.format("%s_%s_%s_Pass%d", eaName, symbol, timeframe, passNum);
+                    double btDd = cp.getBtDd();
+                    int ddPct = Double.isNaN(btDd) ? 0 : (int) Math.round(btDd);
+                    String baseFileName = String.format("%s_%s_%s_%dproz_Pass%d", eaName, symbol, timeframe, ddPct, passNum);
 
                     java.nio.file.Path srcSet = exportPath.resolve(baseFileName + ".set");
                     java.nio.file.Path destSet = bestPath.resolve(baseFileName + ".set");
@@ -839,6 +867,9 @@ public class WorkflowEngine {
             String eaParamsJson = (String) stateMap.get("ea_parameters_json");
             if (eaParamsJson != null && !eaParamsJson.isEmpty()) {
                 this.eaParameters = gson.fromJson(eaParamsJson, paramType);
+                if (this.eaParameters != null) {
+                    eaParamManager.applyTranslations(this.expert, this.eaParameters);
+                }
             } else {
                 this.eaParameters = new ArrayList<>();
             }

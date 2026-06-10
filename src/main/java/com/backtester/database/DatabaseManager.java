@@ -178,6 +178,13 @@ public class DatabaseManager {
                 "PRIMARY KEY (expert_name, symbol, period, run_timestamp, pass_number)" +
                 ");";
 
+        String sqlParamTranslations = "CREATE TABLE IF NOT EXISTS EA_PARAMETER_TRANSLATIONS (" +
+                "expert_name TEXT," +
+                "parameter_name TEXT," +
+                "display_name TEXT," +
+                "PRIMARY KEY (expert_name, parameter_name)" +
+                ");";
+
         try (Connection conn = connect(); Statement stmt = conn.createStatement()) {
             stmt.execute(sqlHistory);
             stmt.execute(sqlSavedConfig);
@@ -186,6 +193,7 @@ public class DatabaseManager {
             stmt.execute(sqlWorkflowStrategyConfigs);
             stmt.execute(sqlStrategyReviews);
             stmt.execute(sqlStrategyAutomaticReviews);
+            stmt.execute(sqlParamTranslations);
 
             // Check if OPTIMIZATION_STATE has the sensitivity_results_json column, otherwise recreate it
             try {
@@ -865,6 +873,28 @@ public class DatabaseManager {
         return null;
     }
 
+    public void deleteWorkflowStrategyConfig(String expertName) {
+        String sql = "DELETE FROM WORKFLOW_STRATEGY_CONFIGS WHERE expert_name = ?";
+        try (Connection conn = connect(); PreparedStatement pstmt = conn.prepareStatement(sql)) {
+            pstmt.setString(1, expertName);
+            pstmt.executeUpdate();
+            log.info("Deleted workflow strategy config for {}", expertName);
+        } catch (SQLException e) {
+            log.error("Failed to delete workflow strategy config for: " + expertName, e);
+        }
+    }
+
+    public void deleteEaParameterSettings(String expertName) {
+        String sql = "DELETE FROM EA_PARAMETER_SETTINGS WHERE expert_name = ?";
+        try (Connection conn = connect(); PreparedStatement pstmt = conn.prepareStatement(sql)) {
+            pstmt.setString(1, expertName);
+            pstmt.executeUpdate();
+            log.info("Deleted EA parameter settings for {}", expertName);
+        } catch (SQLException e) {
+            log.error("Failed to delete EA parameter settings for: " + expertName, e);
+        }
+    }
+
     public static class StrategyReview {
         private final String expertName;
         private final String symbol;
@@ -1086,5 +1116,229 @@ public class DatabaseManager {
         } catch (SQLException e) {
             log.error("Failed to delete automatic review", e);
         }
+    }
+
+    public void saveParameterTranslation(String expertName, String parameterName, String displayName) {
+        String sql = "INSERT OR REPLACE INTO EA_PARAMETER_TRANSLATIONS (expert_name, parameter_name, display_name) VALUES (?, ?, ?)";
+        try (Connection conn = connect(); PreparedStatement pstmt = conn.prepareStatement(sql)) {
+            pstmt.setString(1, expertName);
+            pstmt.setString(2, parameterName);
+            pstmt.setString(3, displayName);
+            pstmt.executeUpdate();
+        } catch (SQLException e) {
+            log.error("Failed to save parameter translation", e);
+        }
+    }
+
+    public String getParameterTranslation(String expertName, String parameterName) {
+        String sql = "SELECT display_name FROM EA_PARAMETER_TRANSLATIONS WHERE expert_name = ? AND parameter_name = ?";
+        try (Connection conn = connect(); PreparedStatement pstmt = conn.prepareStatement(sql)) {
+            pstmt.setString(1, expertName);
+            pstmt.setString(2, parameterName);
+            try (ResultSet rs = pstmt.executeQuery()) {
+                if (rs.next()) {
+                    return rs.getString("display_name");
+                }
+            }
+        } catch (SQLException e) {
+            log.error("Failed to fetch parameter translation", e);
+        }
+        return null;
+    }
+
+    public java.util.Map<String, String> getParameterTranslations(String expertName) {
+        java.util.Map<String, String> map = new java.util.HashMap<>();
+        String sql = "SELECT parameter_name, display_name FROM EA_PARAMETER_TRANSLATIONS WHERE expert_name = ?";
+        try (Connection conn = connect(); PreparedStatement pstmt = conn.prepareStatement(sql)) {
+            pstmt.setString(1, expertName);
+            try (ResultSet rs = pstmt.executeQuery()) {
+                while (rs.next()) {
+                    map.put(rs.getString("parameter_name"), rs.getString("display_name"));
+                }
+            }
+        } catch (SQLException e) {
+            log.error("Failed to fetch parameter translations for " + expertName, e);
+        }
+        return map;
+    }
+
+    public static String translatePortugueseParameter(String rawName) {
+        if (rawName == null || rawName.isEmpty()) return "";
+        
+        // Skip dummy params
+        if (rawName.matches("^[a-z]\\d+$") || rawName.matches("^ln\\d+$")) {
+            return rawName;
+        }
+
+        // Check if it's a section divider like "BANDAS_BOLLINGER_X"
+        String name = rawName;
+        boolean isSection = name.endsWith("_X");
+        if (isSection) {
+            name = name.substring(0, name.length() - 2);
+        }
+        
+        // Dictionary of common Portuguese/Spanish-to-English trading terms
+        java.util.Map<String, String> dict = new java.util.HashMap<>();
+        dict.put("inp", ""); // Remove Inp prefix
+        dict.put("estrategia", "Strategy");
+        dict.put("compra", "Buy");
+        dict.put("venda", "Sell");
+        dict.put("distancia", "Distance");
+        dict.put("maxima", "Max");
+        dict.put("minima", "Min");
+        dict.put("periodo", "Period");
+        dict.put("metodo", "Method");
+        dict.put("preco", "Price");
+        dict.put("desvio", "Deviation");
+        dict.put("inferior", "Lower");
+        dict.put("superior", "Upper");
+        dict.put("habilitar", "Enable");
+        dict.put("parar", "Stop");
+        dict.put("tempo", "Time");
+        dict.put("antes", "Before");
+        dict.put("depois", "After");
+        dict.put("moeda", "Currency");
+        dict.put("noticias", "News");
+        dict.put("hora", "Hour");
+        dict.put("comecar", "Start");
+        dict.put("mudar", "Change");
+        dict.put("dia", "Day");
+        dict.put("conta", "Account");
+        dict.put("lucro", "Profit");
+        dict.put("prejuizo", "Loss");
+        dict.put("saldo", "Balance");
+        dict.put("fator", "Factor");
+        dict.put("lote", "Lot");
+        dict.put("inicial", "Initial");
+        dict.put("minimo", "Min");
+        dict.put("maximo", "Max");
+        dict.put("ordens", "Orders");
+        dict.put("matriz", "Grid");
+        dict.put("pendente", "Pending");
+        dict.put("cancelar", "Cancel");
+        dict.put("linhas", "Lines");
+        dict.put("grafico", "Chart");
+        dict.put("avisos", "Alerts");
+        dict.put("comentario", "Comment");
+        dict.put("saque", "Withdrawal");
+        dict.put("otimizacao", "Optimization");
+        dict.put("dinheiro", "Money");
+        dict.put("gerenciar", "Manage");
+        dict.put("ajustar", "Adjust");
+        dict.put("cotacao", "Quote");
+        dict.put("lista", "List");
+        dict.put("ativo", "Active");
+        dict.put("ativos", "Active");
+        dict.put("robo", "Robot");
+        dict.put("rebaixamento", "Drawdown");
+        dict.put("abertura", "Opening");
+        dict.put("operacao", "Operation");
+        dict.put("sinal", "Signal");
+        dict.put("confirmacao", "Confirmation");
+        dict.put("qtde", "Qty");
+        dict.put("aumentar", "Increase");
+        dict.put("tamanho", "Size");
+        dict.put("painel", "Panel");
+        dict.put("informacao", "Info");
+        dict.put("fechar", "Close");
+        dict.put("dias", "Days");
+        dict.put("domingo", "Sunday");
+        dict.put("segunda", "Monday");
+        dict.put("terca", "Tuesday");
+        dict.put("quarta", "Wednesday");
+        dict.put("quinta", "Thursday");
+        dict.put("sexta", "Friday");
+        dict.put("sabado", "Saturday");
+        dict.put("bandas", "Bands");
+        dict.put("bollinger", "Bollinger");
+        dict.put("kelter", "Keltner");
+        dict.put("keltner", "Keltner");
+        dict.put("canais", "Channels");
+        dict.put("calculo", "Calculation");
+        dict.put("multiplicador", "Multiplier");
+        dict.put("rapida", "Fast");
+        dict.put("lenta", "Slow");
+        dict.put("media", "MA");
+        dict.put("medias", "MAs");
+        dict.put("moveis", "Moving");
+        dict.put("nivel", "Level");
+        dict.put("passo", "Step");
+        dict.put("filtro", "Filter");
+        dict.put("volume", "Volume");
+        dict.put("desbloqueio", "Unlock");
+        dict.put("preset", "Preset");
+        dict.put("cuidado", "Warning");
+        dict.put("dados", "Data");
+        dict.put("criar", "Create");
+        dict.put("cor", "Color");
+        dict.put("texto", "Text");
+        dict.put("modo", "Mode");
+        dict.put("usar", "Use");
+        dict.put("proximo", "Next");
+        dict.put("ganho", "Gain");
+        dict.put("perda", "Loss");
+        dict.put("reduzir", "Reduce");
+        dict.put("ultima", "Last");
+        dict.put("somar", "Add");
+        dict.put("travar", "Lock");
+        dict.put("tipo", "Type");
+        dict.put("buscar", "Target");
+        dict.put("indicador", "Indicator");
+        dict.put("contrario", "Contrary");
+        dict.put("valor", "Value");
+        dict.put("ordem", "Order");
+        dict.put("suporte", "Support");
+        dict.put("resistencia", "Resistance");
+        dict.put("lento", "Slow");
+        dict.put("rapido", "Fast");
+        dict.put("recup", "Recovery");
+        dict.put("recuperacao", "Recovery");
+        dict.put("ou", "Or");
+        dict.put("breakeven", "BreakEven");
+        dict.put("somado", "Added");
+        dict.put("valores", "Values");
+        dict.put("deletar", "Delete");
+        dict.put("automatico", "Automatic");
+        dict.put("pontos", "Points");
+        dict.put("botao", "Button");
+        dict.put("sequencia", "Sequence");
+        dict.put("mesmo", "Same");
+        dict.put("anterior", "Previous");
+        dict.put("deslocamento", "Offset");
+        dict.put("capital", "Equity");
+        dict.put("menor", "Lowest");
+        dict.put("maior", "Highest");
+        dict.put("noticia", "News");
+        dict.put("ganhadoras", "Winning");
+        dict.put("perdedoras", "Losing");
+        dict.put("fora", "Outside");
+        dict.put("limite", "Limit");
+        
+        // Split by underscores and translate each token
+        String[] tokens = name.split("_");
+        java.util.List<String> translated = new java.util.ArrayList<>();
+        for (String token : tokens) {
+            String lowerToken = token.toLowerCase();
+            if (dict.containsKey(lowerToken)) {
+                String trans = dict.get(lowerToken);
+                if (!trans.isEmpty()) {
+                    translated.add(trans);
+                }
+            } else {
+                // Keep original word if not in dictionary, but capitalize first letter
+                if (!token.isEmpty()) {
+                    translated.add(Character.toUpperCase(token.charAt(0)) + token.substring(1).toLowerCase());
+                }
+            }
+        }
+        
+        if (translated.isEmpty()) return rawName;
+        
+        // Join with space
+        String joined = String.join(" ", translated);
+        if (isSection) {
+            joined = "■ " + joined + " ■";
+        }
+        return joined;
     }
 }

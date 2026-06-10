@@ -15,6 +15,7 @@ import javax.swing.*;
 import javax.swing.table.DefaultTableModel;
 import java.awt.*;
 import java.io.File;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.time.LocalDate;
@@ -321,16 +322,42 @@ public class RobustnessPanel extends JPanel {
     }
 
     private void browseExpert() {
-        JFileChooser chooser = new JFileChooser(Paths.get(config.getMt5TerminalPath()).getParent().resolve("MQL5").resolve("Experts").toFile());
+        String currentExpert = expertField.getText().trim();
+        Path expertsDir = null;
+        if (config.isMt4(currentExpert)) {
+            expertsDir = config.getExpertsDir("dummy.ex4");
+        } else {
+            expertsDir = config.getExpertsDir("dummy.ex5");
+        }
+
+        JFileChooser chooser = new JFileChooser();
+        if (expertsDir != null && Files.exists(expertsDir)) {
+            chooser.setCurrentDirectory(expertsDir.toFile());
+        } else {
+            Path otherDir = config.isMt4(currentExpert) ? config.getExpertsDir("dummy.ex5") : config.getExpertsDir("dummy.ex4");
+            if (otherDir != null && Files.exists(otherDir)) {
+                chooser.setCurrentDirectory(otherDir.toFile());
+            }
+        }
+        chooser.setFileFilter(new javax.swing.filechooser.FileNameExtensionFilter("MetaTrader Expert Advisor (*.ex5, *.ex4)", "ex5", "ex4"));
+        chooser.setDialogTitle("Select Expert Advisor");
+
         int res = chooser.showOpenDialog(this);
         if (res == JFileChooser.APPROVE_OPTION) {
-            Path expertsRoot = Paths.get(config.getMt5TerminalPath()).getParent().resolve("MQL5").resolve("Experts");
-            Path selected = chooser.getSelectedFile().toPath();
-            String relative = expertsRoot.relativize(selected).toString();
-            if (relative.toLowerCase().endsWith(".ex5")) {
-                relative = relative.substring(0, relative.length() - 4);
+            File selected = chooser.getSelectedFile();
+            String pathStr = selected.getAbsolutePath().toLowerCase();
+            boolean isEx4 = pathStr.endsWith(".ex4");
+            Path activeExpertsDir = isEx4 ? config.getExpertsDir("dummy.ex4") : config.getExpertsDir("dummy.ex5");
+
+            if (activeExpertsDir != null && selected.toPath().startsWith(activeExpertsDir)) {
+                String relative = activeExpertsDir.relativize(selected.toPath()).toString();
+                if (!isEx4 && relative.toLowerCase().endsWith(".ex5")) {
+                    relative = relative.substring(0, relative.length() - 4);
+                }
+                expertField.setText(relative);
+            } else {
+                expertField.setText(selected.getAbsolutePath());
             }
-            expertField.setText(relative);
             loadParameters();
         }
     }

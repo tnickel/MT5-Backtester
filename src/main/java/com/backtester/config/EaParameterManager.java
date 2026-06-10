@@ -64,7 +64,7 @@ public class EaParameterManager {
         if (name.contains("/")) {
             name = name.substring(name.lastIndexOf('/') + 1);
         }
-        if (name.toLowerCase().endsWith(".ex5")) {
+        if (name.toLowerCase().endsWith(".ex5") || name.toLowerCase().endsWith(".ex4")) {
             name = name.substring(0, name.length() - 4);
         }
         return name;
@@ -76,15 +76,27 @@ public class EaParameterManager {
      */
     public List<EaParameter> loadDefaultParameters(String expertPath) {
         String eaName = extractEaBaseName(expertPath);
-        Path mt5Dir = appConfig.getMt5InstallDir();
-        if (mt5Dir == null) return null;
+        Path mtDir = appConfig.getMtInstallDir(expertPath);
+        if (mtDir == null) return null;
 
-        Path testerProfileDir = mt5Dir.resolve("MQL5").resolve("Profiles").resolve("Tester");
+        Path testerProfileDir = appConfig.getTesterProfilesDir(expertPath);
         Path setFile = testerProfileDir.resolve(eaName + ".set");
 
+        List<EaParameter> params = null;
         if (Files.exists(setFile)) {
             log.info("Loading default parameters from: {}", setFile);
-            return readSetFile(setFile);
+            params = readSetFile(setFile);
+        } else if (appConfig.isMt4(expertPath)) {
+            Path iniFile = testerProfileDir.resolve(eaName + ".ini");
+            if (Files.exists(iniFile)) {
+                log.info("Loading default parameters from MT4 .ini: {}", iniFile);
+                params = readSetFile(iniFile);
+            }
+        }
+
+        if (params != null) {
+            applyTranslations(expertPath, params);
+            return params;
         }
 
         log.info("No default .set file found for EA '{}' at: {}", eaName, setFile);
@@ -101,10 +113,22 @@ public class EaParameterManager {
 
         if (Files.exists(customFile)) {
             log.info("Loading custom parameters from: {}", customFile);
-            return readSetFile(customFile);
+            List<EaParameter> params = readSetFile(customFile);
+            applyTranslations(expertPath, params);
+            return params;
         }
 
         return null;
+    }
+
+    /**
+     * Applies translations from the database or translates them on the fly.
+     */
+    public void applyTranslations(String expertPath, List<EaParameter> params) {
+        if (params == null || params.isEmpty()) return;
+        for (EaParameter param : params) {
+            param.setDisplayName(param.getName());
+        }
     }
 
     /**
@@ -117,6 +141,7 @@ public class EaParameterManager {
         List<EaParameter> defaults = loadDefaultParameters(expertPath);
         List<EaParameter> custom = loadCustomParameters(expertPath);
 
+        List<EaParameter> result = null;
         if (custom != null && defaults != null) {
             // Merge: use custom values but keep default values for comparison
             Map<String, EaParameter> defaultMap = new LinkedHashMap<>();
@@ -129,14 +154,10 @@ public class EaParameterManager {
                     cp.setDefaultValue(dp.getValue());
                 }
             }
-            return custom;
-        }
-
-        if (custom != null) {
-            return custom;
-        }
-
-        if (defaults != null) {
+            result = custom;
+        } else if (custom != null) {
+            result = custom;
+        } else if (defaults != null) {
             // Return a copy of defaults (so editing doesn't affect the default source)
             List<EaParameter> copy = new ArrayList<>();
             for (EaParameter dp : defaults) {
@@ -153,10 +174,13 @@ public class EaParameterManager {
                 cp.setRawLine(dp.getRawLine());
                 copy.add(cp);
             }
-            return copy;
+            result = copy;
         }
 
-        return null;
+        if (result != null) {
+            applyTranslations(expertPath, result);
+        }
+        return result;
     }
 
     /**
@@ -166,7 +190,7 @@ public class EaParameterManager {
         String eaName = extractEaBaseName(expertPath);
         Path customFile = getCustomParamsDir().resolve(eaName + ".set");
 
-        writeSetFile(customFile, params, eaName);
+        writeSetFile(customFile, params, expertPath);
         customParamsCache.put(eaName, params);
         log.info("Saved custom parameters for '{}' to: {}", eaName, customFile);
     }
@@ -199,63 +223,106 @@ public class EaParameterManager {
      */
     public boolean hasDefaultConfig(String expertPath) {
         String eaName = extractEaBaseName(expertPath);
-        Path mt5Dir = appConfig.getMt5InstallDir();
-        if (mt5Dir == null) return false;
-        Path setFile = mt5Dir.resolve("MQL5").resolve("Profiles").resolve("Tester").resolve(eaName + ".set");
-        return Files.exists(setFile);
+        Path mtDir = appConfig.getMtInstallDir(expertPath);
+        if (mtDir == null) return false;
+        if (appConfig.isMt4(expertPath)) {
+            Path testerDir = mtDir.resolve("tester");
+            return Files.exists(testerDir.resolve(eaName + ".set")) || Files.exists(testerDir.resolve(eaName + ".ini"));
+        } else {
+            Path setFile = mtDir.resolve("MQL5").resolve("Profiles").resolve("Tester").resolve(eaName + ".set");
+            return Files.exists(setFile);
+        }
     }
 
     /**
-     * Generates a default .set file by briefly starting MT5 with a minimal backtest.
-     * MT5 automatically writes EaName.set to MQL5/Profiles/Tester/ when testing an EA.
+     * Generates a default .set file by briefly starting MT4/MT5 with a minimal backtest.
      * 
-     * @return true if the .set file was generated successfully
+     * @return true if the .set/.ini file was generated successfully
      */
     public boolean generateDefaultConfig(String expertPath) {
         String eaName = extractEaBaseName(expertPath);
-        String terminalPath = appConfig.getMt5TerminalPath();
+        String terminalPath = appConfig.getTerminalPath(expertPath);
 
         if (!Files.exists(Paths.get(terminalPath))) {
-            log.error("MT5 terminal not found at: {}", terminalPath);
+            log.error("Terminal not found at: {}", terminalPath);
             return false;
         }
 
         Path mt5Dir = Paths.get(terminalPath).getParent();
-        Path testerDir = mt5Dir.resolve("MQL5").resolve("Profiles").resolve("Tester");
-        Path expectedSetFile = testerDir.resolve(eaName + ".set");
+        String processName = appConfig.isMt4(expertPath) ? "terminal" : "terminal64";
+        killExistingTerminalProcesses(mt5Dir, processName);
 
-        log.info("Generating default config for '{}' by starting MT5 briefly...", eaName);
+        Path testerDir = appConfig.isMt4(expertPath) ? mt5Dir.resolve("tester") : mt5Dir.resolve("MQL5").resolve("Profiles").resolve("Tester");
+        Path expectedSetFile = appConfig.isMt4(expertPath) ? testerDir.resolve(eaName + ".ini") : testerDir.resolve(eaName + ".set");
 
+        log.info("Generating default config for '{}' by starting terminal briefly...", eaName);
+
+        Path tempIni = null;
+        Path destIni = null;
+        Path destConfigIni = null;
         try {
-            // Create a minimal tester.ini that will make MT5 open the tester for this EA,
-            // then immediately shutdown. The EA just needs to be loaded so MT5 writes the .set file.
-            Path tempIni = Files.createTempFile("mt5_genconfig_", ".ini");
+            // Create a minimal tester.ini that will make terminal open the tester for this EA,
+            // then immediately shutdown. The EA just needs to be loaded so terminal writes the config file.
+            tempIni = Files.createTempFile("genconfig_", ".ini");
             try (Writer writer = Files.newBufferedWriter(tempIni, StandardCharsets.UTF_8)) {
                 writer.write("[Tester]\r\n");
-                writer.write("Expert=" + expertPath + "\r\n");
-                writer.write("Symbol=EURUSD\r\n");
-                writer.write("Period=H1\r\n");
-                writer.write("Model=2\r\n");  // Open price only (fastest)
-                writer.write("ExecutionMode=0\r\n");
-                writer.write("FromDate=2025.01.01\r\n");
-                writer.write("ToDate=2025.01.02\r\n");  // Minimal period (1 day)
-                writer.write("Deposit=10000\r\n");
-                writer.write("Currency=USD\r\n");
-                writer.write("Leverage=1:100\r\n");
-                writer.write("Optimization=0\r\n");
-                writer.write("Report=_genconfig_temp\r\n");
-                writer.write("ReplaceReport=1\r\n");
-                writer.write("ShutdownTerminal=1\r\n");
+                if (appConfig.isMt4(expertPath)) {
+                    writer.write("TestExpert=" + extractEaBaseName(expertPath) + "\r\n");
+                    writer.write("TestSymbol=EURUSD\r\n");
+                    writer.write("TestPeriod=H1\r\n");
+                    writer.write("TestModel=2\r\n");  // Open price only
+                    writer.write("TestDateEnable=true\r\n");
+                    writer.write("TestFromDate=2025.01.01\r\n");
+                    writer.write("TestToDate=2025.01.02\r\n");
+                    writer.write("TestOptimization=false\r\n");
+                    writer.write("TestReport=_genconfig_temp\r\n");
+                    writer.write("TestReplaceReport=true\r\n");
+                    writer.write("TestShutdownTerminal=true\r\n");
+                    writer.write("TestVisualEnable=false\r\n");
+                } else {
+                    writer.write("Expert=" + expertPath + "\r\n");
+                    writer.write("Symbol=EURUSD\r\n");
+                    writer.write("Period=H1\r\n");
+                    writer.write("Model=2\r\n");  // Open price only (fastest)
+                    writer.write("ExecutionMode=0\r\n");
+                    writer.write("FromDate=2025.01.01\r\n");
+                    writer.write("ToDate=2025.01.02\r\n");  // Minimal period (1 day)
+                    writer.write("Deposit=10000\r\n");
+                    writer.write("Currency=USD\r\n");
+                    writer.write("Leverage=1:100\r\n");
+                    writer.write("Optimization=0\r\n");
+                    writer.write("Report=_genconfig_temp\r\n");
+                    writer.write("ReplaceReport=1\r\n");
+                    writer.write("ShutdownTerminal=1\r\n");
+                }
             }
 
-            // Start MT5 with this config on Desktop 2
+            boolean isMt4 = appConfig.isMt4(expertPath);
+            destIni = mt5Dir.resolve("tester_genconfig.ini");
+            Files.copy(tempIni, destIni, StandardCopyOption.REPLACE_EXISTING);
+
+            destConfigIni = mt5Dir.resolve("config").resolve("tester_genconfig.ini");
+            if (isMt4) {
+                try {
+                    Files.createDirectories(destConfigIni.getParent());
+                    Files.copy(tempIni, destConfigIni, StandardCopyOption.REPLACE_EXISTING);
+                } catch (IOException e) {
+                    log.warn("Failed to copy tempIni to config/ directory", e);
+                }
+            }
+
+            // Start terminal with this config on Desktop 2
             java.util.List<String> mt5Args = new java.util.ArrayList<>();
             if (appConfig.isPortableMode()) {
                 mt5Args.add("/portable");
             }
-            mt5Args.add("/config:" + tempIni.toAbsolutePath());
+            if (isMt4) {
+                mt5Args.add("config\\tester_genconfig.ini");
+            } else {
+                mt5Args.add("/config:tester_genconfig.ini");
+            }
 
-            log.info("Starting MT5 to generate default config...");
+            log.info("Starting terminal to generate default config...");
             Process process = com.backtester.engine.VirtualDesktopHelper.startOnDesktop2(terminalPath, mt5Args, mt5Dir);
 
             // Consume output to prevent deadlock
@@ -263,53 +330,80 @@ public class EaParameterManager {
                 try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
                     while (reader.readLine() != null) { /* discard */ }
                 } catch (IOException ignored) {}
-            }, "MT5-Config-Gen-Output");
+            }, "Config-Gen-Output");
             outputConsumer.setDaemon(true);
             outputConsumer.start();
 
-            // Wait up to 90 seconds for MT5 to complete
+            // Wait up to 90 seconds for terminal to complete
             boolean finished = process.waitFor(90, TimeUnit.SECONDS);
             if (!finished) {
-                log.warn("MT5 did not finish within 90 seconds, killing process...");
+                log.warn("Terminal did not finish within 90 seconds, killing process...");
                 process.destroyForcibly();
             }
 
-            // Clean up temp files
-            Files.deleteIfExists(tempIni);
-            // Clean up any temp report
-            Path tempReport = mt5Dir.resolve("_genconfig_temp.xml");
-            Files.deleteIfExists(tempReport);
-            tempReport = mt5Dir.resolve("_genconfig_temp.htm");
-            Files.deleteIfExists(tempReport);
-
-            // Check if .set file was created
+            // Check if expected file was created
             if (Files.exists(expectedSetFile)) {
                 log.info("Default config generated successfully: {}", expectedSetFile);
                 return true;
             } else {
-                log.warn("MT5 finished but no .set file was created at: {}", expectedSetFile);
+                log.warn("Terminal finished but no config file was created at: {}", expectedSetFile);
                 return false;
             }
 
         } catch (Exception e) {
             log.error("Failed to generate default config for " + eaName, e);
             return false;
+        } finally {
+            // Clean up temp files
+            if (tempIni != null) {
+                try { Files.deleteIfExists(tempIni); } catch (IOException ignored) {}
+            }
+            if (destIni != null) {
+                try { Files.deleteIfExists(destIni); } catch (IOException ignored) {}
+            }
+            if (destConfigIni != null) {
+                try { Files.deleteIfExists(destConfigIni); } catch (IOException ignored) {}
+            }
+            // Clean up any temp report
+            try {
+                Path tempReport = mt5Dir.resolve("_genconfig_temp.xml");
+                Files.deleteIfExists(tempReport);
+                tempReport = mt5Dir.resolve("_genconfig_temp.htm");
+                Files.deleteIfExists(tempReport);
+                tempReport = mt5Dir.resolve("tester").resolve("Reports").resolve("_genconfig_temp.htm");
+                Files.deleteIfExists(tempReport);
+            } catch (IOException ignored) {}
+        }
+    }
+
+    private void killExistingTerminalProcesses(Path mtDir, String processName) {
+        try {
+            String searchPath = mtDir.toAbsolutePath().toString().replace("'", "''");
+            ProcessBuilder killPb = new ProcessBuilder(
+                "powershell", "-NoProfile", "-Command",
+                "$procs = Get-Process " + processName + " -ErrorAction SilentlyContinue | " +
+                "Where-Object { $_.Path -and $_.Path.StartsWith('" + searchPath + "') }; " +
+                "if ($procs) { $procs | Stop-Process -Force; Start-Sleep -Milliseconds 500 }"
+            );
+            killPb.redirectErrorStream(true);
+            Process killProc = killPb.start();
+            killProc.waitFor(5, java.util.concurrent.TimeUnit.SECONDS);
+        } catch (Exception e) {
+            log.warn("Failed to check or kill existing terminal processes", e);
         }
     }
 
     /**
      * Prepares the .set file for a backtest run.
-     * Copies the effective config (custom or default) to MQL5/Presets/ and returns
-     * the filename to use in ExpertParameters.
      * 
      * @return the filename for ExpertParameters, or null if no config exists
      */
     public String prepareForBacktest(String expertPath) {
         String eaName = extractEaBaseName(expertPath);
-        Path mt5Dir = appConfig.getMt5InstallDir();
-        if (mt5Dir == null) return null;
+        Path mtDir = appConfig.getMtInstallDir(expertPath);
+        if (mtDir == null) return null;
 
-        Path presetsDir = mt5Dir.resolve("MQL5").resolve("Profiles").resolve("Tester");
+        Path presetsDir = appConfig.getTesterProfilesDir(expertPath);
         try {
             Files.createDirectories(presetsDir);
         } catch (IOException e) {
@@ -326,19 +420,25 @@ public class EaParameterManager {
             sourceFile = customFile;
             configType = "custom";
         } else {
-            Path defaultFile = mt5Dir.resolve("MQL5").resolve("Profiles").resolve("Tester").resolve(eaName + ".set");
+            Path defaultFile = presetsDir.resolve(eaName + ".set");
             if (Files.exists(defaultFile)) {
                 sourceFile = defaultFile;
                 configType = "default";
+            } else if (appConfig.isMt4(expertPath)) {
+                Path defaultIni = presetsDir.resolve(eaName + ".ini");
+                if (Files.exists(defaultIni)) {
+                    sourceFile = defaultIni;
+                    configType = "default_ini";
+                }
             }
         }
 
         if (sourceFile == null) {
-            log.info("No .set file available for '{}'. EA will use its compiled defaults.", eaName);
+            log.info("No config file available for '{}'. EA will use its compiled defaults.", eaName);
             return null;
         }
 
-        // Copy to Presets directory with a backtester-specific name
+        // Copy to Tester directory with a backtester-specific name
         String presetFileName = "Backtester_" + eaName + ".set";
         Path destFile = presetsDir.resolve(presetFileName);
         try {
@@ -346,7 +446,7 @@ public class EaParameterManager {
             log.info("Prepared {} config for backtest: {} -> {}", configType, sourceFile, destFile);
             return presetFileName;
         } catch (IOException e) {
-            log.error("Failed to copy .set file to Presets", e);
+            log.error("Failed to copy config file to Tester directory", e);
             return null;
         }
     }
@@ -401,10 +501,13 @@ public class EaParameterManager {
      */
     public List<EaParameter> readSetFile(Path setFile) {
         List<EaParameter> params = new ArrayList<>();
+        Map<String, EaParameter> paramMap = new LinkedHashMap<>();
         String currentSection = "";
+        boolean isIni = setFile.toString().toLowerCase().endsWith(".ini");
+        boolean insideInputsBlock = !isIni;
 
         try {
-            // Try to read with UTF-16 LE first (MT5 standard)
+            // Try to read with UTF-16 LE first (MT5/MT4 standard)
             List<String> lines = tryReadLines(setFile);
 
             for (String line : lines) {
@@ -417,6 +520,17 @@ public class EaParameterManager {
                 if (line.charAt(0) == '\uFEFF') {
                     line = line.substring(1);
                 }
+
+                // Check for XML/ini blocks
+                if (line.equalsIgnoreCase("<inputs>")) {
+                    insideInputsBlock = true;
+                    continue;
+                } else if (line.startsWith("<") && line.endsWith(">")) {
+                    insideInputsBlock = false;
+                    continue;
+                }
+
+                if (!insideInputsBlock) continue;
 
                 // Comment / section header
                 if (line.startsWith(";")) {
@@ -438,13 +552,49 @@ public class EaParameterManager {
                 String name = line.substring(0, eqIdx).trim();
                 String rest = line.substring(eqIdx + 1);
 
-                EaParameter param = new EaParameter();
-                param.setName(name);
-                param.setSection(currentSection);
-                param.setRawLine(line);
+                // Check for MT4 parameter suffixes (e.g. Lots,F=1)
+                if (name.contains(",")) {
+                    int commaIdx = name.indexOf(',');
+                    String baseName = name.substring(0, commaIdx).trim();
+                    String suffix = name.substring(commaIdx + 1).trim().toLowerCase();
+
+                    EaParameter param = paramMap.get(baseName);
+                    if (param == null) {
+                        param = new EaParameter();
+                        param.setName(baseName);
+                        param.setSection(currentSection);
+                        paramMap.put(baseName, param);
+                        params.add(param);
+                    }
+
+                    if ("f".equals(suffix)) {
+                        param.setOptimizeEnabled("1".equals(rest.trim()));
+                        param.setStringType(false);
+                    } else if ("start".equals(suffix) || "1".equals(suffix)) {
+                        param.setOptimizeStart(rest.trim());
+                        param.setStringType(false);
+                    } else if ("step".equals(suffix) || "2".equals(suffix)) {
+                        param.setOptimizeStep(rest.trim());
+                        param.setStringType(false);
+                    } else if ("stop".equals(suffix) || "3".equals(suffix)) {
+                        param.setOptimizeEnd(rest.trim());
+                        param.setStringType(false);
+                    }
+                    continue;
+                }
+
+                // Standard parameter name=value
+                EaParameter param = paramMap.get(name);
+                if (param == null) {
+                    param = new EaParameter();
+                    param.setName(name);
+                    param.setSection(currentSection);
+                    paramMap.put(name, param);
+                    params.add(param);
+                }
 
                 if (rest.contains("||")) {
-                    // Numeric/bool parameter with optimization fields
+                    // Numeric/bool parameter with optimization fields (MT5 format)
                     String[] parts = rest.split("\\|\\|");
                     param.setValue(parts[0].trim());
                     param.setDefaultValue(parts[0].trim());
@@ -454,13 +604,14 @@ public class EaParameterManager {
                     if (parts.length > 4) param.setOptimizeEnabled("Y".equalsIgnoreCase(parts[4].trim()));
                     param.setStringType(false);
                 } else {
-                    // String parameter
+                    // String parameter or simple value
                     param.setValue(rest);
                     param.setDefaultValue(rest);
-                    param.setStringType(true);
+                    // Default to stringType = true, but if we parsed suffixes first, preserve stringType = false
+                    if (param.getOptimizeStart().isEmpty() && !param.isOptimizeEnabled()) {
+                        param.setStringType(true);
+                    }
                 }
-
-                params.add(param);
             }
 
             log.info("Read {} parameters from: {}", params.size(), setFile);
@@ -506,9 +657,9 @@ public class EaParameterManager {
     }
 
     /**
-     * Writes parameters to a .set file in UTF-16 LE format (MT5 compatible).
+     * Writes parameters to a .set file in UTF-16 LE format.
      */
-    public void writeSetFile(Path setFile, List<EaParameter> params, String eaName) {
+    public void writeSetFile(Path setFile, List<EaParameter> params, String expertPathOrEaName) {
         try {
             Files.createDirectories(setFile.getParent());
 
@@ -518,12 +669,15 @@ public class EaParameterManager {
                 // Write UTF-16 LE BOM
                 os.write(new byte[]{(byte) 0xFF, (byte) 0xFE});
 
+                String eaName = extractEaBaseName(expertPathOrEaName);
+
                 // Header comment
                 writer.write("; saved by MT5 Backtester on " + 
                         java.time.LocalDateTime.now().format(java.time.format.DateTimeFormatter.ofPattern("yyyy.MM.dd HH:mm:ss")) + "\r\n");
                 writer.write("; custom parameters for " + eaName + " expert advisor\r\n");
                 writer.write(";\r\n");
 
+                boolean isMt4 = appConfig.isMt4(expertPathOrEaName);
                 String lastSection = "";
                 for (EaParameter param : params) {
                     // Write section header if changed
@@ -533,7 +687,17 @@ public class EaParameterManager {
                         writer.write("; === " + lastSection + " ===\r\n");
                     }
 
-                    writer.write(param.toSetFileLine() + "\r\n");
+                    if (isMt4) {
+                        writer.write(param.getName() + "=" + param.getValue() + "\r\n");
+                        if (!param.isStringType()) {
+                            writer.write(param.getName() + ",F=" + (param.isOptimizeEnabled() ? "1" : "0") + "\r\n");
+                            writer.write(param.getName() + ",1=" + param.getOptimizeStart() + "\r\n");
+                            writer.write(param.getName() + ",2=" + param.getOptimizeStep() + "\r\n");
+                            writer.write(param.getName() + ",3=" + param.getOptimizeEnd() + "\r\n");
+                        }
+                    } else {
+                        writer.write(param.toSetFileLine() + "\r\n");
+                    }
                 }
             }
 

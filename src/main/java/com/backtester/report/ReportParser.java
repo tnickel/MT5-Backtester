@@ -30,11 +30,14 @@ public class ReportParser {
 
     static {
         // Net Profit
+        LABEL_MAP.put("Nettoprofit gesamt", "netProfit");
         LABEL_MAP.put("Nettogewinn gesamt", "netProfit");
         LABEL_MAP.put("Total Net Profit", "netProfit");
         LABEL_MAP.put("Total net profit", "netProfit");
+        LABEL_MAP.put("Gesamter Nettogewinn", "netProfit"); // MT4 German
 
         // Gross Profit
+        LABEL_MAP.put("Bruttoprofit", "grossProfit");
         LABEL_MAP.put("Bruttogewinn", "grossProfit");
         LABEL_MAP.put("Gross Profit", "grossProfit");
         LABEL_MAP.put("Gross profit", "grossProfit");
@@ -53,6 +56,7 @@ public class ReportParser {
         LABEL_MAP.put("Erwartetes Ergebnis", "expectedPayoff");
         LABEL_MAP.put("Expected Payoff", "expectedPayoff");
         LABEL_MAP.put("Expected payoff", "expectedPayoff");
+        LABEL_MAP.put("Auszahlungserwartung", "expectedPayoff"); // MT4 German
 
         // Recovery Factor
         LABEL_MAP.put("Erholungsfaktor", "recoveryFactor");
@@ -64,33 +68,51 @@ public class ReportParser {
         LABEL_MAP.put("Sharpe Ratio", "sharpeRatio");
 
         // Total Trades
+        LABEL_MAP.put("Anzahl an Trades", "totalTrades");
+        LABEL_MAP.put("Anzahl Trades", "totalTrades");
         LABEL_MAP.put("Gesamtanzahl Trades", "totalTrades");
         LABEL_MAP.put("Total Trades", "totalTrades");
         LABEL_MAP.put("Total trades", "totalTrades");
+        LABEL_MAP.put("Trades gesamt", "totalTrades"); // MT4 German
 
         // Won Trades
+        LABEL_MAP.put("Gewonne Trades (in % von Gesamt)", "wonTrades");
+        LABEL_MAP.put("Gewonne Trades", "wonTrades");
+        LABEL_MAP.put("Gewonnene Trades (in % von Gesamt)", "wonTrades");
         LABEL_MAP.put("Gewonnene Trades", "wonTrades"); // value: "241 (77.00%)"
         LABEL_MAP.put("Profit Trades", "wonTrades");
         LABEL_MAP.put("Won trades", "wonTrades");
         LABEL_MAP.put("Short Trades Won", "wonTrades");
+        LABEL_MAP.put("Profit trades (% of total)", "wonTrades"); // MT4 English
+        LABEL_MAP.put("Gewonnene Trades (% von allen)", "wonTrades"); // MT4 German
 
         // Lost Trades
+        LABEL_MAP.put("Verlorene Trades (in % von Gesamt)", "lostTrades");
         LABEL_MAP.put("Verlorene Trades", "lostTrades"); // value: "72 (23.00%)"
         LABEL_MAP.put("Loss Trades", "lostTrades");
         LABEL_MAP.put("Lost trades", "lostTrades");
         LABEL_MAP.put("Loss trades", "lostTrades");
+        LABEL_MAP.put("Loss trades (% of total)", "lostTrades"); // MT4 English
+        LABEL_MAP.put("Verlorene Trades (% von allen)", "lostTrades"); // MT4 German
 
         // Initial Deposit
+        LABEL_MAP.put("Ursprüngliche Einzahlung", "initialDeposit");
+        LABEL_MAP.put("Ursprngliche Einzahlung", "initialDeposit");
+        LABEL_MAP.put("Ursprungliche Einzahlung", "initialDeposit");
         LABEL_MAP.put("Ersteinlage", "initialDeposit");
         LABEL_MAP.put("Initial Deposit", "initialDeposit");
         LABEL_MAP.put("Initial deposit", "initialDeposit");
 
         // Max Drawdown (equity)
+        LABEL_MAP.put("Maximaler Rückgang", "maxDrawdown");
+        LABEL_MAP.put("Maximaler Rckgang", "maxDrawdown");
         LABEL_MAP.put("Rückgang Equity maximal", "maxDrawdown");         // "978.80 (9.76%)"
         LABEL_MAP.put("R\u00FCckgang Equity maximal", "maxDrawdown");
         LABEL_MAP.put("Maximal Equity Drawdown", "maxDrawdown");
         LABEL_MAP.put("Equity Drawdown Maximal", "maxDrawdown");
         LABEL_MAP.put("Maximal equity drawdown", "maxDrawdown");
+        LABEL_MAP.put("Maximaler Drawdown", "maxDrawdown"); // MT4 German
+        LABEL_MAP.put("Maximal drawdown", "maxDrawdown"); // MT4 English
 
         // Max Drawdown (balance)
         LABEL_MAP.put("Rückgang Kontostand maximal", "maxBalanceDrawdown");
@@ -99,12 +121,18 @@ public class ReportParser {
         LABEL_MAP.put("Maximal balance drawdown", "maxBalanceDrawdown");
 
         // Short/Buy positions
+        LABEL_MAP.put("Sell-Positionen (davon gewonnen %)", "shortPositions");
         LABEL_MAP.put("Sell-Positionen", "shortPositions");    // "169 (75.15%)"
         LABEL_MAP.put("Short Positions", "shortPositions");
         LABEL_MAP.put("Short positions", "shortPositions");
+        LABEL_MAP.put("Short positions (won %)", "shortPositions"); // MT4 English
+        LABEL_MAP.put("Short-Positionen (gewonnen %)", "shortPositions"); // MT4 German
+        LABEL_MAP.put("Buy-Positionen (davon gewonnen %)", "longPositions");
         LABEL_MAP.put("Buy-Positionen", "longPositions");      // "144 (79.17%)"
         LABEL_MAP.put("Long Positions", "longPositions");
         LABEL_MAP.put("Long positions", "longPositions");
+        LABEL_MAP.put("Long positions (won %)", "longPositions"); // MT4 English
+        LABEL_MAP.put("Long-Positionen (gewonnen %)", "longPositions"); // MT4 German
 
         // Largest win/loss
         LABEL_MAP.put("Größter Gewinntrade", "largestWin");
@@ -122,7 +150,7 @@ public class ReportParser {
     }
 
     /**
-     * Parse an MT5 Strategy Tester HTML report.
+     * Parse an MT5/MT4 Strategy Tester HTML report.
      * Handles UTF-16LE and UTF-8 encoding automatically.
      */
     public BacktestResult parse(Path reportFile) {
@@ -236,60 +264,81 @@ public class ReportParser {
             return new String(bytes, StandardCharsets.UTF_16LE);
         }
 
-        // Default to UTF-8
-        return new String(bytes, StandardCharsets.UTF_8);
+        // Try UTF-8 first
+        String utf8Str = new String(bytes, StandardCharsets.UTF_8);
+        if (utf8Str.contains("\uFFFD")) {
+            log.info("UTF-8 decoding contains replacement characters, falling back to windows-1252");
+            try {
+                return new String(bytes, "windows-1252");
+            } catch (UnsupportedEncodingException e) {
+                return new String(bytes, Charset.defaultCharset());
+            }
+        }
+        return utf8Str;
     }
 
     /**
-     * Extract label-value pairs from the MT5 HTML report.
-     * Uses the table structure:
-     *   <td ...>Label:</td>  (or Label without colon)
-     *   <td ...><b>Value</b></td>
+     * Extract label-value pairs from the Strategy Tester HTML report.
+     * Supports both MT5 and MT4 HTML structures.
      */
     private Map<String, String> extractValuesFromHtml(String html) {
         Map<String, String> values = new HashMap<>();
 
-        // Pattern: <td...>Label:</td> followed by <td...><b>Value</b></td>
-        // The value might be on the same line or the next line
-        // MT5 format: label in one <td>, value in next <td><b>...</b></td>
-
-        // Strategy: find each known label, then extract the <b>...</b> value after it
         for (Map.Entry<String, String> labelEntry : LABEL_MAP.entrySet()) {
             String label = labelEntry.getKey();
             String fieldName = labelEntry.getValue();
 
-            // Skip if already found (first match wins)
             if (values.containsKey(fieldName)) continue;
 
-            // Find label in HTML (case-insensitive, with or without colon)
             int labelIdx = indexOfIgnoringEncoding(html, label);
             if (labelIdx < 0) continue;
 
-            // Find the next <b>...</b> after the label's </td>
             int afterLabel = html.indexOf("</td>", labelIdx);
             if (afterLabel < 0) continue;
 
-            // Find the next bold value
-            int boldStart = html.indexOf("<b>", afterLabel);
-            if (boldStart < 0) continue;
+            // Find the next td element after the label's </td>
+            int nextTdStart = html.indexOf("<td", afterLabel);
+            if (nextTdStart < 0 || nextTdStart - afterLabel > 200) {
+                // Fallback: look for bold value directly after label
+                int boldStart = html.indexOf("<b>", afterLabel);
+                if (boldStart >= 0 && boldStart - afterLabel <= 200) {
+                    int boldEnd = html.indexOf("</b>", boldStart);
+                    if (boldEnd > boldStart) {
+                        String value = html.substring(boldStart + 3, boldEnd).trim();
+                        value = value.replace("&nbsp;", " ")
+                                     .replace("&amp;", "&")
+                                     .replaceAll("<[^>]+>", "")
+                                     .trim();
+                        if (!value.isEmpty()) {
+                            values.put(fieldName, value);
+                            log.debug("Found (Bold Fallback): {} ({}) = {}", label, fieldName, value);
+                        }
+                    }
+                }
+                continue;
+            }
 
-            // Make sure it's reasonably close (within 200 chars)
-            if (boldStart - afterLabel > 200) continue;
+            int tdContentStart = html.indexOf(">", nextTdStart) + 1;
+            int tdContentEnd = html.indexOf("</td>", tdContentStart);
+            if (tdContentEnd <= tdContentStart) continue;
 
-            int boldEnd = html.indexOf("</b>", boldStart);
-            if (boldEnd < 0) continue;
+            String tdContent = html.substring(tdContentStart, tdContentEnd).trim();
+            if (tdContent.contains("<b>")) {
+                int bStart = tdContent.indexOf("<b>") + 3;
+                int bEnd = tdContent.indexOf("</b>");
+                if (bEnd > bStart) {
+                    tdContent = tdContent.substring(bStart, bEnd).trim();
+                }
+            }
 
-            String value = html.substring(boldStart + 3, boldEnd).trim();
+            tdContent = tdContent.replace("&nbsp;", " ")
+                                 .replace("&amp;", "&")
+                                 .replaceAll("<[^>]+>", "")
+                                 .trim();
 
-            // Clean HTML entities
-            value = value.replace("&nbsp;", " ")
-                         .replace("&amp;", "&")
-                         .replaceAll("<[^>]+>", "")
-                         .trim();
-
-            if (!value.isEmpty()) {
-                values.put(fieldName, value);
-                log.debug("Found: {} ({}) = {}", label, fieldName, value);
+            if (!tdContent.isEmpty()) {
+                values.put(fieldName, tdContent);
+                log.debug("Found: {} ({}) = {}", label, fieldName, tdContent);
             }
         }
 
@@ -343,6 +392,15 @@ public class ReportParser {
         int tradesStart = html.indexOf(">Trades<");
         if (tradesStart < 0) tradesStart = html.indexOf(">Deals<");
         if (tradesStart < 0) tradesStart = html.indexOf(">Orders<");
+        if (tradesStart < 0) tradesStart = html.indexOf("Closed Transactions");
+        if (tradesStart < 0) tradesStart = html.indexOf("Geschlossene Transaktionen");
+        if (tradesStart < 0) {
+            // MT4 fallback: search for header row with bgcolor="#C0C0C0"
+            Matcher m = Pattern.compile("bgcolor\\s*=\\s*\"?#C0C0C0\"?", Pattern.CASE_INSENSITIVE).matcher(html);
+            if (m.find()) {
+                tradesStart = m.start();
+            }
+        }
         if (tradesStart < 0) {
             log.info("No trade history section found in report");
             return history;
@@ -355,7 +413,7 @@ public class ReportParser {
             tradesSection = tradesSection.substring(0, tableEnd);
         }
 
-        Matcher trMatcher = Pattern.compile("<tr bgcolor=\"#[^\"]+\".*?>(.*?)</tr>", Pattern.CASE_INSENSITIVE).matcher(tradesSection);
+        Matcher trMatcher = Pattern.compile("<tr[^>]*>(.*?)</tr>", Pattern.CASE_INSENSITIVE).matcher(tradesSection);
         int tradeNum = 0;
         java.text.SimpleDateFormat sdf = new java.text.SimpleDateFormat("yyyy.MM.dd HH:mm:ss");
         java.text.SimpleDateFormat sdfShort = new java.text.SimpleDateFormat("yyyy.MM.dd");
@@ -368,8 +426,8 @@ public class ReportParser {
                 tds.add(tdMatcher.group(1).replaceAll("<[^>]*>", "").trim());
             }
             
-            // Standard MT5 row has around 13 columns. The balance is usually the 2nd to last column.
-            if (tds.size() >= 12) {
+            // MT4 typically has 10 columns, MT5 has 13 columns. Let's support both.
+            if (tds.size() >= 9) {
                 String dateStr = tds.get(0);
                 long timestamp = 0;
                 try {
@@ -377,17 +435,24 @@ public class ReportParser {
                     else if (dateStr.length() >= 10) timestamp = sdfShort.parse(dateStr.substring(0, 10)).getTime();
                 } catch (Exception ignored) {}
 
-                String balStr = tds.get(tds.size() - 2);
+                // In MT5, Balance is second to last. In MT4, Balance is the last column.
+                String balStr = "";
+                if (tds.size() == 10 || tds.size() == 9) {
+                    balStr = tds.get(tds.size() - 1);
+                } else {
+                    balStr = tds.get(tds.size() - 2);
+                }
+
                 try {
                     double val = parseNumber(balStr);
-                    // Filter: must be reasonably close to initial deposit
-                    if (val > initialDeposit * 0.1 && val < initialDeposit * 10) {
+                    // Filter: must be reasonably close to initial deposit (allow wide bounds for big runs)
+                    if (val > initialDeposit * 0.01 && val < initialDeposit * 100) {
                         tradeNum++;
                         // Set equity = balance. Add timestamp as 4th element.
                         history.add(new double[]{tradeNum, val, val, timestamp});
                     }
                 } catch (Exception e) {
-                    // Skip invalid rows
+                    // Skip invalid rows (like header rows)
                 }
             }
         }

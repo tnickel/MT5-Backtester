@@ -6,6 +6,7 @@ import com.backtester.engine.BacktestConfig;
 import com.backtester.engine.BacktestRunner;
 import com.backtester.config.EaParameterManager;
 import com.backtester.config.EaParameter;
+import com.backtester.config.AppConfig;
 import com.backtester.report.OptimizationResult;
 import com.backtester.report.OptimizationResult.CombinedPass;
 import javafx.application.Platform;
@@ -38,6 +39,7 @@ public class OptimizationView {
 
     private BorderPane root;
     private final LogView logView;
+    private final AppConfig config;
 
     // Backend
     private final EaParameterManager eaParamManager = new EaParameterManager();
@@ -168,6 +170,7 @@ public class OptimizationView {
 
     public OptimizationView(LogView logView) {
         this.logView = logView;
+        this.config = AppConfig.getInstance();
         root = new BorderPane();
         root.setPadding(new Insets(15));
 
@@ -193,6 +196,7 @@ public class OptimizationView {
         root.setCenter(mainLayout);
         
         loadPreferences();
+        expertField.textProperty().addListener((obs, oldVal, newVal) -> loadParameters());
         
         symbolCombo.valueProperty().addListener((obs, oldVal, newVal) -> loadParameters());
         periodCombo.valueProperty().addListener((obs, oldVal, newVal) -> loadParameters());
@@ -379,7 +383,34 @@ public class OptimizationView {
         optCol.setPrefWidth(40);
         
         TableColumn<EaParameter, String> nameCol = new TableColumn<>("Variable");
-        nameCol.setCellValueFactory(new PropertyValueFactory<>("name"));
+        nameCol.setCellValueFactory(cellData -> {
+            EaParameter param = cellData.getValue();
+            String display = param.getDisplayName();
+            if (display == null || display.trim().isEmpty()) {
+                display = param.getName();
+            }
+            return new javafx.beans.property.SimpleStringProperty(display);
+        });
+        nameCol.setCellFactory(column -> new javafx.scene.control.TableCell<EaParameter, String>() {
+            private final javafx.scene.control.Tooltip tooltip = new javafx.scene.control.Tooltip();
+            @Override
+            protected void updateItem(String item, boolean empty) {
+                super.updateItem(item, empty);
+                if (empty || item == null) {
+                    setText(null);
+                    setTooltip(null);
+                } else {
+                    setText(item);
+                    EaParameter param = getTableRow() != null ? getTableRow().getItem() : null;
+                    if (param != null) {
+                        tooltip.setText("Variable: " + param.getName());
+                        setTooltip(tooltip);
+                    } else {
+                        setTooltip(null);
+                    }
+                }
+            }
+        });
         nameCol.setPrefWidth(200);
         
         TableColumn<EaParameter, String> valCol = new TableColumn<>("Value");
@@ -413,6 +444,9 @@ public class OptimizationView {
 
         HBox btnBox = new HBox(10);
         btnBox.setAlignment(Pos.CENTER_RIGHT);
+        Button genConfigBtn = new Button("Gen Config");
+        genConfigBtn.setOnAction(e -> generateDefaultConfig());
+        
         Button autoConfigBtn = new Button("AutoConfig");
         autoConfigBtn.setOnAction(e -> autoConfigParameters());
         
@@ -422,7 +456,7 @@ public class OptimizationView {
         Button saveBtn = new Button("Save .set");
         saveBtn.setOnAction(e -> saveToFile());
         
-        btnBox.getChildren().addAll(autoConfigBtn, loadBtn, saveBtn);
+        btnBox.getChildren().addAll(genConfigBtn, autoConfigBtn, loadBtn, saveBtn);
 
         box.getChildren().addAll(title, paramTable, btnBox);
         return box;
@@ -492,7 +526,7 @@ public class OptimizationView {
         startBtn.getStyleClass().addAll("button", "button-start");
         startBtn.setOnAction(e -> startOptimization(true));
 
-        startKeepOpenBtn = new Button("▶ Start (Keep MT5 Open)");
+        startKeepOpenBtn = new Button("▶ Start (Keep MT4/5 Open)");
         startKeepOpenBtn.getStyleClass().addAll("button", "button-start");
         startKeepOpenBtn.setStyle("-fx-background-color: linear-gradient(to bottom, #116b91, #0a4d6b); -fx-border-color: #1a8fbd;");
         startKeepOpenBtn.setOnAction(e -> startOptimization(false));
@@ -3275,26 +3309,41 @@ public class OptimizationView {
     private void browseEA() {
         javafx.stage.FileChooser chooser = new javafx.stage.FileChooser();
         chooser.setTitle("Select Expert Advisor");
-        chooser.getExtensionFilters().add(new javafx.stage.FileChooser.ExtensionFilter("MetaTrader 5 EA", "*.ex5"));
+        chooser.getExtensionFilters().add(new javafx.stage.FileChooser.ExtensionFilter("MetaTrader EA", "*.ex5", "*.ex4"));
         
         com.backtester.config.AppConfig config = com.backtester.config.AppConfig.getInstance();
-        java.nio.file.Path mt5Dir = config.getMt5InstallDir();
-        java.nio.file.Path expertsDir = mt5Dir != null ? mt5Dir.resolve("MQL5").resolve("Experts") : null;
+        String currentExpert = expertField.getText().trim();
+        java.nio.file.Path expertsDir = null;
+        if (config.isMt4(currentExpert)) {
+            expertsDir = config.getExpertsDir("dummy.ex4");
+        } else {
+            expertsDir = config.getExpertsDir("dummy.ex5");
+        }
+
         if (expertsDir != null && java.nio.file.Files.exists(expertsDir)) {
             chooser.setInitialDirectory(expertsDir.toFile());
+        } else {
+            java.nio.file.Path otherDir = config.isMt4(currentExpert) ? config.getExpertsDir("dummy.ex5") : config.getExpertsDir("dummy.ex4");
+            if (otherDir != null && java.nio.file.Files.exists(otherDir)) {
+                chooser.setInitialDirectory(otherDir.toFile());
+            }
         }
         
         java.io.File selected = chooser.showOpenDialog(expertField.getScene().getWindow());
         if (selected != null) {
-            if (expertsDir != null && selected.toPath().startsWith(expertsDir)) {
-                String relative = expertsDir.relativize(selected.toPath()).toString();
-                if (relative.toLowerCase().endsWith(".ex5")) {
+            String pathStr = selected.getAbsolutePath().toLowerCase();
+            boolean isEx4 = pathStr.endsWith(".ex4");
+            java.nio.file.Path activeExpertsDir = isEx4 ? config.getExpertsDir("dummy.ex4") : config.getExpertsDir("dummy.ex5");
+
+            if (activeExpertsDir != null && selected.toPath().startsWith(activeExpertsDir)) {
+                String relative = activeExpertsDir.relativize(selected.toPath()).toString();
+                if (!isEx4 && relative.toLowerCase().endsWith(".ex5")) {
                     relative = relative.substring(0, relative.length() - 4);
                 }
                 expertField.setText(relative);
             } else {
                 String path = selected.getAbsolutePath();
-                if (path.toLowerCase().endsWith(".ex5")) {
+                if (!isEx4 && path.toLowerCase().endsWith(".ex5")) {
                     path = path.substring(0, path.length() - 4);
                 }
                 expertField.setText(path);
@@ -3318,6 +3367,7 @@ public class OptimizationView {
                 java.lang.reflect.Type listType = new com.google.gson.reflect.TypeToken<java.util.List<com.backtester.config.EaParameter>>(){}.getType();
                 java.util.List<com.backtester.config.EaParameter> params = new com.google.gson.Gson().fromJson(dbParamsJson, listType);
                 if (params != null && !params.isEmpty()) {
+                    eaParamManager.applyTranslations(expert, params);
                     paramTable.getItems().setAll(params);
                     logView.log("INFO", "Loaded parameters for " + EaParameterManager.extractEaBaseName(expert) + " [" + symbol + ", " + period + "] from DB");
                     return;
@@ -3722,6 +3772,39 @@ public class OptimizationView {
         logView.log("INFO", "AutoConfig applied: " + activated + " enabled, " + skipped + " skipped.");
     }
 
+    private void generateDefaultConfig() {
+        String expert = expertField.getText().trim();
+        if (expert.isEmpty()) {
+            logView.log("WARN", "Please select an Expert Advisor first.");
+            return;
+        }
+
+        logView.log("INFO", "Starting config generation for " + EaParameterManager.extractEaBaseName(expert) + "... Please wait.");
+
+        Task<Boolean> task = new Task<Boolean>() {
+            @Override
+            protected Boolean call() throws Exception {
+                return eaParamManager.generateDefaultConfig(expert);
+            }
+        };
+
+        task.setOnSucceeded(evt -> {
+            boolean success = task.getValue();
+            if (success) {
+                logView.log("INFO", "Config generated successfully. Loading parameters...");
+                loadParameters();
+            } else {
+                logView.log("ERROR", "Failed to generate config. Check MetaTrader logs / config.");
+            }
+        });
+
+        task.setOnFailed(evt -> {
+            logView.log("ERROR", "Config generation failed: " + task.getException().getMessage());
+        });
+
+        new Thread(task).start();
+    }
+
     private boolean isExcludedParameterName(String name) {
         String lower = name.toLowerCase();
         return lower.contains("magic") || lower.contains("slippage") || lower.contains("comment") || lower.contains("color");
@@ -3794,6 +3877,8 @@ public class OptimizationView {
         if (file != null) {
             java.util.List<com.backtester.config.EaParameter> params = eaParamManager.readSetFile(file.toPath());
             if (params != null && !params.isEmpty()) {
+                String expertPath = expertField.getText().trim();
+                eaParamManager.applyTranslations(expertPath, params);
                 paramTable.getItems().setAll(params);
                 logView.log("INFO", "Loaded parameters from " + file.getName());
             } else {
@@ -3807,14 +3892,16 @@ public class OptimizationView {
             logView.log("WARN", "No parameters to save.");
             return;
         }
-        String eaName = com.backtester.config.EaParameterManager.extractEaBaseName(expertField.getText());
+        String expertPath = expertField.getText().trim();
+        String eaName = com.backtester.config.EaParameterManager.extractEaBaseName(expertPath);
         javafx.stage.FileChooser chooser = new javafx.stage.FileChooser();
         chooser.setTitle("Save .set File");
         chooser.setInitialFileName(eaName.isEmpty() ? "params.set" : eaName + ".set");
-        chooser.getExtensionFilters().add(new javafx.stage.FileChooser.ExtensionFilter("MT5 Set Files", "*.set"));
+        boolean isMt4 = config.isMt4(expertPath);
+        chooser.getExtensionFilters().add(new javafx.stage.FileChooser.ExtensionFilter(isMt4 ? "MT4 Set Files" : "MT5 Set Files", "*.set"));
         java.io.File file = chooser.showSaveDialog(root.getScene().getWindow());
         if (file != null) {
-            eaParamManager.writeSetFile(file.toPath(), new java.util.ArrayList<>(paramTable.getItems()), eaName);
+            eaParamManager.writeSetFile(file.toPath(), new java.util.ArrayList<>(paramTable.getItems()), expertPath);
             logView.log("INFO", "Saved parameters to " + file.getName());
         }
     }
@@ -4173,9 +4260,9 @@ public class OptimizationView {
         }
 
         com.backtester.config.AppConfig config = com.backtester.config.AppConfig.getInstance();
-        java.nio.file.Path mt5Dir = config.getMt5InstallDir();
-        if (mt5Dir == null) {
-            new Alert(Alert.AlertType.ERROR, "MetaTrader 5 Installationsverzeichnis ist nicht konfiguriert.").show();
+        java.nio.file.Path mtDir = config.getMtInstallDir(expert);
+        if (mtDir == null) {
+            new Alert(Alert.AlertType.ERROR, "MetaTrader Installationsverzeichnis ist nicht konfiguriert.").show();
             return;
         }
 
@@ -4194,10 +4281,10 @@ public class OptimizationView {
             param.setOptimizeEnabled(false);
         }
 
-        // Parameter direkt in das MT5 Tester-Profilverzeichnis schreiben
+        // Parameter direkt in das Tester-Profilverzeichnis schreiben
         String eaName = EaParameterManager.extractEaBaseName(expert);
         String presetFileName = "Backtester_" + eaName + "_Verify.set";
-        java.nio.file.Path presetsDir = mt5Dir.resolve("MQL5").resolve("Profiles").resolve("Tester");
+        java.nio.file.Path presetsDir = config.getTesterProfilesDir(expert);
         try {
             java.nio.file.Files.createDirectories(presetsDir);
         } catch (java.io.IOException ex) {
@@ -4207,7 +4294,7 @@ public class OptimizationView {
         }
 
         java.nio.file.Path destFile = presetsDir.resolve(presetFileName);
-        eaParamManager.writeSetFile(destFile, allParams, eaName);
+        eaParamManager.writeSetFile(destFile, allParams, expert);
 
         // BacktestConfig erstellen
         BacktestConfig btConfig = new BacktestConfig();

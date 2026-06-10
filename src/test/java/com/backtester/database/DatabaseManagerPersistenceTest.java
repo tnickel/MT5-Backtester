@@ -471,4 +471,33 @@ public class DatabaseManagerPersistenceTest {
             assertEquals(0, rs.getInt(1));
         }
     }
+
+    @Test
+    public void testParameterTranslations() {
+        // Verify database is initialized and empty initially for this expert
+        String expert = "TestBotTranslation";
+        java.util.Map<String, String> emptyMap = db.getParameterTranslations(expert);
+        assertTrue(emptyMap.isEmpty());
+
+        // Save translation
+        db.saveParameterTranslation(expert, "Inp_Maximo_Ativos_Robo", "Max Active Robots");
+        db.saveParameterTranslation(expert, "inpLucroAlvo", "Target Profit");
+
+        // Get single translation
+        assertEquals("Max Active Robots", db.getParameterTranslation(expert, "Inp_Maximo_Ativos_Robo"));
+        assertEquals("Target Profit", db.getParameterTranslation(expert, "inpLucroAlvo"));
+        assertNull(db.getParameterTranslation(expert, "nonexistent"));
+
+        // Get all translations
+        java.util.Map<String, String> all = db.getParameterTranslations(expert);
+        assertEquals(2, all.size());
+        assertEquals("Max Active Robots", all.get("Inp_Maximo_Ativos_Robo"));
+        assertEquals("Target Profit", all.get("inpLucroAlvo"));
+
+        // Test translation translator directly
+        assertEquals("Max Active Robot", DatabaseManager.translatePortugueseParameter("Inp_Maximo_Ativos_Robo"));
+        assertEquals("Profit Alvo", DatabaseManager.translatePortugueseParameter("Inp_Lucro_Alvo"));
+        assertEquals("Period MA", DatabaseManager.translatePortugueseParameter("Inp_Periodo_Media"));
+        assertEquals("Enable Buy", DatabaseManager.translatePortugueseParameter("Inp_Habilitar_Compra"));
+    }
 }

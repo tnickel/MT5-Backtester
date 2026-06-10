@@ -216,6 +216,12 @@ public class MultiReportGenerator {
             writer.write("tr:nth-child(even) { background-color: #232730; }\n");
             writer.write(".status-success { color: #4caf50; font-weight: bold; }\n");
             writer.write(".status-fail { color: #f44336; font-weight: bold; }\n");
+            writer.write(".dd-low { color: #12b886; font-weight: bold; }\n");
+            writer.write(".dd-medium { color: #fab005; font-weight: bold; }\n");
+            writer.write(".dd-high { color: #fd7e14; font-weight: bold; }\n");
+            writer.write(".dd-critical { color: #fa5252; font-weight: bold; }\n");
+            writer.write(".neg-profit { color: #fa5252; font-weight: bold; }\n");
+            writer.write(".low-pf { color: #fa5252; font-weight: bold; }\n");
             writer.write(".test-container { background: #2a2e38; border: 1px solid #3c414b; padding: 10px; margin-bottom: 10px; border-radius: 5px; }\n");
             writer.write(".test-header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #3c414b; padding-bottom: 5px; margin-bottom: 8px; }\n");
             writer.write(".test-header h3 { font-size: 1.05em; }\n");
@@ -230,8 +236,22 @@ public class MultiReportGenerator {
             writer.write(".summary-value { font-size: 1.3em; font-weight: bold; color: #fff; }\n");
             writer.write(".combined-charts-container { display: flex; flex-direction: column; gap: 20px; margin-bottom: 25px; }\n");
             writer.write(".combined-chart-box { background: #2a2e38; border: 1px solid #3c414b; padding: 15px; border-radius: 6px; }\n");
+            writer.write(".export-btn { background: #4e9af1; color: #fff; border: none; padding: 8px 16px; border-radius: 4px; font-size: 0.9em; font-weight: bold; cursor: pointer; float: right; margin-top: 5px; transition: background 0.2s; }\n");
+            writer.write(".export-btn:hover { background: #357ae8; }\n");
+            writer.write("@media print {\n");
+            writer.write("  body { background: #ffffff !important; color: #1a1a1a !important; max-width: 100% !important; padding: 0 !important; }\n");
+            writer.write("  h1, h2, h3, h4 { color: #000000 !important; }\n");
+            writer.write("  table, th, td { border: 1px solid #cbd5e1 !important; }\n");
+            writer.write("  th { background-color: #f1f5f9 !important; color: #0f172a !important; }\n");
+            writer.write("  tr:nth-child(even) { background-color: #f8fafc !important; }\n");
+            writer.write("  .no-print { display: none !important; }\n");
+            writer.write("  .test-container, .summary-card, .combined-chart-box, .stat-box { background: #ffffff !important; border: 1px solid #cbd5e1 !important; color: #0f172a !important; }\n");
+            writer.write("  .stat-value, .summary-value { color: #0f172a !important; }\n");
+            writer.write("  .stat-label, .summary-label { color: #64748b !important; }\n");
+            writer.write("}\n");
             writer.write("</style>\n</head>\n<body>\n");
 
+            writer.write("<button class='export-btn no-print' onclick='window.print()'>📄 Export to PDF</button>\n");
             writer.write("<h1>Multi-Backtest Summary Report</h1>\n");
             writer.write("<p class='gen-time'>Generated: " + LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")) + "</p>\n");
 
@@ -264,14 +284,41 @@ public class MultiReportGenerator {
             // Overview Table
             writer.write("<h2>Overview</h2>\n");
             writer.write("<table>\n");
-            writer.write("<tr><th>#</th><th>Robot</th><th>Symbol</th><th>Period</th><th>Trades</th><th>Profit Factor</th><th>Net Profit</th><th>Drawdown</th><th>Status</th></tr>\n");
+            writer.write("<tr><th>#</th><th>Robot</th><th>Symbol</th><th>Period</th><th>Trades</th><th>Profit Factor</th><th>Recovery Factor</th><th>Net Profit</th><th>Drawdown</th><th>Status</th></tr>\n");
 
             int idx = 1;
             for (BacktestResult r : results) {
                 String statusObj = r.isSuccess() ? "<span class='status-success'>OK</span>" : "<span class='status-fail'>FAIL</span>";
-                writer.write(String.format("<tr><td>%d</td><td>%s</td><td>%s</td><td>%s</td><td>%d</td><td>%.2f</td><td>%.2f</td><td>%.2f%%</td><td>%s</td></tr>\n",
+                double dd = r.getMaxDrawdown();
+                double pf = r.getProfitFactor();
+                double profit = r.getTotalProfit();
+                
+                String ddClass = "";
+                String pfClass = "";
+                String profitClass = "";
+                
+                if (r.isSuccess()) {
+                    if (dd < 30.0) {
+                        ddClass = " class='dd-low'";
+                    } else if (dd <= 60.0) {
+                        ddClass = " class='dd-medium'";
+                    } else if (dd <= 80.0) {
+                        ddClass = " class='dd-high'";
+                    } else {
+                        ddClass = " class='dd-critical'";
+                    }
+                    
+                    if (pf < 1.0) {
+                        pfClass = " class='low-pf'";
+                    }
+                    if (profit < 0.0) {
+                        profitClass = " class='neg-profit'";
+                    }
+                }
+                
+                writer.write(String.format("<tr><td>%d</td><td>%s</td><td>%s</td><td>%s</td><td>%d</td><td%s>%.2f</td><td>%.2f</td><td%s>%.2f</td><td%s>%.2f%%</td><td>%s</td></tr>\n",
                         idx++, r.getExpert(), r.getSymbol(), r.getPeriod(),
-                        r.getTotalTrades(), r.getProfitFactor(), r.getTotalProfit(), r.getMaxDrawdown(), statusObj));
+                        r.getTotalTrades(), pfClass, pf, r.getRecoveryFactor(), profitClass, profit, ddClass, dd, statusObj));
             }
             writer.write("</table>\n");
 

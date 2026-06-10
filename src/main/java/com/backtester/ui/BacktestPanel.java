@@ -106,6 +106,11 @@ public class BacktestPanel extends JPanel {
         gbc.gridx = 1; gbc.weightx = 1;
         expertField = new JTextField(30);
         expertField.setToolTipText("Path relative to MQL5/Experts/ (e.g. MyEAs\\MyRobot)");
+        expertField.getDocument().addDocumentListener(new javax.swing.event.DocumentListener() {
+            public void insertUpdate(javax.swing.event.DocumentEvent e) { updateConfigStatus(); }
+            public void removeUpdate(javax.swing.event.DocumentEvent e) { updateConfigStatus(); }
+            public void changedUpdate(javax.swing.event.DocumentEvent e) { updateConfigStatus(); }
+        });
         JPanel expertPanel = new JPanel(new BorderLayout(5, 0));
         expertPanel.add(expertField, BorderLayout.CENTER);
         JPanel expertBtnPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 3, 0));
@@ -216,12 +221,12 @@ public class BacktestPanel extends JPanel {
         startButton.setPreferredSize(new Dimension(180, 38));
         startButton.addActionListener(e -> startBacktest(false));
 
-        startButtonVisual = new JButton("👁 Start Visual (MT5)");
+        startButtonVisual = new JButton("👁 Start Visual (MT4/5)");
         startButtonVisual.setFont(new Font("Segoe UI", Font.BOLD, 14));
         startButtonVisual.setBackground(new Color(55, 90, 145));
         startButtonVisual.setForeground(Color.WHITE);
         startButtonVisual.setPreferredSize(new Dimension(200, 38));
-        startButtonVisual.setToolTipText("Start backtest but keep MT5 terminal open");
+        startButtonVisual.setToolTipText("Start backtest but keep MT4/5 terminal open");
         startButtonVisual.addActionListener(e -> startBacktest(true));
 
         cancelButton = new JButton("■  Cancel");
@@ -402,6 +407,7 @@ public class BacktestPanel extends JPanel {
         btConfig.setCurrency((String) currencyCombo.getSelectedItem());
         btConfig.setLeverage(leverageField.getText().trim());
         btConfig.setShutdownTerminal(!visual);
+        btConfig.setVisualMode(visual);
 
         // Set EA parameters from config manager
         String setFileName = eaParamManager.prepareForBacktest(expert);
@@ -581,23 +587,35 @@ public class BacktestPanel extends JPanel {
     }
 
     private void browseExpert() {
-        Path mt5Dir = config.getMt5InstallDir();
-        Path expertsDir = mt5Dir != null ? mt5Dir.resolve("MQL5").resolve("Experts") : null;
+        String currentExpert = expertField.getText().trim();
+        Path expertsDir = null;
+        if (config.isMt4(currentExpert)) {
+            expertsDir = config.getExpertsDir("dummy.ex4");
+        } else {
+            expertsDir = config.getExpertsDir("dummy.ex5");
+        }
 
         JFileChooser chooser = new JFileChooser();
         if (expertsDir != null && Files.exists(expertsDir)) {
             chooser.setCurrentDirectory(expertsDir.toFile());
+        } else {
+            Path otherDir = config.isMt4(currentExpert) ? config.getExpertsDir("dummy.ex5") : config.getExpertsDir("dummy.ex4");
+            if (otherDir != null && Files.exists(otherDir)) {
+                chooser.setCurrentDirectory(otherDir.toFile());
+            }
         }
-        chooser.setFileFilter(new javax.swing.filechooser.FileNameExtensionFilter("MT5 Expert Advisor (*.ex5)", "ex5"));
+        chooser.setFileFilter(new javax.swing.filechooser.FileNameExtensionFilter("MetaTrader Expert Advisor (*.ex5, *.ex4)", "ex5", "ex4"));
         chooser.setDialogTitle("Select Expert Advisor");
 
         if (chooser.showOpenDialog(this) == JFileChooser.APPROVE_OPTION) {
             File selected = chooser.getSelectedFile();
-            // Try to make path relative to MQL5/Experts/
-            if (expertsDir != null && selected.toPath().startsWith(expertsDir)) {
-                String relative = expertsDir.relativize(selected.toPath()).toString();
-                // Remove .ex5 extension
-                if (relative.toLowerCase().endsWith(".ex5")) {
+            String pathStr = selected.getAbsolutePath().toLowerCase();
+            boolean isEx4 = pathStr.endsWith(".ex4");
+            Path activeExpertsDir = isEx4 ? config.getExpertsDir("dummy.ex4") : config.getExpertsDir("dummy.ex5");
+
+            if (activeExpertsDir != null && selected.toPath().startsWith(activeExpertsDir)) {
+                String relative = activeExpertsDir.relativize(selected.toPath()).toString();
+                if (!isEx4 && relative.toLowerCase().endsWith(".ex5")) {
                     relative = relative.substring(0, relative.length() - 4);
                 }
                 expertField.setText(relative);
@@ -624,7 +642,13 @@ public class BacktestPanel extends JPanel {
         String expert = expertField.getText().trim();
         if (expert.isEmpty()) {
             configStatusLabel.setText("");
+            startButtonVisual.setText("👁 Start Visual (MT4/5)");
             return;
+        }
+        if (config.isMt4(expert)) {
+            startButtonVisual.setText("👁 Start Visual (MT4)");
+        } else {
+            startButtonVisual.setText("👁 Start Visual (MT5)");
         }
         if (eaParamManager.hasCustomConfig(expert)) {
             int modCount = eaParamManager.countModifiedParameters(expert);

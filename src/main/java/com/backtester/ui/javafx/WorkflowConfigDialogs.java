@@ -198,7 +198,34 @@ public class WorkflowConfigDialogs {
         optCol.setPrefWidth(40);
 
         TableColumn<EaParameter, String> nameCol = new TableColumn<>("Variable");
-        nameCol.setCellValueFactory(new PropertyValueFactory<>("name"));
+        nameCol.setCellValueFactory(cellData -> {
+            EaParameter param = cellData.getValue();
+            String display = param.getDisplayName();
+            if (display == null || display.trim().isEmpty()) {
+                display = param.getName();
+            }
+            return new javafx.beans.property.SimpleStringProperty(display);
+        });
+        nameCol.setCellFactory(column -> new TableCell<EaParameter, String>() {
+            private final Tooltip tooltip = new Tooltip();
+            @Override
+            protected void updateItem(String item, boolean empty) {
+                super.updateItem(item, empty);
+                if (empty || item == null) {
+                    setText(null);
+                    setTooltip(null);
+                } else {
+                    setText(item);
+                    EaParameter param = getTableRow() != null ? getTableRow().getItem() : null;
+                    if (param != null) {
+                        tooltip.setText("Variable: " + param.getName());
+                        setTooltip(tooltip);
+                    } else {
+                        setTooltip(null);
+                    }
+                }
+            }
+        });
         nameCol.setPrefWidth(180);
 
         TableColumn<EaParameter, String> valCol = new TableColumn<>("Wert");
@@ -283,6 +310,7 @@ public class WorkflowConfigDialogs {
                             for (EaParameter p : engine.getEaParameters()) {
                                 EaParameter copy = new EaParameter();
                                 copy.setName(p.getName());
+                                copy.setDisplayName(p.getDisplayName());
                                 copy.setValue(p.getValue());
                                 copy.setDefaultValue(p.getDefaultValue() != null ? p.getDefaultValue() : p.getValue());
                                 copy.setSection(p.getSection());
@@ -321,6 +349,9 @@ public class WorkflowConfigDialogs {
                 try {
                     java.lang.reflect.Type listType = new com.google.gson.reflect.TypeToken<java.util.List<com.backtester.config.EaParameter>>(){}.getType();
                     params = new com.google.gson.Gson().fromJson(dbParamsJson, listType);
+                    if (params != null && !params.isEmpty()) {
+                        eaParamManager.applyTranslations(expert, params);
+                    }
                 } catch (Exception ignored) {}
             }
 
@@ -333,6 +364,7 @@ public class WorkflowConfigDialogs {
                 for (EaParameter p : params) {
                     EaParameter copy = new EaParameter();
                     copy.setName(p.getName());
+                    copy.setDisplayName(p.getDisplayName());
                     copy.setValue(p.getValue());
                     copy.setDefaultValue(p.getDefaultValue() != null ? p.getDefaultValue() : p.getValue());
                     copy.setSection(p.getSection());
@@ -494,6 +526,7 @@ public class WorkflowConfigDialogs {
                     for (EaParameter p : sel.getEaParameters()) {
                         EaParameter copy = new EaParameter();
                         copy.setName(p.getName());
+                        copy.setDisplayName(p.getDisplayName());
                         copy.setValue(p.getValue());
                         copy.setDefaultValue(p.getDefaultValue() != null ? p.getDefaultValue() : p.getValue());
                         copy.setSection(p.getSection());
@@ -525,6 +558,7 @@ public class WorkflowConfigDialogs {
             for (EaParameter p : paramTable.getItems()) {
                 EaParameter copy = new EaParameter();
                 copy.setName(p.getName());
+                copy.setDisplayName(p.getDisplayName());
                 copy.setValue(p.getValue());
                 copy.setDefaultValue(p.getDefaultValue() != null ? p.getDefaultValue() : p.getValue());
                 copy.setSection(p.getSection());
@@ -576,6 +610,7 @@ public class WorkflowConfigDialogs {
                 for (EaParameter p : paramTable.getItems()) {
                     EaParameter copy = new EaParameter();
                     copy.setName(p.getName());
+                    copy.setDisplayName(p.getDisplayName());
                     copy.setValue(p.getValue());
                     copy.setDefaultValue(p.getDefaultValue() != null ? p.getDefaultValue() : p.getValue());
                     copy.setSection(p.getSection());
@@ -630,6 +665,7 @@ public class WorkflowConfigDialogs {
                 for (EaParameter p : paramTable.getItems()) {
                     EaParameter copy = new EaParameter();
                     copy.setName(p.getName());
+                    copy.setDisplayName(p.getDisplayName());
                     copy.setValue(p.getValue());
                     copy.setDefaultValue(p.getDefaultValue() != null ? p.getDefaultValue() : p.getValue());
                     copy.setSection(p.getSection());
@@ -686,31 +722,45 @@ public class WorkflowConfigDialogs {
         browseBtn.setOnAction(e -> {
             FileChooser chooser = new FileChooser();
             chooser.setTitle("Select Expert Advisor");
-            chooser.getExtensionFilters().add(new FileChooser.ExtensionFilter("MetaTrader 5 EA", "*.ex5"));
-            try {
-                com.backtester.config.AppConfig config = com.backtester.config.AppConfig.getInstance();
-                java.nio.file.Path mt5Dir = config.getMt5InstallDir();
-                java.nio.file.Path expertsDir = mt5Dir != null ? mt5Dir.resolve("MQL5").resolve("Experts") : null;
-                if (expertsDir != null && java.nio.file.Files.exists(expertsDir)) {
-                    chooser.setInitialDirectory(expertsDir.toFile());
+            chooser.getExtensionFilters().add(new FileChooser.ExtensionFilter("MetaTrader EA", "*.ex5", "*.ex4"));
+            
+            com.backtester.config.AppConfig config = com.backtester.config.AppConfig.getInstance();
+            String currentExpert = expertField.getText().trim();
+            java.nio.file.Path expertsDir = null;
+            if (config.isMt4(currentExpert)) {
+                expertsDir = config.getExpertsDir("dummy.ex4");
+            } else {
+                expertsDir = config.getExpertsDir("dummy.ex5");
+            }
+
+            if (expertsDir != null && java.nio.file.Files.exists(expertsDir)) {
+                chooser.setInitialDirectory(expertsDir.toFile());
+            } else {
+                java.nio.file.Path otherDir = config.isMt4(currentExpert) ? config.getExpertsDir("dummy.ex5") : config.getExpertsDir("dummy.ex4");
+                if (otherDir != null && java.nio.file.Files.exists(otherDir)) {
+                    chooser.setInitialDirectory(otherDir.toFile());
                 }
-            } catch (Exception ignored) {}
+            }
 
             File selected = chooser.showOpenDialog(stage);
             if (selected != null) {
-                String path = selected.getAbsolutePath();
-                if (path.toLowerCase().endsWith(".ex5")) {
-                    path = path.substring(0, path.length() - 4);
-                }
-                // Try to make it relative to MT5 Experts folder if possible
-                try {
-                    String expertsPart = "MQL5" + File.separator + "Experts" + File.separator;
-                    int idx = path.indexOf(expertsPart);
-                    if (idx != -1) {
-                        path = path.substring(idx + expertsPart.length());
+                String pathStr = selected.getAbsolutePath().toLowerCase();
+                boolean isEx4 = pathStr.endsWith(".ex4");
+                java.nio.file.Path activeExpertsDir = isEx4 ? config.getExpertsDir("dummy.ex4") : config.getExpertsDir("dummy.ex5");
+
+                if (activeExpertsDir != null && selected.toPath().startsWith(activeExpertsDir)) {
+                    String relative = activeExpertsDir.relativize(selected.toPath()).toString();
+                    if (!isEx4 && relative.toLowerCase().endsWith(".ex5")) {
+                        relative = relative.substring(0, relative.length() - 4);
                     }
-                } catch (Exception ignored) {}
-                expertField.setText(path);
+                    expertField.setText(relative);
+                } else {
+                    String path = selected.getAbsolutePath();
+                    if (!isEx4 && path.toLowerCase().endsWith(".ex5")) {
+                        path = path.substring(0, path.length() - 4);
+                    }
+                    expertField.setText(path);
+                }
                 updateParamsTable.run();
             }
         });
@@ -734,7 +784,10 @@ public class WorkflowConfigDialogs {
             for (EaParameter p : engine.getEaParameters()) {
                 EaParameter copy = new EaParameter();
                 copy.setName(p.getName());
+                copy.setDisplayName(p.getDisplayName());
                 copy.setValue(p.getValue());
+                copy.setDefaultValue(p.getDefaultValue() != null ? p.getDefaultValue() : p.getValue());
+                copy.setSection(p.getSection());
                 copy.setOptimizeStart(p.getOptimizeStart());
                 copy.setOptimizeStep(p.getOptimizeStep());
                 copy.setOptimizeEnd(p.getOptimizeEnd());
@@ -792,6 +845,8 @@ public class WorkflowConfigDialogs {
             if (file != null) {
                 List<EaParameter> pList = eaParamManager.readSetFile(file.toPath());
                 if (pList != null && !pList.isEmpty()) {
+                    String expertPath = expertField.getText().trim();
+                    eaParamManager.applyTranslations(expertPath, pList);
                     paramTable.getItems().setAll(pList);
                 }
             }
@@ -801,11 +856,90 @@ public class WorkflowConfigDialogs {
         saveSetBtn.setOnAction(e -> {
             FileChooser ch = new FileChooser();
             ch.setTitle("Save .set File");
-            ch.getExtensionFilters().add(new FileChooser.ExtensionFilter("MT5 Set Files", "*.set"));
+            com.backtester.config.AppConfig config = com.backtester.config.AppConfig.getInstance();
+            String expertPath = expertField.getText().trim();
+            boolean isMt4 = config.isMt4(expertPath);
+            ch.getExtensionFilters().add(new FileChooser.ExtensionFilter(isMt4 ? "MT4 Set Files" : "MT5 Set Files", "*.set"));
             File file = ch.showSaveDialog(stage);
             if (file != null) {
-                eaParamManager.writeSetFile(file.toPath(), new ArrayList<>(paramTable.getItems()), EaParameterManager.extractEaBaseName(expertField.getText()));
+                eaParamManager.writeSetFile(file.toPath(), new ArrayList<>(paramTable.getItems()), expertPath);
             }
+        });
+
+        Button genConfigBtn = new Button("Gen Config");
+        genConfigBtn.setOnAction(e -> {
+            String expert = expertField.getText().trim();
+            if (expert.isEmpty()) {
+                Alert alert = new Alert(Alert.AlertType.WARNING, "Bitte wählen Sie zuerst einen Expert Advisor aus.");
+                alert.initOwner(stage);
+                alert.show();
+                return;
+            }
+
+            Alert confirm = new Alert(Alert.AlertType.CONFIRMATION, 
+                "Möchten Sie die Standard-Konfiguration für \"" + expert + "\" wirklich neu generieren?\n" +
+                "Dies wird alle zuvor gespeicherten Werte/Einstellungen für diesen EA löschen.",
+                ButtonType.YES, ButtonType.NO);
+            confirm.initOwner(stage);
+            confirm.getDialogPane().setStyle("-fx-background-color: #0b0d13;");
+            confirm.getDialogPane().lookup(".content.label").setStyle("-fx-text-fill: #e6e9f0;");
+            if (confirm.getDialogPane().lookup(".header-panel") != null) {
+                confirm.getDialogPane().lookup(".header-panel").setStyle("-fx-background-color: #0b0d13;");
+                if (confirm.getDialogPane().lookup(".header-panel").lookup(".label") != null) {
+                    confirm.getDialogPane().lookup(".header-panel").lookup(".label").setStyle("-fx-text-fill: #00e5ff;");
+                }
+            }
+            if (stage.getScene() != null && !stage.getScene().getStylesheets().isEmpty()) {
+                confirm.getDialogPane().getStylesheets().addAll(stage.getScene().getStylesheets());
+            }
+
+            confirm.showAndWait().ifPresent(response -> {
+                if (response == ButtonType.YES) {
+                    genConfigBtn.setDisable(true);
+                    genConfigBtn.setText("Generating...");
+
+                    javafx.concurrent.Task<Boolean> task = new javafx.concurrent.Task<Boolean>() {
+                        @Override
+                        protected Boolean call() throws Exception {
+                            // 1. Delete custom set file
+                            eaParamManager.deleteCustomParameters(expert);
+                            // 2. Delete DB configs
+                            com.backtester.database.DatabaseManager db = com.backtester.database.DatabaseManager.getInstance();
+                            db.deleteWorkflowStrategyConfig(expert);
+                            db.deleteEaParameterSettings(expert);
+                            // 3. Generate default config via MT5
+                            return eaParamManager.generateDefaultConfig(expert);
+                        }
+                    };
+
+                    task.setOnSucceeded(evt -> {
+                        genConfigBtn.setDisable(false);
+                        genConfigBtn.setText("Gen Config");
+                        boolean success = task.getValue();
+                        if (success) {
+                            lastCheckedExpert[0] = ""; // Force reload
+                            updateParamsTable.run();
+                            Alert alert = new Alert(Alert.AlertType.INFORMATION, "Standard-Parameter erfolgreich generiert.");
+                            alert.initOwner(stage);
+                            alert.show();
+                        } else {
+                            Alert alert = new Alert(Alert.AlertType.ERROR, "Fehler beim Generieren der Standard-Parameter. Bitte MT5 Logs prüfen.");
+                            alert.initOwner(stage);
+                            alert.show();
+                        }
+                    });
+
+                    task.setOnFailed(evt -> {
+                        genConfigBtn.setDisable(false);
+                        genConfigBtn.setText("Gen Config");
+                        Alert alert = new Alert(Alert.AlertType.ERROR, "Fehler: " + task.getException().getMessage());
+                        alert.initOwner(stage);
+                        alert.show();
+                    });
+
+                    new Thread(task).start();
+                }
+            });
         });
 
         Button takeParamsBtn = new Button("Take parameters from Robustness Test");
@@ -830,6 +964,9 @@ public class WorkflowConfigDialogs {
                 try {
                     java.lang.reflect.Type listType = new com.google.gson.reflect.TypeToken<java.util.List<com.backtester.config.EaParameter>>(){}.getType();
                     params = new com.google.gson.Gson().fromJson(dbParamsJson, listType);
+                    if (params != null && !params.isEmpty()) {
+                        eaParamManager.applyTranslations(robExpert, params);
+                    }
                 } catch (Exception ex) {
                     // Ignore, fallback to file
                 }
@@ -852,6 +989,7 @@ public class WorkflowConfigDialogs {
                 for (EaParameter p : params) {
                     EaParameter copy = new EaParameter();
                     copy.setName(p.getName());
+                    copy.setDisplayName(p.getDisplayName());
                     copy.setValue(p.getValue());
                     copy.setDefaultValue(p.getDefaultValue() != null ? p.getDefaultValue() : p.getValue());
                     copy.setSection(p.getSection());
@@ -878,7 +1016,7 @@ public class WorkflowConfigDialogs {
             }
         });
 
-        paramActions.getChildren().addAll(takeParamsBtn, autoBtn, loadSetBtn, saveSetBtn);
+        paramActions.getChildren().addAll(genConfigBtn, takeParamsBtn, autoBtn, loadSetBtn, saveSetBtn);
         paramBox.getChildren().addAll(paramTitle, paramTable, paramActions);
         layout.getChildren().add(paramBox);
 
@@ -1540,7 +1678,34 @@ public class WorkflowConfigDialogs {
         optCol.setPrefWidth(40);
 
         TableColumn<EaParameter, String> nameCol = new TableColumn<>("Variable");
-        nameCol.setCellValueFactory(new PropertyValueFactory<>("name"));
+        nameCol.setCellValueFactory(cellData -> {
+            EaParameter param = cellData.getValue();
+            String display = param.getDisplayName();
+            if (display == null || display.trim().isEmpty()) {
+                display = param.getName();
+            }
+            return new javafx.beans.property.SimpleStringProperty(display);
+        });
+        nameCol.setCellFactory(column -> new TableCell<EaParameter, String>() {
+            private final Tooltip tooltip = new Tooltip();
+            @Override
+            protected void updateItem(String item, boolean empty) {
+                super.updateItem(item, empty);
+                if (empty || item == null) {
+                    setText(null);
+                    setTooltip(null);
+                } else {
+                    setText(item);
+                    EaParameter param = getTableRow() != null ? getTableRow().getItem() : null;
+                    if (param != null) {
+                        tooltip.setText("Variable: " + param.getName());
+                        setTooltip(tooltip);
+                    } else {
+                        setTooltip(null);
+                    }
+                }
+            }
+        });
         nameCol.setPrefWidth(220);
 
         TableColumn<EaParameter, String> valCol = new TableColumn<>("Wert");
