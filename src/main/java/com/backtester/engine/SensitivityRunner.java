@@ -281,7 +281,7 @@ public class SensitivityRunner {
             return;
         }
 
-        Path testerDir = config.getMt5InstallDir().resolve("MQL5").resolve("Profiles").resolve("Tester");
+        Path testerDir = config.getTesterProfilesDir(baseConfig.getExpert());
         long runTimestamp = System.currentTimeMillis();
 
         int totalPasses = targets.size();

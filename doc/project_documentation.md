@@ -116,6 +116,23 @@ An automated pipeline framework that guides the user through strategy selection,
 - **Unified Strategy Details Dialog (Mega-Report)**: A premium dialog containing side-by-side BT, FW, and Evaluation metric cards, a seamless connected in-sample/out-of-sample `LineChart` equity curve, a parameter variation breakdown table featuring organic sparkline parameter charts drawn directly into table cells, and a safety verdict box based on the worst-case coefficient of variation.
 - **JavaFX WebView Click Bridge**: Captures click events in the HTML AI evaluation report. A native `JavaBridge` registered to the WebView's JavaScript context maps row clicks on strategy IDs (`window.app.showPass(passNumber)`) directly back to the Java FX thread to pop up the unified details dialog.
 
+### 2.11. Controlling & Strategy Evaluation
+A dedicated control tab for long-term database management, automated strategy validation, and parameter exports.
+- **Relocated Export Directory Panel**: The export path configuration has been moved from the left pane to the bottom-right details pane underneath the details `TabPane`. This keeps the export path close to the **💾 Settings exportieren** action button and allows the main strategy table to expand vertically to fill the remaining space.
+- **Checkbox Selection Column (Checkmarks)**: Features a checkbox column as the first column of the strategies table, dynamically synchronized with the table row's selection state.
+- **Enhanced Multi-Selection & Key Shortcuts**:
+  - Full support for multi-row selection (`SelectionMode.MULTIPLE`) via mouse clicks (`Ctrl+Click` and `Shift+Click`).
+  - Added key listener for `Ctrl+A` to select all strategy passes instantly.
+- **Bulk Operations (Massen-Aktionen)**:
+  - *Bulk Parameter Export*: Export `.set` parameter files for all selected strategy combinations in a single operation.
+  - *Bulk Database Deletion*: Safely delete multiple selected strategy records, reviews, and associated automatic test histories in a single transaction.
+- **Choice-Based Automatic Review Task**: Clicking "Automatisches Review" triggers a status check. If selected strategies have mixed review states (some tested, some untested), the system prompts the user with a styled choices dialog:
+  1. *Bestehende überschreiben*: Force re-run 2-year backtests for all selected strategies.
+  2. *Nur neue reviewen*: Only run 2-year backtests for newly added, untested strategies.
+  3. *Abbrechen*: Cancel execution.
+- **Export Prompt Helper**: Adds an "Export Prompt" label and an info button (`(i)`) next to the "Automatisches Review" button. Clicking the button pops up a custom styled modal dialog displaying a comprehensive prompt designed for AI-guided strategy selection and report compilation, along with a "📋 Prompt kopieren" clipboard helper button.
+
+
 ## 3. Technology Stack & Architecture
 
 ### 3.1. Technologies Used
@@ -218,6 +235,13 @@ com.backtester
 2. `RobustnessRunner` iterates through each parameter in isolation, running a Complete Algorithm optimization for each across all time periods.
 3. Real-time visual feedback: active parameter highlighted, completed parameters color-coded by status.
 4. On completion, `RobustnessHtmlGenerator` produces an interactive Chart.js HTML report with plateau detection.
+
+### 4.5. Controlling & Portfolio Export
+1. The user navigates to the Controlling tab, which automatically loads all history runs of type "Workflow" and displays their staged passes.
+2. The user can select multiple passes (using checkboxes, multi-selection, or Ctrl+A) and execute the "Automatisches Review" task to run a 2-year verification test in MT5.
+3. Once night-testing is complete, the user can review results in detail (Mega-Report) or copy the detailed portfolio selection prompt via the "Export Prompt" modal dialog.
+4. Using this prompt, the AI compares all available strategies across different currency pairs, filtering them by robust criteria (2Y Drawdown <= 25%, Profit > 0, high KI-Score), exports the winners as `.set` parameter files, and compiles a comprehensive PDF report.
+
 
 ## 5. Configuration & Data Paths
 

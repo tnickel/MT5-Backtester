@@ -173,10 +173,12 @@ public class UiComponentsCoverageTest {
             assertNotNull(DocHelper.createSmallInfoButton("tooltip", () -> {}));
             assertNotNull(DocHelper.createThickCircularInfoButton("tooltip", () -> {}));
             assertNotNull(DocHelper.createThickCircularCyanInfoButton("tooltip", () -> {}));
+            assertNotNull(DocHelper.createControllingInfoButton(null));
             assertNotNull(DocHelper.getScoreDocHtml());
             assertNotNull(DocHelper.getConsistencyDocHtml());
             assertNotNull(DocHelper.getAllIndicesDocHtml());
             assertNotNull(DocHelper.getDiversityDocHtml());
+            assertNotNull(DocHelper.getControllingDocHtml());
         });
     }
 

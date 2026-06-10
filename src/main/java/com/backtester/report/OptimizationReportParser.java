@@ -6,12 +6,15 @@ import org.w3c.dom.*;
 
 import javax.xml.parsers.DocumentBuilder;
 import javax.xml.parsers.DocumentBuilderFactory;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
- * Parses MT5 XML optimization reports (Excel Spreadsheet XML format).
+ * Parses MT5 XML and MT4 HTML optimization reports.
  */
 public class OptimizationReportParser {
 
@@ -23,6 +26,107 @@ public class OptimizationReportParser {
 
     public void parseForward(Path xmlFile, OptimizationResult result) throws Exception {
         parseInternal(xmlFile, result, true);
+    }
+
+    public void parseHtml(Path htmlFile, OptimizationResult result) throws Exception {
+        log.info("Parsing MT4 HTML optimization report: {}", htmlFile);
+        byte[] bytes = Files.readAllBytes(htmlFile);
+        String content = new String(bytes, java.nio.charset.StandardCharsets.UTF_8);
+        if (content.contains("\uFFFD")) {
+            content = new String(bytes, java.nio.charset.Charset.forName("windows-1252"));
+        }
+
+        // Normalize spaces and newlines to simplify regex matching
+        content = content.replaceAll("\\s+", " ");
+
+        // Regex to find table rows and cell elements
+        Pattern rowPattern = Pattern.compile("<tr[^>]*>(.*?)</tr>", Pattern.CASE_INSENSITIVE);
+        Pattern cellPattern = Pattern.compile("<td[^>]*>(.*?)</td>", Pattern.CASE_INSENSITIVE);
+
+        Matcher rowMatcher = rowPattern.matcher(content);
+        List<String> columnHeaders = new ArrayList<>();
+        boolean headersParsed = false;
+        
+        List<OptimizationResult.Pass> passes = result.getPasses();
+
+        while (rowMatcher.find()) {
+            String rowContent = rowMatcher.group(1);
+            Matcher cellMatcher = cellPattern.matcher(rowContent);
+            List<String> cellValues = new ArrayList<>();
+            while (cellMatcher.find()) {
+                String val = cellMatcher.group(1).replaceAll("<[^>]*>", "").trim();
+                cellValues.add(val);
+            }
+
+            if (cellValues.isEmpty()) continue;
+
+            // Check if this is the header row
+            if (!headersParsed) {
+                String firstCell = cellValues.get(0).toLowerCase();
+                if (firstCell.contains("pass") || firstCell.contains("durchlauf") || firstCell.contains("profit") || firstCell.contains("gewinn")) {
+                    columnHeaders.addAll(cellValues);
+                    headersParsed = true;
+                }
+                continue;
+            }
+
+            // Parse data row
+            if (cellValues.size() < 2) continue; // Not a valid data row
+            
+            OptimizationResult.Pass pass = new OptimizationResult.Pass();
+            String inputsVal = "";
+            for (int col = 0; col < Math.min(cellValues.size(), columnHeaders.size()); col++) {
+                String header = columnHeaders.get(col).toLowerCase();
+                String value = cellValues.get(col);
+
+                try {
+                    if (header.contains("pass") || header.contains("durchlauf")) {
+                        pass.setPassNumber(Integer.parseInt(value));
+                    } else if (header.contains("profit factor") || header.contains("profitfaktor")) {
+                        pass.setProfitFactor(parseDouble(value));
+                    } else if (header.contains("profit") || header.contains("gewinn")) {
+                        pass.setProfit(parseDouble(value));
+                    } else if (header.contains("trades")) {
+                        pass.setTotalTrades(Integer.parseInt(value));
+                    } else if (header.contains("payoff") || header.contains("auszahlungserwartung")) {
+                        pass.setExpectedPayoff(parseDouble(value));
+                    } else if (header.contains("drawdown") && header.contains("%")) {
+                        pass.setDrawdownPercent(parseDouble(value.replace("%", "")));
+                    } else if (header.contains("drawdown")) {
+                        pass.setDrawdown(parseDouble(value));
+                    } else if (header.contains("input") || header.contains("parameter") || header.contains("eingabevariablen")) {
+                        inputsVal = value;
+                    }
+                } catch (NumberFormatException e) {
+                    // ignore cell parse error
+                }
+            }
+
+            // Parse the inputs column to extract individual parameters
+            if (!inputsVal.isEmpty()) {
+                String[] params = inputsVal.split("[,;]");
+                for (String p : params) {
+                    int eqIdx = p.indexOf('=');
+                    if (eqIdx > 0) {
+                        String paramName = p.substring(0, eqIdx).trim();
+                        String paramVal = p.substring(eqIdx + 1).trim();
+                        if (!paramName.isEmpty()) {
+                            pass.setParameter(paramName, paramVal);
+                            if (!result.getParameterNames().contains(paramName)) {
+                                result.getParameterNames().add(paramName);
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Calculate Recovery Factor if not present in MT4 report
+            if (pass.getRecoveryFactor() == 0.0 && pass.getDrawdown() > 0) {
+                pass.setRecoveryFactor(pass.getProfit() / pass.getDrawdown());
+            }
+
+            passes.add(pass);
+        }
     }
 
     private void parseInternal(Path xmlFile, OptimizationResult result, boolean isForward) throws Exception {

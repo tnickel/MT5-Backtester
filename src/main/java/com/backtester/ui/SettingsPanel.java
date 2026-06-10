@@ -17,8 +17,9 @@ public class SettingsPanel extends JPanel {
 
     private final AppConfig config;
 
-    // MT5 settings
+    // MetaTrader settings
     private JTextField mt5PathField;
+    private JTextField mt4PathField;
     private JCheckBox portableCheckbox;
 
     // Directory settings
@@ -48,7 +49,7 @@ public class SettingsPanel extends JPanel {
         JPanel content = new JPanel();
         content.setLayout(new BoxLayout(content, BoxLayout.Y_AXIS));
 
-        content.add(createMt5Section());
+        content.add(createMtSection());
         content.add(Box.createVerticalStrut(15));
         content.add(createDirectorySection());
         content.add(Box.createVerticalStrut(15));
@@ -65,8 +66,8 @@ public class SettingsPanel extends JPanel {
         add(scrollPane, BorderLayout.CENTER);
     }
 
-    private JPanel createMt5Section() {
-        JPanel section = createSection("MetaTrader 5");
+    private JPanel createMtSection() {
+        JPanel section = createSection("MetaTrader Installations");
 
         GridBagConstraints gbc = new GridBagConstraints();
         gbc.insets = new Insets(5, 8, 5, 8);
@@ -75,55 +76,87 @@ public class SettingsPanel extends JPanel {
 
         // MT5 Terminal Path
         gbc.gridx = 0; gbc.gridy = 0; gbc.weightx = 0;
-        section.add(createLabel("Terminal Path:"), gbc);
+        section.add(createLabel("MT5 Terminal Path:"), gbc);
         gbc.gridx = 1; gbc.weightx = 1;
         mt5PathField = new JTextField(config.getMt5TerminalPath(), 40);
-        JPanel pathPanel = new JPanel(new BorderLayout(5, 0));
-        pathPanel.setOpaque(false);
-        pathPanel.add(mt5PathField, BorderLayout.CENTER);
-        JButton browseBtn = new JButton("Browse...");
-        browseBtn.addActionListener(e -> browseMt5Path());
-        pathPanel.add(browseBtn, BorderLayout.EAST);
-        section.add(pathPanel, gbc);
+        JPanel mt5PathPanel = new JPanel(new BorderLayout(5, 0));
+        mt5PathPanel.setOpaque(false);
+        mt5PathPanel.add(mt5PathField, BorderLayout.CENTER);
+        JButton mt5BrowseBtn = new JButton("Browse...");
+        mt5BrowseBtn.addActionListener(e -> browsePath(mt5PathField, "terminal64.exe"));
+        mt5PathPanel.add(mt5BrowseBtn, BorderLayout.EAST);
+        section.add(mt5PathPanel, gbc);
+
+        // MT4 Terminal Path
+        gbc.gridx = 0; gbc.gridy = 1; gbc.weightx = 0;
+        section.add(createLabel("MT4 Terminal Path:"), gbc);
+        gbc.gridx = 1; gbc.weightx = 1;
+        mt4PathField = new JTextField(config.getMt4TerminalPath(), 40);
+        JPanel mt4PathPanel = new JPanel(new BorderLayout(5, 0));
+        mt4PathPanel.setOpaque(false);
+        mt4PathPanel.add(mt4PathField, BorderLayout.CENTER);
+        JButton mt4BrowseBtn = new JButton("Browse...");
+        mt4BrowseBtn.addActionListener(e -> browsePath(mt4PathField, "terminal.exe"));
+        mt4PathPanel.add(mt4BrowseBtn, BorderLayout.EAST);
+        section.add(mt4PathPanel, gbc);
 
         // Portable mode
-        gbc.gridx = 0; gbc.gridy = 1; gbc.weightx = 0;
+        gbc.gridx = 0; gbc.gridy = 2; gbc.weightx = 0;
         section.add(createLabel(""), gbc);
         gbc.gridx = 1;
         portableCheckbox = new JCheckBox("Use Portable Mode (/portable flag)", config.isPortableMode());
-        portableCheckbox.setToolTipText("Forces MT5 to use the installation directory for all data. Recommended.");
+        portableCheckbox.setToolTipText("Forces MT to use the installation directory for all data. Recommended.");
         section.add(portableCheckbox, gbc);
 
-        // MT5 status
-        gbc.gridx = 0; gbc.gridy = 2; gbc.gridwidth = 2;
+        // Status label
+        gbc.gridx = 0; gbc.gridy = 3; gbc.gridwidth = 2;
         JLabel statusLabel = new JLabel();
         statusLabel.setFont(new Font("Segoe UI", Font.ITALIC, 11));
-        updateMt5Status(statusLabel);
+        
+        Runnable updateStatus = () -> {
+            boolean mt5Ok = validateTerminalPath(mt5PathField.getText().trim(), "terminal64.exe");
+            boolean mt4Ok = validateTerminalPath(mt4PathField.getText().trim(), "terminal.exe");
+            
+            if (mt5Ok && mt4Ok) {
+                statusLabel.setText("✓ Both terminals found and valid");
+                statusLabel.setForeground(new Color(100, 200, 120));
+            } else {
+                if (!mt5Ok && !mt4Ok) {
+                    statusLabel.setText("✗ Both terminal paths are invalid or missing");
+                    statusLabel.setForeground(new Color(240, 100, 100));
+                } else if (!mt5Ok) {
+                    statusLabel.setText("✗ MT5 terminal path is invalid (must exist and end with terminal64.exe)");
+                    statusLabel.setForeground(new Color(240, 100, 100));
+                } else {
+                    statusLabel.setText("✗ MT4 terminal path is invalid (must exist and end with terminal.exe)");
+                    statusLabel.setForeground(new Color(240, 100, 100));
+                }
+            }
+        };
+
         mt5PathField.getDocument().addDocumentListener(new javax.swing.event.DocumentListener() {
-            public void insertUpdate(javax.swing.event.DocumentEvent e) { updateMt5Status(statusLabel); }
-            public void removeUpdate(javax.swing.event.DocumentEvent e) { updateMt5Status(statusLabel); }
-            public void changedUpdate(javax.swing.event.DocumentEvent e) { updateMt5Status(statusLabel); }
+            public void insertUpdate(javax.swing.event.DocumentEvent e) { updateStatus.run(); }
+            public void removeUpdate(javax.swing.event.DocumentEvent e) { updateStatus.run(); }
+            public void changedUpdate(javax.swing.event.DocumentEvent e) { updateStatus.run(); }
         });
+        mt4PathField.getDocument().addDocumentListener(new javax.swing.event.DocumentListener() {
+            public void insertUpdate(javax.swing.event.DocumentEvent e) { updateStatus.run(); }
+            public void removeUpdate(javax.swing.event.DocumentEvent e) { updateStatus.run(); }
+            public void changedUpdate(javax.swing.event.DocumentEvent e) { updateStatus.run(); }
+        });
+        
+        updateStatus.run();
         section.add(statusLabel, gbc);
 
         return section;
     }
 
-    private void updateMt5Status(JLabel label) {
-        String path = mt5PathField.getText().trim();
+    private boolean validateTerminalPath(String path, String expectedExeName) {
+        if (path.isEmpty()) return false;
         Path p = Paths.get(path);
-        if (Files.exists(p)) {
-            if (!p.getFileName().toString().toLowerCase().equals("terminal64.exe")) {
-                label.setText("✗ Invalid executable: must be terminal64.exe");
-                label.setForeground(new Color(240, 100, 100));
-            } else {
-                label.setText("✓ Terminal found");
-                label.setForeground(new Color(100, 200, 120));
-            }
-        } else {
-            label.setText("✗ Terminal not found at specified path");
-            label.setForeground(new Color(240, 100, 100));
-        }
+        if (!Files.exists(p)) return false;
+        String fileName = p.getFileName().toString().toLowerCase();
+        return fileName.equals(expectedExeName);
     }
 
     private JPanel createDirectorySection() {
@@ -215,11 +248,31 @@ public class SettingsPanel extends JPanel {
         saveBtn.setForeground(Color.WHITE);
         saveBtn.setPreferredSize(new Dimension(180, 38));
         saveBtn.addActionListener(e -> {
-            String path = mt5PathField.getText().trim();
-            java.nio.file.Path p = java.nio.file.Paths.get(path);
-            if (!java.nio.file.Files.exists(p) || !p.getFileName().toString().toLowerCase().equals("terminal64.exe")) {
+            String mt5Path = mt5PathField.getText().trim();
+            if (!mt5Path.isEmpty()) {
+                java.nio.file.Path p = java.nio.file.Paths.get(mt5Path);
+                String fileName = p.getFileName().toString().toLowerCase();
+                if (!java.nio.file.Files.exists(p) || !fileName.equals("terminal64.exe")) {
+                    JOptionPane.showMessageDialog(this,
+                            "Invalid MetaTrader 5 Terminal Path. The file MUST exist and be named 'terminal64.exe'.",
+                            "Validation Error", JOptionPane.ERROR_MESSAGE);
+                    return;
+                }
+            }
+            String mt4Path = mt4PathField.getText().trim();
+            if (!mt4Path.isEmpty()) {
+                java.nio.file.Path p = java.nio.file.Paths.get(mt4Path);
+                String fileName = p.getFileName().toString().toLowerCase();
+                if (!java.nio.file.Files.exists(p) || !fileName.equals("terminal.exe")) {
+                    JOptionPane.showMessageDialog(this,
+                            "Invalid MetaTrader 4 Terminal Path. The file MUST exist and be named 'terminal.exe'.",
+                            "Validation Error", JOptionPane.ERROR_MESSAGE);
+                    return;
+                }
+            }
+            if (mt5Path.isEmpty() && mt4Path.isEmpty()) {
                 JOptionPane.showMessageDialog(this,
-                        "Invalid MetaTrader 5 Terminal Path. The file MUST exist and be named 'terminal64.exe'.",
+                        "You must configure at least one MetaTrader terminal path.",
                         "Validation Error", JOptionPane.ERROR_MESSAGE);
                 return;
             }
@@ -241,6 +294,7 @@ public class SettingsPanel extends JPanel {
 
     public void saveSettings() {
         config.setMt5TerminalPath(mt5PathField.getText().trim());
+        config.setMt4TerminalPath(mt4PathField.getText().trim());
         config.set("mt5.portable.mode", String.valueOf(portableCheckbox.isSelected()));
         config.setReportsDirectory(outputDirField.getText().trim());
         config.setDataDirectory(dataDirField.getText().trim());
@@ -254,6 +308,7 @@ public class SettingsPanel extends JPanel {
 
     private void resetDefaults() {
         mt5PathField.setText("C:\\Program Files\\MetaTrader 5\\terminal64.exe");
+        mt4PathField.setText("C:\\Program Files\\MetaTrader 4\\terminal.exe");
         portableCheckbox.setSelected(true);
         depositSpinner.setValue(10000);
         currencyCombo.setSelectedItem("USD");
@@ -293,20 +348,19 @@ public class SettingsPanel extends JPanel {
         return panel;
     }
 
-    private void browseMt5Path() {
+    private void browsePath(JTextField field, String expectedExeName) {
         JFileChooser chooser = new JFileChooser();
         chooser.setFileFilter(new javax.swing.filechooser.FileNameExtensionFilter(
-                "MetaTrader 5 Terminal (terminal64.exe)", "exe"));
-        chooser.setDialogTitle("Select MetaTrader 5 Terminal");
+                expectedExeName + " Executable", "exe"));
+        chooser.setDialogTitle("Select MetaTrader Terminal (" + expectedExeName + ")");
 
-        // Start in common MT5 locations
         File progFiles = new File("C:\\Program Files");
         if (progFiles.exists()) {
             chooser.setCurrentDirectory(progFiles);
         }
 
         if (chooser.showOpenDialog(this) == JFileChooser.APPROVE_OPTION) {
-            mt5PathField.setText(chooser.getSelectedFile().getAbsolutePath());
+            field.setText(chooser.getSelectedFile().getAbsolutePath());
         }
     }
 

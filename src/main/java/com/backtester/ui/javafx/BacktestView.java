@@ -91,6 +91,12 @@ public class BacktestView {
 
         symbolCombo.valueProperty().addListener((obs, oldVal, newVal) -> loadParameters());
         periodCombo.valueProperty().addListener((obs, oldVal, newVal) -> loadParameters());
+
+        expertField.textProperty().addListener((obs, oldVal, newVal) -> {
+            updateKeepOpenLabel();
+            loadParameters();
+        });
+        updateKeepOpenLabel();
     }
 
     private VBox createConfigBox() {
@@ -195,7 +201,7 @@ public class BacktestView {
         cancelBtn.setDisable(true);
         cancelBtn.setOnAction(e -> cancelBacktest());
 
-        keepOpenCb = new CheckBox("Manual Mode (Keep MT5 Open)");
+        keepOpenCb = new CheckBox("Manual Mode (Keep MT4/5 Open)");
         keepOpenCb.getStyleClass().add("check-box");
 
         progress = new ProgressBar(0);
@@ -278,25 +284,40 @@ public class BacktestView {
     private void browseEA() {
         FileChooser chooser = new FileChooser();
         chooser.setTitle("Select Expert Advisor");
-        chooser.getExtensionFilters().add(new FileChooser.ExtensionFilter("MetaTrader 5 EA", "*.ex5"));
+        chooser.getExtensionFilters().add(new FileChooser.ExtensionFilter("MetaTrader EA", "*.ex5", "*.ex4"));
         
-        java.nio.file.Path mt5Dir = config.getMt5InstallDir();
-        java.nio.file.Path expertsDir = mt5Dir != null ? mt5Dir.resolve("MQL5").resolve("Experts") : null;
+        String currentExpert = expertField.getText().trim();
+        java.nio.file.Path expertsDir = null;
+        if (config.isMt4(currentExpert)) {
+            expertsDir = config.getExpertsDir("dummy.ex4");
+        } else {
+            expertsDir = config.getExpertsDir("dummy.ex5");
+        }
+
         if (expertsDir != null && java.nio.file.Files.exists(expertsDir)) {
             chooser.setInitialDirectory(expertsDir.toFile());
+        } else {
+            java.nio.file.Path otherDir = config.isMt4(currentExpert) ? config.getExpertsDir("dummy.ex5") : config.getExpertsDir("dummy.ex4");
+            if (otherDir != null && java.nio.file.Files.exists(otherDir)) {
+                chooser.setInitialDirectory(otherDir.toFile());
+            }
         }
         
         File selected = chooser.showOpenDialog(expertField.getScene().getWindow());
         if (selected != null) {
-            if (expertsDir != null && selected.toPath().startsWith(expertsDir)) {
-                String relative = expertsDir.relativize(selected.toPath()).toString();
-                if (relative.toLowerCase().endsWith(".ex5")) {
+            String pathStr = selected.getAbsolutePath().toLowerCase();
+            boolean isEx4 = pathStr.endsWith(".ex4");
+            java.nio.file.Path activeExpertsDir = config.getExpertsDir(selected.getAbsolutePath());
+
+            if (activeExpertsDir != null && selected.toPath().startsWith(activeExpertsDir)) {
+                String relative = activeExpertsDir.relativize(selected.toPath()).toString();
+                if (!isEx4 && relative.toLowerCase().endsWith(".ex5")) {
                     relative = relative.substring(0, relative.length() - 4);
                 }
                 expertField.setText(relative);
             } else {
                 String path = selected.getAbsolutePath();
-                if (path.toLowerCase().endsWith(".ex5")) {
+                if (!isEx4 && path.toLowerCase().endsWith(".ex5")) {
                     path = path.substring(0, path.length() - 4);
                 }
                 expertField.setText(path);
@@ -334,6 +355,7 @@ public class BacktestView {
         btConfig.setCurrency(currencyCombo.getValue());
         btConfig.setLeverage(leverageField.getText().trim());
         btConfig.setShutdownTerminal(!visual && !keepOpenCb.isSelected());
+        btConfig.setVisualMode(visual);
 
         if (paramTable != null && !paramTable.getItems().isEmpty()) {
             String symbol = symbolCombo.getValue() != null ? symbolCombo.getValue() : "EURUSD";
@@ -551,6 +573,7 @@ public class BacktestView {
                 java.lang.reflect.Type listType = new com.google.gson.reflect.TypeToken<java.util.List<com.backtester.config.EaParameter>>(){}.getType();
                 java.util.List<com.backtester.config.EaParameter> params = new com.google.gson.Gson().fromJson(dbParamsJson, listType);
                 if (params != null && !params.isEmpty()) {
+                    eaParamManager.applyTranslations(expert, params);
                     paramTable.getItems().setAll(params);
                     logView.log("INFO", "Loaded parameters for " + EaParameterManager.extractEaBaseName(expert) + " [" + symbol + ", " + period + "] from DB");
                     return;
@@ -612,7 +635,34 @@ public class BacktestView {
         optCol.setPrefWidth(40);
         
         TableColumn<com.backtester.config.EaParameter, String> nameCol = new TableColumn<>("Variable");
-        nameCol.setCellValueFactory(new PropertyValueFactory<>("name"));
+        nameCol.setCellValueFactory(cellData -> {
+            com.backtester.config.EaParameter param = cellData.getValue();
+            String display = param.getDisplayName();
+            if (display == null || display.trim().isEmpty()) {
+                display = param.getName();
+            }
+            return new javafx.beans.property.SimpleStringProperty(display);
+        });
+        nameCol.setCellFactory(column -> new javafx.scene.control.TableCell<com.backtester.config.EaParameter, String>() {
+            private final javafx.scene.control.Tooltip tooltip = new javafx.scene.control.Tooltip();
+            @Override
+            protected void updateItem(String item, boolean empty) {
+                super.updateItem(item, empty);
+                if (empty || item == null) {
+                    setText(null);
+                    setTooltip(null);
+                } else {
+                    setText(item);
+                    com.backtester.config.EaParameter param = getTableRow() != null ? getTableRow().getItem() : null;
+                    if (param != null) {
+                        tooltip.setText("Variable: " + param.getName());
+                        setTooltip(tooltip);
+                    } else {
+                        setTooltip(null);
+                    }
+                }
+            }
+        });
         nameCol.setPrefWidth(200);
         
         TableColumn<com.backtester.config.EaParameter, String> valCol = new TableColumn<>("Value");
@@ -658,6 +708,9 @@ public class BacktestView {
 
         HBox btnBox = new HBox(10);
         btnBox.setAlignment(Pos.CENTER_RIGHT);
+        Button genConfigBtn = new Button("Gen Config");
+        genConfigBtn.setOnAction(e -> generateDefaultConfig());
+        
         Button autoConfigBtn = new Button("AutoConfig");
         autoConfigBtn.setOnAction(e -> autoConfigParameters());
         
@@ -667,7 +720,7 @@ public class BacktestView {
         Button saveBtn = new Button("Save .set");
         saveBtn.setOnAction(e -> saveToFile());
         
-        btnBox.getChildren().addAll(autoConfigBtn, loadBtn, saveBtn);
+        btnBox.getChildren().addAll(genConfigBtn, autoConfigBtn, loadBtn, saveBtn);
 
         box.getChildren().addAll(title, paramTable, btnBox);
         return box;
@@ -716,6 +769,39 @@ public class BacktestView {
         }
         paramTable.refresh();
         logView.log("INFO", "AutoConfig applied: " + activated + " enabled, " + skipped + " skipped.");
+    }
+
+    private void generateDefaultConfig() {
+        String expert = expertField.getText().trim();
+        if (expert.isEmpty()) {
+            logView.log("WARN", "Please select an Expert Advisor first.");
+            return;
+        }
+
+        logView.log("INFO", "Starting config generation for " + EaParameterManager.extractEaBaseName(expert) + "... Please wait.");
+
+        Task<Boolean> task = new Task<Boolean>() {
+            @Override
+            protected Boolean call() throws Exception {
+                return eaParamManager.generateDefaultConfig(expert);
+            }
+        };
+
+        task.setOnSucceeded(evt -> {
+            boolean success = task.getValue();
+            if (success) {
+                logView.log("INFO", "Config generated successfully. Loading parameters...");
+                loadParameters();
+            } else {
+                logView.log("ERROR", "Failed to generate config. Check MetaTrader logs / config.");
+            }
+        });
+
+        task.setOnFailed(evt -> {
+            logView.log("ERROR", "Config generation failed: " + task.getException().getMessage());
+        });
+
+        new Thread(task).start();
     }
 
     private boolean isExcludedParameterName(String name) {
@@ -790,6 +876,8 @@ public class BacktestView {
         if (file != null) {
             java.util.List<com.backtester.config.EaParameter> params = eaParamManager.readSetFile(file.toPath());
             if (params != null && !params.isEmpty()) {
+                String expertPath = expertField.getText().trim();
+                eaParamManager.applyTranslations(expertPath, params);
                 paramTable.getItems().setAll(params);
                 logView.log("INFO", "Loaded parameters from " + file.getName());
             } else {
@@ -803,14 +891,16 @@ public class BacktestView {
             logView.log("WARN", "No parameters to save.");
             return;
         }
-        String eaName = com.backtester.config.EaParameterManager.extractEaBaseName(expertField.getText());
+        String expertPath = expertField.getText().trim();
+        String eaName = com.backtester.config.EaParameterManager.extractEaBaseName(expertPath);
         javafx.stage.FileChooser chooser = new javafx.stage.FileChooser();
         chooser.setTitle("Save .set File");
         chooser.setInitialFileName(eaName.isEmpty() ? "params.set" : eaName + ".set");
-        chooser.getExtensionFilters().add(new javafx.stage.FileChooser.ExtensionFilter("MT5 Set Files", "*.set"));
+        boolean isMt4 = config.isMt4(expertPath);
+        chooser.getExtensionFilters().add(new javafx.stage.FileChooser.ExtensionFilter(isMt4 ? "MT4 Set Files" : "MT5 Set Files", "*.set"));
         java.io.File file = chooser.showSaveDialog(root.getScene().getWindow());
         if (file != null) {
-            eaParamManager.writeSetFile(file.toPath(), new java.util.ArrayList<>(paramTable.getItems()), eaName);
+            eaParamManager.writeSetFile(file.toPath(), new java.util.ArrayList<>(paramTable.getItems()), expertPath);
             logView.log("INFO", "Saved parameters to " + file.getName());
         }
     }
@@ -862,6 +952,15 @@ public class BacktestView {
             String period = periodCombo.getValue() != null ? periodCombo.getValue() : "H1";
             com.backtester.database.DatabaseManager.getInstance().saveEaParameterSettings(expert, symbol, period, new com.google.gson.Gson().toJson(paramTable.getItems()));
             eaParamManager.saveCustomParameters(expert, new java.util.ArrayList<>(paramTable.getItems()));
+        }
+    }
+
+    private void updateKeepOpenLabel() {
+        String expert = expertField.getText().trim();
+        if (config.isMt4(expert)) {
+            keepOpenCb.setText("Manual Mode (Keep MT4 Open)");
+        } else {
+            keepOpenCb.setText("Manual Mode (Keep MT5 Open)");
         }
     }
 }

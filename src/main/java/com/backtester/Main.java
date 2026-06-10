@@ -30,6 +30,21 @@ public class Main {
 
         log.info("=== MT5 Backtester Starting ===");
 
+        // Intercept --cli argument for headless batch backtesting
+        if (args.length >= 2 && "--cli".equalsIgnoreCase(args[0])) {
+            System.setProperty("backtester.cli", "true");
+            log.info("CLI Mode: Starting batch execution with config: {}", args[1]);
+            try {
+                AppConfig.getInstance();
+                com.backtester.cli.CliRunner.run(args[1]);
+            } catch (Exception e) {
+                log.error("Fatal error during CLI execution", e);
+                System.exit(1);
+            }
+            log.info("=== CLI Execution Finished Successfully ===");
+            System.exit(0);
+        }
+
         // Kill any leftover MetaTrader instances from previous runs.
         // When the Backtester stops abruptly, MT5 may remain running (invisibly on Desktop 2).
         killLeftoverMt5Processes();
@@ -50,28 +65,52 @@ public class Main {
             return;
         }
         try {
+            boolean hasTerminal64 = false;
+            boolean hasTerminal = false;
+
             // Check if any terminal64.exe processes are running
-            Process check = new ProcessBuilder("tasklist", "/FI", "IMAGENAME eq terminal64.exe", "/NH")
+            Process check64 = new ProcessBuilder("tasklist", "/FI", "IMAGENAME eq terminal64.exe", "/NH")
+                .redirectErrorStream(true).start();
+            String output64 = new String(check64.getInputStream().readAllBytes()).trim();
+            check64.waitFor();
+            if (output64.contains("terminal64.exe")) {
+                hasTerminal64 = true;
+            }
+
+            // Check if any terminal.exe processes are running
+            Process check = new ProcessBuilder("tasklist", "/FI", "IMAGENAME eq terminal.exe", "/NH")
                 .redirectErrorStream(true).start();
             String output = new String(check.getInputStream().readAllBytes()).trim();
             check.waitFor();
+            if (output.contains("terminal.exe")) {
+                hasTerminal = true;
+            }
 
-            if (output.contains("terminal64.exe")) {
+            if (hasTerminal64 || hasTerminal) {
                 log.info("Found leftover MetaTrader process(es), killing them...");
-                Process kill = new ProcessBuilder("taskkill", "/F", "/IM", "terminal64.exe")
-                    .redirectErrorStream(true).start();
-                String killOutput = new String(kill.getInputStream().readAllBytes()).trim();
-                kill.waitFor();
-                log.info("MT5 cleanup: {}", killOutput);
-
-                // Also kill any leftover metatester64.exe processes
-                try {
-                    Process killAgents = new ProcessBuilder("taskkill", "/F", "/IM", "metatester64.exe")
+                if (hasTerminal64) {
+                    Process kill64 = new ProcessBuilder("taskkill", "/F", "/IM", "terminal64.exe")
                         .redirectErrorStream(true).start();
-                    killAgents.waitFor();
-                    log.info("Tester agents cleanup completed.");
-                } catch (Exception ex) {
-                    log.warn("Failed to kill leftover tester agents: {}", ex.getMessage());
+                    String killOutput64 = new String(kill64.getInputStream().readAllBytes()).trim();
+                    kill64.waitFor();
+                    log.info("MT5 cleanup: {}", killOutput64);
+
+                    // Also kill any leftover metatester64.exe processes
+                    try {
+                        Process killAgents = new ProcessBuilder("taskkill", "/F", "/IM", "metatester64.exe")
+                            .redirectErrorStream(true).start();
+                        killAgents.waitFor();
+                        log.info("Tester agents cleanup completed.");
+                    } catch (Exception ex) {
+                        log.warn("Failed to kill leftover tester agents: {}", ex.getMessage());
+                    }
+                }
+                if (hasTerminal) {
+                    Process kill = new ProcessBuilder("taskkill", "/F", "/IM", "terminal.exe")
+                        .redirectErrorStream(true).start();
+                    String killOutput = new String(kill.getInputStream().readAllBytes()).trim();
+                    kill.waitFor();
+                    log.info("MT4 cleanup: {}", killOutput);
                 }
 
                 // Show notification to user for 3 seconds
@@ -80,7 +119,7 @@ public class Main {
                 log.info("No leftover MetaTrader processes found.");
             }
         } catch (Exception e) {
-            log.warn("Failed to check/kill leftover MT5 processes: {}", e.getMessage());
+            log.warn("Failed to check/kill leftover MetaTrader processes: {}", e.getMessage());
         }
     }
 

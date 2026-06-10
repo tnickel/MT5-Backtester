@@ -96,6 +96,9 @@ public class AppConfigTest {
         assertEquals("C:\\MyCustomMT5\\terminal64.exe", config.getMt5TerminalPath());
         assertEquals(Path.of("C:\\MyCustomMT5"), config.getMt5InstallDir());
 
+        config.setMt4TerminalPath("D:\\MyCustomMT4\\terminal.exe");
+        assertEquals("D:\\MyCustomMT4\\terminal.exe", config.getMt4TerminalPath());
+
         config.setDataDirectory("custom_data");
         assertEquals(tempFolder.getRoot().toPath().resolve("custom_data"), config.getDataDirectory());
 
@@ -119,5 +122,35 @@ public class AppConfigTest {
         AppConfig config2 = createTestConfig();
         assertEquals("helloWorld", config2.get("test.persisted.key"));
         assertEquals("D:\\MT5\\terminal64.exe", config2.getMt5TerminalPath());
+    }
+
+    @Test
+    public void testIsMt4() throws Exception {
+        AppConfig config = createTestConfig();
+        
+        config.setMt5TerminalPath("C:\\Program Files\\MetaTrader 5\\terminal64.exe");
+        assertFalse(config.isMt4());
+        
+        config.setMt5TerminalPath("C:\\Program Files\\MetaTrader 4\\terminal.exe");
+        assertTrue(config.isMt4());
+        
+        config.setMt5TerminalPath("D:\\MT4_instance\\terminal.exe");
+        assertTrue(config.isMt4());
+
+        // Test dynamic platform selection based on EA extension
+        assertTrue(config.isMt4("expert.ex4"));
+        assertFalse(config.isMt4("expert.ex5"));
+        assertFalse(config.isMt4(""));
+        assertFalse(config.isMt4(null));
+
+        assertEquals(MetaTraderPlatform.MT4, config.getPlatform("expert.ex4"));
+        assertEquals(MetaTraderPlatform.MT5, config.getPlatform("expert.ex5"));
+        assertEquals(MetaTraderPlatform.MT5, config.getPlatform(null));
+
+        // Test platform property configurations
+        assertEquals("terminal.exe", MetaTraderPlatform.MT4.getExecutableName());
+        assertEquals("terminal64.exe", MetaTraderPlatform.MT5.getExecutableName());
+        assertEquals("tester", MetaTraderPlatform.MT4.getPresetsFolderName());
+        assertEquals("MQL5/Profiles/Tester", MetaTraderPlatform.MT5.getPresetsFolderName());
     }
 }

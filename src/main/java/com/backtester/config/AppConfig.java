@@ -125,6 +125,14 @@ public class AppConfig {
         set("mt5.terminal.path", path);
     }
 
+    public String getMt4TerminalPath() {
+        return get("mt4.terminal.path", "C:\\Program Files\\MetaTrader 4\\terminal.exe");
+    }
+
+    public void setMt4TerminalPath(String path) {
+        set("mt4.terminal.path", path);
+    }
+
     public Path getDataDirectory() {
         String dir = get("data.directory", DATA_DIR);
         Path p = Paths.get(dir);
@@ -187,6 +195,14 @@ public class AppConfig {
         return getInt("backtest.model", 0);
     }
 
+    public int getBacktestTimeoutMinutes() {
+        return getInt("backtest.timeout.minutes", 10);
+    }
+
+    public void setBacktestTimeoutMinutes(int minutes) {
+        set("backtest.timeout.minutes", String.valueOf(minutes));
+    }
+
     public int getBrokerTimezoneOffset() {
         return getInt("broker.timezone.offset", 2);
     }
@@ -200,5 +216,102 @@ public class AppConfig {
      */
     public Path getMt5InstallDir() {
         return Paths.get(getMt5TerminalPath()).getParent();
+    }
+
+    /**
+     * Returns true if the selected terminal is MetaTrader 4 (terminal.exe)
+    /**
+     * Returns the active platform configuration based on the EA version.
+     */
+    public MetaTraderPlatform getPlatform(String expertPath) {
+        return MetaTraderPlatform.fromExpertPath(expertPath);
+    }
+
+    /**
+     * Returns true if the default terminal is MetaTrader 4 (terminal.exe)
+     */
+    public boolean isMt4() {
+        String path = getMt5TerminalPath().toLowerCase();
+        return path.endsWith("terminal.exe") || path.contains("metatrader 4") || path.contains("mt4");
+    }
+
+    /**
+     * Returns true if the expert EA points to an MT4 EA (.ex4)
+     */
+    public boolean isMt4(String expertPath) {
+        return getPlatform(expertPath) == MetaTraderPlatform.MT4;
+    }
+
+    /**
+     * Returns the terminal path based on the expert EA version.
+     * For MT4 (.ex4), attempts to derive the terminal path from the expert's file path
+     * by locating the MQL4 directory and resolving terminal.exe from its parent.
+     * Falls back to the configured mt4.terminal.path if auto-detection fails.
+     */
+    public String getTerminalPath(String expertPath) {
+        if (!isMt4(expertPath)) {
+            return getMt5TerminalPath();
+        }
+
+        // Try to auto-detect MT4 terminal from expert path
+        // Expert paths follow the pattern: <MT4_ROOT>/MQL4/Experts/[subdir/]robot.ex4
+        if (expertPath != null && !expertPath.isEmpty()) {
+            String normalized = expertPath.replace("/", "\\");
+            String normalizedLower = normalized.toLowerCase();
+            int mql4Idx = normalizedLower.indexOf("\\mql4\\");
+            if (mql4Idx > 0) {
+                String mt4Root = normalized.substring(0, mql4Idx);
+                Path terminalCandidate = Paths.get(mt4Root, "terminal.exe");
+                if (Files.exists(terminalCandidate)) {
+                    log.info("Auto-detected MT4 terminal from expert path: {}", terminalCandidate);
+                    // Also update the config so it's saved for future runs
+                    setMt4TerminalPath(terminalCandidate.toString());
+                    return terminalCandidate.toString();
+                }
+            }
+        }
+
+        // Fall back to configured path
+        return getMt4TerminalPath();
+    }
+
+    /**
+     * Returns the MetaTrader installation directory based on the expert EA version
+     */
+    public Path getMtInstallDir(String expertPath) {
+        return Paths.get(getTerminalPath(expertPath)).getParent();
+    }
+
+    /**
+     * Returns the MQL directory path (MQL4 for MT4, MQL5 for MT5)
+     */
+    public Path getMqlDir() {
+        return getMqlDir(null);
+    }
+
+    public Path getMqlDir(String expertPath) {
+        return getMtInstallDir(expertPath).resolve(getPlatform(expertPath).getMqlFolderName());
+    }
+
+    /**
+     * Returns the Experts directory path (MQL4/Experts or MQL5/Experts)
+     */
+    public Path getExpertsDir() {
+        return getExpertsDir(null);
+    }
+
+    public Path getExpertsDir(String expertPath) {
+        return getMqlDir(expertPath).resolve("Experts");
+    }
+
+    /**
+     * Returns the tester profiles / presets directory (tester/ for MT4, MQL5/Profiles/Tester/ for MT5)
+     */
+    public Path getTesterProfilesDir() {
+        return getTesterProfilesDir(null);
+    }
+
+    public Path getTesterProfilesDir(String expertPath) {
+        return getMtInstallDir(expertPath).resolve(getPlatform(expertPath).getPresetsFolderName());
     }
 }

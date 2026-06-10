@@ -96,8 +96,7 @@ public class RobustnessRunner {
         int totalOperations = toSweep.size() * (shifts + 1);
         logMessage("Starting Robustness Sweep for " + toSweep.size() + " parameters across " + (shifts + 1) + " periods (Total Runs: " + totalOperations + ")...");
 
-        Path baseMt5Path = config.getMt5InstallDir();
-        Path testerDir = baseMt5Path.resolve("MQL5").resolve("Profiles").resolve("Tester");
+        Path testerDir = config.getTesterProfilesDir(baseConfig.getExpert());
         
         int currentCount = 0;
         long scanStartTime = System.currentTimeMillis();

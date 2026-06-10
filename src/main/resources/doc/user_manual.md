@@ -61,7 +61,7 @@ Dieser Reiter eignet sich, um einen isolierten, einfachen Backtestausflug fuer e
 - **From Date / To Date**: Das Datum fuer den Eintritt in den virtuellen Markt und das Datum des Test-Endes - ueber diesen Lebenszyklus muss Ihr MetaTrader auch ueber geladene historische Marktdaten im Terminal verfuegen, sonst bleibt das Ergebnis fehlerhaft leer.
 - **Deposit, Currency, Leverage**: Veraendern Sie bei einem spezifischen Test den virtuell simulierten Kontostand gegenueber den Standard-Werten.
 - **Start Backtest Button**: Der Test startet voellig geraeuschlos und ohne grafische Benutzeroberflaeche (headless) im Hintergrund - das Programm meldet sich, sobald das Ergebnis im Report-Fenster vorliegt!
-- **Start Visual (MT5) Button**: Durchbricht die unsichtbare Automatisierung. MetaTrader 5 oeffnet sein Fenster und Sie koennen live in Zeitraffer auf dem Chart-Tickgitter verfolgen, an welchen Linien und Staenden der Roboter Kaeufe ("Buys") oder Leerverkaeufe ("Sells") umsetzt.
+- **Start Visual (MT4/5) Button**: Durchbricht die unsichtbare Automatisierung. MetaTrader 4/5 oeffnet sein Fenster und Sie koennen live in Zeitraffer auf dem Chart-Tickgitter verfolgen, an welchen Linien und Staenden der Roboter Kaeufe ("Buys") oder Leerverkaeufe ("Sells") umsetzt.
 
 ---
 
@@ -82,7 +82,7 @@ Der Zeit-Retter schlechthin! Umfassende EAs sollen meist nicht auf nur einen Wer
 Ein exzellenter Trader weiss, dass ein System immer optimiert werden kann. Der Optimizer ist die Schaltzentrale, um mathematisch die staerksten Inputs fuer einen EA durch tausendfache Berechnungen zu filtern. Er kontrolliert die maechtige Optimierungs-Engine im MetaTrader 5 mit komfortabler Steuerung und erweiterter Hilfe.
 
 #### Neue Funktionen in der aktuellen Version:
-- **"Start (Keep MT5 Open)"-Modus**: Neben dem normalen Start gibt es einen zweiten Start-Button ("Start (Keep MT5 Open)"), der MT5 nach der Optimierung geoeffnet laesst. Praktisch zum schnellen visuellen Nachvollziehen der Top-Ergebnisse.
+- **"Start (Keep MT4/5 Open)"-Modus**: Neben dem normalen Start gibt es einen zweiten Start-Button ("Start (Keep MT4/5 Open)"), der MT4/5 nach der Optimierung geoeffnet laesst. Praktisch zum schnellen visuellen Nachvollziehen der Top-Ergebnisse.
 - **Automatische 1-Parameter-Warnung**: Wenn Sie einen Forward-Test mit nur einem optimierten Parameter starten moechten, erscheint eine Warnung. Der MT5-Genetische Algorithmus benoetigt mindestens 2 Parameter zur sinnvollen Berechnung.
 - **Automatische Speicherung**: Alle Formular-Eingaben (EA, Symbol, Periode, Modell, Modus, Kriterium, Forward-Modus sowie die optimierten Parameter) werden automatisch gespeichert und beim naechsten Programmstart wiederhergestellt.
 

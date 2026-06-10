@@ -236,7 +236,10 @@ public class EaConfigDialog extends JDialog {
         msgLabel.setHorizontalAlignment(SwingConstants.CENTER);
         msgLabel.setAlignmentX(Component.CENTER_ALIGNMENT);
 
-        generateButton = new JButton("🔧 Default Config generieren (MT5 kurz starten)");
+        boolean isMt4 = com.backtester.config.AppConfig.getInstance().isMt4(expertPath);
+        String mtLabel = isMt4 ? "MT4" : "MT5";
+
+        generateButton = new JButton("🔧 Default Config generieren (" + mtLabel + " kurz starten)");
         generateButton.setFont(new Font("Segoe UI", Font.BOLD, 14));
         generateButton.setBackground(new Color(55, 90, 145));
         generateButton.setForeground(Color.WHITE);
@@ -244,7 +247,7 @@ public class EaConfigDialog extends JDialog {
         generateButton.setMaximumSize(new Dimension(400, 40));
         generateButton.addActionListener(e -> generateDefaultConfig());
 
-        JLabel hintLabel = new JLabel("<html><center><i>MT5 wird kurz gestartet und wieder beendet,<br>" +
+        JLabel hintLabel = new JLabel("<html><center><i>" + mtLabel + " wird kurz gestartet und wieder beendet,<br>" +
                 "um die Standard-Parameter des EAs zu exportieren.</i></center></html>");
         hintLabel.setFont(new Font("Segoe UI", Font.ITALIC, 11));
         hintLabel.setForeground(new Color(130, 135, 145));
@@ -545,8 +548,10 @@ public class EaConfigDialog extends JDialog {
     }
 
     private void generateDefaultConfig() {
+        boolean isMt4 = com.backtester.config.AppConfig.getInstance().isMt4(expertPath);
+        String mtLabel = isMt4 ? "MT4" : "MT5";
         generateButton.setEnabled(false);
-        generateButton.setText("⏳ MT5 wird gestartet...");
+        generateButton.setText("⏳ " + mtLabel + " wird gestartet...");
 
         SwingWorker<Boolean, Void> worker = new SwingWorker<>() {
             @Override
@@ -572,17 +577,17 @@ public class EaConfigDialog extends JDialog {
                         JOptionPane.showMessageDialog(EaConfigDialog.this,
                                 "Konfiguration konnte nicht generiert werden.\n" +
                                 "Möglicherweise hat der EA keine Input-Parameter,\n" +
-                                "oder MT5 konnte nicht korrekt gestartet werden.",
+                                "oder " + mtLabel + " konnte nicht korrekt gestartet werden.",
                                 "Fehler", JOptionPane.WARNING_MESSAGE);
                         generateButton.setEnabled(true);
-                        generateButton.setText("🔧 Default Config generieren (MT5 kurz starten)");
+                        generateButton.setText("🔧 Default Config generieren (" + mtLabel + " kurz starten)");
                     }
                 } catch (Exception e) {
                     JOptionPane.showMessageDialog(EaConfigDialog.this,
                             "Fehler: " + e.getMessage(),
                             "Fehler", JOptionPane.ERROR_MESSAGE);
                     generateButton.setEnabled(true);
-                    generateButton.setText("🔧 Default Config generieren (MT5 kurz starten)");
+                    generateButton.setText("🔧 Default Config generieren (" + mtLabel + " kurz starten)");
                 }
             }
         };

@@ -105,6 +105,7 @@ public class MultiBacktestView {
         root.setCenter(splitPane);
         
         loadPreferences();
+        expertField.textProperty().addListener((obs, oldVal, newVal) -> loadParameters());
         loadBatchesFromDb();
     }
 
@@ -187,21 +188,25 @@ public class MultiBacktestView {
         // Row 4: Presets
         grid.add(new Label("Presets:"), 0, 4);
         ComboBox<Preset> presetCombo = new ComboBox<>();
-        presetCombo.setPrefWidth(220);
+        presetCombo.setPrefWidth(130);
         presetCombo.setPromptText("Preset wählen...");
         presetCombo.getItems().setAll(PresetManager.getInstance().getPresets());
 
         Button addPresetBtn = new Button("➕ Neu");
         addPresetBtn.getStyleClass().add("button");
+        addPresetBtn.setMinWidth(Region.USE_PREF_SIZE);
 
         Button savePresetBtn = new Button("💾 Speichern");
         savePresetBtn.getStyleClass().add("button");
+        savePresetBtn.setMinWidth(Region.USE_PREF_SIZE);
 
         Button editPresetBtn = new Button("✏ Ändern");
         editPresetBtn.getStyleClass().add("button");
+        editPresetBtn.setMinWidth(Region.USE_PREF_SIZE);
 
         Button deletePresetBtn = new Button("🗑 Löschen");
         deletePresetBtn.getStyleClass().add("button");
+        deletePresetBtn.setMinWidth(Region.USE_PREF_SIZE);
 
         HBox presetBox = new HBox(8, presetCombo, addPresetBtn, savePresetBtn, editPresetBtn, deletePresetBtn);
         presetBox.setAlignment(Pos.CENTER_LEFT);
@@ -661,13 +666,16 @@ public class MultiBacktestView {
         javafx.scene.control.TableColumn<com.backtester.report.BacktestResult, String> ddCol = new javafx.scene.control.TableColumn<>("Drawdown");
         ddCol.setCellValueFactory(cellData -> new javafx.beans.property.SimpleStringProperty(String.format("%.2f%%", cellData.getValue().getMaxDrawdown())));
         
+        javafx.scene.control.TableColumn<com.backtester.report.BacktestResult, String> recCol = new javafx.scene.control.TableColumn<>("Recovery Factor");
+        recCol.setCellValueFactory(cellData -> new javafx.beans.property.SimpleStringProperty(String.format("%.2f", cellData.getValue().getRecoveryFactor())));
+        
         javafx.scene.control.TableColumn<com.backtester.report.BacktestResult, String> profCol = new javafx.scene.control.TableColumn<>("Profit");
         profCol.setCellValueFactory(cellData -> new javafx.beans.property.SimpleStringProperty(String.format("%.2f", cellData.getValue().getTotalProfit())));
 
         javafx.scene.control.TableColumn<com.backtester.report.BacktestResult, String> statusCol = new javafx.scene.control.TableColumn<>("Status");
         statusCol.setCellValueFactory(cellData -> new javafx.beans.property.SimpleStringProperty(cellData.getValue().isSuccess() ? "OK" : "Fail"));
 
-        resultsTable.getColumns().addAll(eaCol, symCol, perCol, tradesCol, winCol, ddCol, profCol, statusCol);
+        resultsTable.getColumns().addAll(eaCol, symCol, perCol, tradesCol, winCol, ddCol, recCol, profCol, statusCol);
         
         resultsTable.setOnMouseClicked(e -> {
             if (e.getClickCount() == 2) {
@@ -732,25 +740,40 @@ public class MultiBacktestView {
     private void browseEA() {
         FileChooser chooser = new FileChooser();
         chooser.setTitle("Select Expert Advisor");
-        chooser.getExtensionFilters().add(new FileChooser.ExtensionFilter("MetaTrader 5 EA", "*.ex5"));
+        chooser.getExtensionFilters().add(new FileChooser.ExtensionFilter("MetaTrader EA", "*.ex5", "*.ex4"));
         
-        java.nio.file.Path mt5Dir = config.getMt5InstallDir();
-        java.nio.file.Path expertsDir = mt5Dir != null ? mt5Dir.resolve("MQL5").resolve("Experts") : null;
+        String currentExpert = expertField.getText().trim();
+        java.nio.file.Path expertsDir = null;
+        if (config.isMt4(currentExpert)) {
+            expertsDir = config.getExpertsDir("dummy.ex4");
+        } else {
+            expertsDir = config.getExpertsDir("dummy.ex5");
+        }
+
         if (expertsDir != null && java.nio.file.Files.exists(expertsDir)) {
             chooser.setInitialDirectory(expertsDir.toFile());
+        } else {
+            java.nio.file.Path otherDir = config.isMt4(currentExpert) ? config.getExpertsDir("dummy.ex5") : config.getExpertsDir("dummy.ex4");
+            if (otherDir != null && java.nio.file.Files.exists(otherDir)) {
+                chooser.setInitialDirectory(otherDir.toFile());
+            }
         }
         
         File selected = chooser.showOpenDialog(expertField.getScene().getWindow());
         if (selected != null) {
-            if (expertsDir != null && selected.toPath().startsWith(expertsDir)) {
-                String relative = expertsDir.relativize(selected.toPath()).toString();
-                if (relative.toLowerCase().endsWith(".ex5")) {
+            String pathStr = selected.getAbsolutePath().toLowerCase();
+            boolean isEx4 = pathStr.endsWith(".ex4");
+            java.nio.file.Path activeExpertsDir = isEx4 ? config.getExpertsDir("dummy.ex4") : config.getExpertsDir("dummy.ex5");
+
+            if (activeExpertsDir != null && selected.toPath().startsWith(activeExpertsDir)) {
+                String relative = activeExpertsDir.relativize(selected.toPath()).toString();
+                if (!isEx4 && relative.toLowerCase().endsWith(".ex5")) {
                     relative = relative.substring(0, relative.length() - 4);
                 }
                 expertField.setText(relative);
             } else {
                 String path = selected.getAbsolutePath();
-                if (path.toLowerCase().endsWith(".ex5")) {
+                if (!isEx4 && path.toLowerCase().endsWith(".ex5")) {
                     path = path.substring(0, path.length() - 4);
                 }
                 expertField.setText(path);
@@ -1108,6 +1131,7 @@ public class MultiBacktestView {
                 java.lang.reflect.Type listType = new com.google.gson.reflect.TypeToken<java.util.List<com.backtester.config.EaParameter>>(){}.getType();
                 java.util.List<com.backtester.config.EaParameter> params = new com.google.gson.Gson().fromJson(dbParamsJson, listType);
                 if (params != null && !params.isEmpty()) {
+                    eaParamManager.applyTranslations(expert, params);
                     paramTable.getItems().setAll(params);
                     logView.log("INFO", "Loaded global parameters for " + EaParameterManager.extractEaBaseName(expert) + " from DB");
                     return;
@@ -1169,7 +1193,34 @@ public class MultiBacktestView {
         optCol.setPrefWidth(40);
         
         TableColumn<com.backtester.config.EaParameter, String> nameCol = new TableColumn<>("Variable");
-        nameCol.setCellValueFactory(new PropertyValueFactory<>("name"));
+        nameCol.setCellValueFactory(cellData -> {
+            com.backtester.config.EaParameter param = cellData.getValue();
+            String display = param.getDisplayName();
+            if (display == null || display.trim().isEmpty()) {
+                display = param.getName();
+            }
+            return new javafx.beans.property.SimpleStringProperty(display);
+        });
+        nameCol.setCellFactory(column -> new javafx.scene.control.TableCell<com.backtester.config.EaParameter, String>() {
+            private final javafx.scene.control.Tooltip tooltip = new javafx.scene.control.Tooltip();
+            @Override
+            protected void updateItem(String item, boolean empty) {
+                super.updateItem(item, empty);
+                if (empty || item == null) {
+                    setText(null);
+                    setTooltip(null);
+                } else {
+                    setText(item);
+                    com.backtester.config.EaParameter param = getTableRow() != null ? getTableRow().getItem() : null;
+                    if (param != null) {
+                        tooltip.setText("Variable: " + param.getName());
+                        setTooltip(tooltip);
+                    } else {
+                        setTooltip(null);
+                    }
+                }
+            }
+        });
         nameCol.setPrefWidth(200);
         
         TableColumn<com.backtester.config.EaParameter, String> valCol = new TableColumn<>("Value");
@@ -1203,6 +1254,9 @@ public class MultiBacktestView {
 
         HBox btnBox = new HBox(10);
         btnBox.setAlignment(Pos.CENTER_RIGHT);
+        Button genConfigBtn = new Button("Gen Config");
+        genConfigBtn.setOnAction(e -> generateDefaultConfig());
+        
         Button autoConfigBtn = new Button("AutoConfig");
         autoConfigBtn.setOnAction(e -> autoConfigParameters());
         
@@ -1212,7 +1266,7 @@ public class MultiBacktestView {
         Button saveBtn = new Button("Save .set");
         saveBtn.setOnAction(e -> saveToFile());
         
-        btnBox.getChildren().addAll(autoConfigBtn, loadBtn, saveBtn);
+        btnBox.getChildren().addAll(genConfigBtn, autoConfigBtn, loadBtn, saveBtn);
 
         box.getChildren().addAll(title, paramTable, btnBox);
         return box;
@@ -1259,6 +1313,39 @@ public class MultiBacktestView {
         }
         paramTable.refresh();
         logView.log("INFO", "AutoConfig applied: " + activated + " enabled, " + skipped + " skipped.");
+    }
+
+    private void generateDefaultConfig() {
+        String expert = expertField.getText().trim();
+        if (expert.isEmpty()) {
+            logView.log("WARN", "Please select an Expert Advisor first.");
+            return;
+        }
+
+        logView.log("INFO", "Starting config generation for " + EaParameterManager.extractEaBaseName(expert) + "... Please wait.");
+
+        javafx.concurrent.Task<Boolean> task = new javafx.concurrent.Task<Boolean>() {
+            @Override
+            protected Boolean call() throws Exception {
+                return eaParamManager.generateDefaultConfig(expert);
+            }
+        };
+
+        task.setOnSucceeded(evt -> {
+            boolean success = task.getValue();
+            if (success) {
+                logView.log("INFO", "Config generated successfully. Loading parameters...");
+                loadParameters();
+            } else {
+                logView.log("ERROR", "Failed to generate config. Check MetaTrader logs / config.");
+            }
+        });
+
+        task.setOnFailed(evt -> {
+            logView.log("ERROR", "Config generation failed: " + task.getException().getMessage());
+        });
+
+        new Thread(task).start();
     }
 
     private boolean isExcludedParameterName(String name) {
@@ -1333,6 +1420,8 @@ public class MultiBacktestView {
         if (file != null) {
             java.util.List<com.backtester.config.EaParameter> params = eaParamManager.readSetFile(file.toPath());
             if (params != null && !params.isEmpty()) {
+                String expertPath = expertField.getText().trim();
+                eaParamManager.applyTranslations(expertPath, params);
                 paramTable.getItems().setAll(params);
                 logView.log("INFO", "Loaded parameters from " + file.getName());
             } else {
@@ -1346,14 +1435,16 @@ public class MultiBacktestView {
             logView.log("WARN", "No parameters to save.");
             return;
         }
-        String eaName = com.backtester.config.EaParameterManager.extractEaBaseName(expertField.getText());
+        String expertPath = expertField.getText().trim();
+        String eaName = com.backtester.config.EaParameterManager.extractEaBaseName(expertPath);
         javafx.stage.FileChooser chooser = new javafx.stage.FileChooser();
         chooser.setTitle("Save .set File");
         chooser.setInitialFileName(eaName.isEmpty() ? "params.set" : eaName + ".set");
-        chooser.getExtensionFilters().add(new javafx.stage.FileChooser.ExtensionFilter("MT5 Set Files", "*.set"));
+        boolean isMt4 = config.isMt4(expertPath);
+        chooser.getExtensionFilters().add(new javafx.stage.FileChooser.ExtensionFilter(isMt4 ? "MT4 Set Files" : "MT5 Set Files", "*.set"));
         java.io.File file = chooser.showSaveDialog(root.getScene().getWindow());
         if (file != null) {
-            eaParamManager.writeSetFile(file.toPath(), new java.util.ArrayList<>(paramTable.getItems()), eaName);
+            eaParamManager.writeSetFile(file.toPath(), new java.util.ArrayList<>(paramTable.getItems()), expertPath);
             logView.log("INFO", "Saved parameters to " + file.getName());
         }
     }

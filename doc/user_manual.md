@@ -16,6 +16,7 @@
 10. [MT5-Prozessschutz (Process Guard)](#10-mt5-prozessschutz-process-guard)
 11. [Claude Desktop Integration (MCP Server)](#11-claude-desktop-integration-mcp-server)
 12. [Bereich: Workflow Automator (🔄 Workflow Automator)](#12-bereich-workflow-automator)
+13. [Bereich: Controlling (📊 Controlling)](#13-bereich-controlling-controlling)
 
 ---
 
@@ -63,7 +64,7 @@ Dieser Reiter eignet sich, um einen isolierten, einfachen Backtestausflug fuer e
 - **From Date / To Date**: Das Datum fuer den Eintritt in den virtuellen Markt und das Datum des Test-Endes - ueber diesen Lebenszyklus muss Ihr MetaTrader auch ueber geladene historische Marktdaten im Terminal verfuegen, sonst bleibt das Ergebnis fehlerhaft leer.
 - **Deposit, Currency, Leverage**: Veraendern Sie bei einem spezifischen Test den virtuell simulierten Kontostand gegenueber den Standard-Werten.
 - **Start Backtest Button**: Der Test startet voellig geraeuschlos und ohne grafische Benutzeroberflaeche (headless) im Hintergrund - das Programm meldet sich, sobald das Ergebnis im Report-Fenster vorliegt!
-- **Start Visual (MT5) Button**: Durchbricht die unsichtbare Automatisierung. MetaTrader 5 oeffnet sein Fenster und Sie koennen live in Zeitraffer auf dem Chart-Tickgitter verfolgen, an welchen Linien und Staenden der Roboter Kaeufe ("Buys") oder Leerverkaeufe ("Sells") umsetzt.
+- **Start Visual (MT4/5) Button**: Durchbricht die unsichtbare Automatisierung. MetaTrader 4/5 oeffnet sein Fenster und Sie koennen live in Zeitraffer auf dem Chart-Tickgitter verfolgen, an welchen Linien und Staenden der Roboter Kaeufe ("Buys") oder Leerverkaeufe ("Sells") umsetzt.
 
 ---
 
@@ -84,7 +85,7 @@ Der Zeit-Retter schlechthin! Umfassende EAs sollen meist nicht auf nur einen Wer
 Ein exzellenter Trader weiss, dass ein System immer optimiert werden kann. Der Optimizer ist die Schaltzentrale, um mathematisch die staerksten Inputs fuer einen EA durch tausendfache Berechnungen zu filtern. Er kontrolliert die maechtige Optimierungs-Engine im MetaTrader 5 mit komfortabler Steuerung und erweiterter Hilfe.
 
 #### Neue Funktionen in der aktuellen Version:
-- **"Start (Keep MT5 Open)"-Modus**: Neben dem normalen Start gibt es einen zweiten Start-Button ("Start (Keep MT5 Open)"), der MT5 nach der Optimierung geoeffnet laesst. Praktisch zum schnellen visuellen Nachvollziehen der Top-Ergebnisse.
+- **"Start (Keep MT4/5 Open)"-Modus**: Neben dem normalen Start gibt es einen zweiten Start-Button ("Start (Keep MT4/5 Open)"), der MT4/5 nach der Optimierung geoeffnet laesst. Praktisch zum schnellen visuellen Nachvollziehen der Top-Ergebnisse.
 - **Automatische 1-Parameter-Warnung**: Wenn Sie einen Forward-Test mit nur einem optimierten Parameter starten moechten, erscheint eine Warnung. Der MT5-Genetische Algorithmus benoetigt mindestens 2 Parameter zur sinnvollen Berechnung.
 - **Automatische Speicherung**: Alle Formular-Eingaben (EA, Symbol, Periode, Modell, Modus, Kriterium, Forward-Modus sowie die optimierten Parameter) werden automatisch gespeichert und beim naechsten Programmstart wiederhergestellt.
 
@@ -314,3 +315,25 @@ Wenn Sie im Results-Table auf eine Strategie doppelklicken, öffnet sich der neu
 Der in Schritt 5 generierte KI-Bericht wird in einem eigenen WebView-Tab visualisiert. Über eine integrierte Java-zu-JavaScript-Brücke (`JavaBridge`) sind die HTML-Tabellen interaktiv:
 - Wenn Sie mit der Maus über die Zeilen einer Strategietabelle im Bericht fahren, ändert sich der Cursor in eine Hand (Pointer) und die Zeile wird farblich hervorgehoben (`clickable-row`).
 - **Ein einfacher Klick** auf eine solche Zeile ruft intern `window.app.showPass(passNumber)` auf. Der Backtester sucht den passenden Durchlauf und öffnet sofort den oben beschriebenen detaillierten Mega-Report für diesen Pass.
+
+---
+
+### 13. Bereich: Controlling (📊 Controlling)
+Dieses Tab dient der langfristigen Verwaltung, dem Nachtest und dem Export aller erfolgreich optimierten Strategien. Hier laufen die Ergebnisse abgeschlossener Workflows zusammen und können detailliert bewertet werden.
+
+#### Neue Funktionen in der aktuellen Version:
+- **Neupositionierung des Export-Pfads**: Die Konfiguration des Export-Verzeichnisses wurde von der linken Leiste nach rechts unten (unter die Details-Tabs) verschoben. Dies hält den Pfad nah am Button **💾 Settings exportieren** und schafft auf der linken Seite maximalen vertikalen Platz für die Strategietabelle.
+- **Checkbox-Auswahlspalte (Checkmarks)**: Als erste Spalte der Tabelle wurde eine Checkbox-Auswahl eingeführt. Das Ankreuzen ist direkt mit dem JavaFX-Auswahlstatus der Zeilen verknüpft, sodass Auswahländerungen sofort visuell synchronisiert werden.
+- **Erweiterte Multi-Selektion & Tastatur-Shortcuts**:
+  - Sie können mehrere Strategien gleichzeitig markieren (`Strg + Mausklick` für einzelne Zeilen, `Shift + Mausklick` für Bereiche).
+  - Mit dem Shortcut `Strg + A` können Sie alle aufgelisteten Strategien in der Tabelle auf einmal markieren.
+- **Massen-Aktionen (Bulk Actions)**:
+  - **Massen-Export**: Ein Klick auf **💾 Settings exportieren** generiert die `.set`-Parameterdateien aller markierten Strategien im Batch-Verfahren und speichert sie im Export-Ordner.
+  - **Massen-Löschung**: Der Button **❌ Löschen** entfernt alle markierten Zeilen und zugehörige Review-Einträge sicher in einer einzigen Transaktion aus der SQLite-Datenbank.
+- **Intelligentes automatisches Review (Auswahl-Dialog)**:
+  Beim Klick auf **🔍 Automatisches Review** prüft die Software den Review-Status der markierten Strategien. Liegt eine Mischung aus bereits getesteten und neuen Strategien vor, erscheint ein dreiteiliger Entscheidungsdialog:
+  1. *Bestehende überschreiben*: Startet den 2-Jahres-Nachtest für alle ausgewählten Strategien neu.
+  2. *Nur neue reviewen*: Führt den Nachtest nur für diejenigen EAs aus, die noch kein Review-Ergebnis in der Datenbank besitzen (zeitsparend!).
+  3. *Abbrechen*: Bricht den Vorgang ab.
+- **Export-Prompt Info-Button & Copy-Dialog**:
+  Rechts neben dem Button „Automatisches Review“ befindet sich nun der Info-Button `(i)` für den **Export Prompt**. Ein Klick darauf öffnet einen stilisierten, im Science-Fiction-Stil gehaltenen Dialog. Dieser enthält den ausführlichen Prompt zur automatisierten Analyse und Portfolio-Zusammenstellung. Über den Button **📋 Prompt kopieren** wird der Text direkt in die Windows-Zwischenablage kopiert und eine Bestätigung angezeigt.

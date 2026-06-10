@@ -20,3 +20,15 @@ artifacts/
 .gemini/
 logs/
 bin/
+
+# Temp/Export files
+export_last_test/
+export_last_test1/
+exports/
+exports_gut/
+*.zip
+stdout.txt
+stderr.txt
+.vscode/
+doc/tests/*.pdf
+

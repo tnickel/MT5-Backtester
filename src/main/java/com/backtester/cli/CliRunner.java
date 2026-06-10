@@ -124,7 +124,8 @@ public class CliRunner {
                 continue;
             }
 
-            Path destEx = scraperTempDir.resolve(srcEx.getFileName());
+            String cleanFileName = sanitizeFileName(srcEx.getFileName().toString());
+            Path destEx = scraperTempDir.resolve(cleanFileName);
             Path destSet = null;
 
             try {
@@ -140,47 +141,93 @@ public class CliRunner {
                         destSet = mtInstallDir.resolve("scraper_temp.set");
                         log.info("Copying SET parameter file: {} -> {}", srcSet, destSet);
                         Files.copy(srcSet, destSet, StandardCopyOption.REPLACE_EXISTING);
+                        
+                        // Copy to MQL5/Profiles/Tester as well (standard location for MT5 parameter files)
+                        Path profilesSet = mtInstallDir.resolve("MQL5").resolve("Profiles").resolve("Tester").resolve("scraper_temp.set");
+                        try {
+                            Files.createDirectories(profilesSet.getParent());
+                            Files.copy(srcSet, profilesSet, StandardCopyOption.REPLACE_EXISTING);
+                            log.info("Copying SET parameter file to profiles: {}", profilesSet);
+                        } catch (IOException e) {
+                            log.warn("Failed to copy SET file to profiles directory: " + e.getMessage());
+                        }
+                        
                         parametersParam = "scraper_temp.set";
                     } else {
                         log.warn("Parameter SET file specified but not found: {}", run.set_file_path);
                     }
                 }
 
-                // Prepare BacktestConfig
-                BacktestConfig btConfig = new BacktestConfig();
-                btConfig.setExpert("ScraperTemp\\" + srcEx.getFileName().toString());
-                btConfig.setExpertParameters(parametersParam);
-                btConfig.setSymbol(run.symbol != null ? run.symbol : "EURUSD");
-                btConfig.setPeriod(run.period != null ? run.period : "H1");
-                btConfig.setFromDate(fromDate);
-                btConfig.setToDate(toDate);
-                btConfig.setDeposit(settings.deposit);
-                btConfig.setCurrency(settings.currency);
-                btConfig.setLeverage(settings.leverage);
-                btConfig.setModel(settings.model);
-                btConfig.setUseVirtualDesktop(settings.use_virtual_desktop);
-                btConfig.setAutoKillMt5(settings.auto_kill_mt5);
-                btConfig.setShutdownTerminal(settings.auto_kill_mt5);
-                btConfig.setReplaceReport(true);
+                boolean isOpt = settings.optimization > 0;
 
-                // Run Backtest
-                BacktestRunner runner = new BacktestRunner();
-                runner.setLogCallback(msg -> System.out.println("[Runner] " + msg));
-                BacktestResult result = runner.runBacktest(btConfig);
+                if (isOpt) {
+                    // Prepare OptimizationConfig
+                    com.backtester.engine.OptimizationConfig optConfig = new com.backtester.engine.OptimizationConfig();
+                    optConfig.setExpert("ScraperTemp\\" + cleanFileName);
+                    optConfig.setExpertParameters(parametersParam);
+                    optConfig.setSymbol(run.symbol != null ? run.symbol : "EURUSD");
+                    optConfig.setPeriod(run.period != null ? run.period : "H1");
+                    optConfig.setFromDate(fromDate);
+                    optConfig.setToDate(toDate);
+                    optConfig.setDeposit(settings.deposit);
+                    optConfig.setCurrency(settings.currency);
+                    optConfig.setLeverage(settings.leverage);
+                    optConfig.setModel(settings.model);
+                    optConfig.setShutdownTerminal(settings.auto_kill_mt5);
+                    optConfig.setOptimizationMode(settings.optimization);
+                    optConfig.setOptimizationCriterion(4); // Recovery Factor max
 
-                if (result != null && result.isSuccess()) {
-                    log.info("Test finished successfully. Profit: {}, Drawdown: {}%, Trades: {}",
-                            result.getTotalProfit(), result.getMaxDrawdown(), result.getTotalTrades());
-                    results.add(new BatchRunResult(run, result));
-                    successCount++;
+                    // Run Optimization
+                    com.backtester.engine.OptimizationRunner runner = new com.backtester.engine.OptimizationRunner(appConfig);
+                    runner.setLogCallback(msg -> System.out.println("[Runner] " + msg));
+                    com.backtester.report.OptimizationResult result = runner.runOptimization(optConfig);
+
+                    if (result != null && result.isSuccess()) {
+                        log.info("Optimization finished successfully. Passes found: {}", result.getPasses().size());
+                        results.add(new BatchRunResult(run, result));
+                        successCount++;
+                    } else {
+                        String reason = (result != null) ? result.getMessage() : "Unknown runner failure";
+                        log.warn("Optimization failed: {}", reason);
+                        results.add(new BatchRunResult(run, false, reason));
+                    }
                 } else {
-                    String reason = (result != null) ? result.getMessage() : "Unknown runner failure";
-                    log.warn("Test failed: {}", reason);
-                    results.add(new BatchRunResult(run, false, reason));
+                    // Prepare BacktestConfig
+                    BacktestConfig btConfig = new BacktestConfig();
+                    btConfig.setExpert("ScraperTemp\\" + cleanFileName);
+                    btConfig.setExpertParameters(parametersParam);
+                    btConfig.setSymbol(run.symbol != null ? run.symbol : "EURUSD");
+                    btConfig.setPeriod(run.period != null ? run.period : "H1");
+                    btConfig.setFromDate(fromDate);
+                    btConfig.setToDate(toDate);
+                    btConfig.setDeposit(settings.deposit);
+                    btConfig.setCurrency(settings.currency);
+                    btConfig.setLeverage(settings.leverage);
+                    btConfig.setModel(settings.model);
+                    btConfig.setUseVirtualDesktop(settings.use_virtual_desktop);
+                    btConfig.setAutoKillMt5(settings.auto_kill_mt5);
+                    btConfig.setShutdownTerminal(settings.auto_kill_mt5);
+                    btConfig.setReplaceReport(true);
+
+                    // Run Backtest
+                    BacktestRunner runner = new BacktestRunner();
+                    runner.setLogCallback(msg -> System.out.println("[Runner] " + msg));
+                    BacktestResult result = runner.runBacktest(btConfig);
+
+                    if (result != null && result.isSuccess()) {
+                        log.info("Test finished successfully. Profit: {}, Drawdown: {}%, Trades: {}",
+                                result.getTotalProfit(), result.getMaxDrawdown(), result.getTotalTrades());
+                        results.add(new BatchRunResult(run, result));
+                        successCount++;
+                    } else {
+                        String reason = (result != null) ? result.getMessage() : "Unknown runner failure";
+                        log.warn("Test failed: {}", reason);
+                        results.add(new BatchRunResult(run, false, reason));
+                    }
                 }
 
             } catch (Exception e) {
-                log.error("Exception during backtest run execution", e);
+                log.error("Exception during backtest/optimization run execution", e);
                 results.add(new BatchRunResult(run, false, "Exception: " + e.getMessage()));
             } finally {
                 // Clean up copied files to keep MT directory clean
@@ -188,8 +235,12 @@ public class CliRunner {
                     Files.deleteIfExists(destEx);
                     if (destSet != null) {
                         Files.deleteIfExists(destSet);
+                        try {
+                            Files.deleteIfExists(mtInstallDir.resolve("MQL5").resolve("Profiles").resolve("Tester").resolve("scraper_temp.set"));
+                        } catch (Exception ignored) {}
                     }
                     Files.deleteIfExists(mtInstallDir.resolve("tester_backtest.ini"));
+                    Files.deleteIfExists(mtInstallDir.resolve("tester_optimization.ini"));
                     Files.deleteIfExists(scraperTempDir);
                 } catch (IOException e) {
                     log.warn("Failed to clean up temporary MT files: {}", e.getMessage());
@@ -210,6 +261,17 @@ public class CliRunner {
         log.info("=== Batch execution completed. Total: {}, Succeeded: {}, Failed: {} ===", total, successCount, total - successCount);
     }
 
+    private static String sanitizeFileName(String fileName) {
+        if (fileName == null) return null;
+        int dotIdx = fileName.lastIndexOf('.');
+        if (dotIdx > 0) {
+            String base = fileName.substring(0, dotIdx).trim();
+            String ext = fileName.substring(dotIdx).trim(); // includes the dot
+            return base + ext;
+        }
+        return fileName.trim();
+    }
+
     // --- JSON Model Mappings ---
 
     public static class BatchConfig {
@@ -225,6 +287,7 @@ public class CliRunner {
         public String currency = "USD";
         public String leverage = "1:100";
         public int model = 1; // Default 1 minute OHLC
+        public int optimization = 0; // Default 0 (disabled), 2 (genetic)
         public boolean use_virtual_desktop = true;
         public boolean auto_kill_mt5 = true;
     }
@@ -263,6 +326,7 @@ public class CliRunner {
         public double profit_factor;
         public double sharpe_ratio;
         public String report_path;
+        public List<com.backtester.report.OptimizationResult.Pass> optimization_passes;
 
         public BatchRunResult(RunItem item, boolean success, String errorMessage) {
             this.expert_name = item.expert_name;
@@ -284,6 +348,26 @@ public class CliRunner {
             this.profit_factor = result.getProfitFactor();
             this.sharpe_ratio = result.getSharpeRatio();
             this.report_path = result.getOutputDirectory();
+        }
+
+        public BatchRunResult(RunItem item, com.backtester.report.OptimizationResult result) {
+            this.expert_name = item.expert_name;
+            this.symbol = item.symbol;
+            this.period = item.period;
+            this.success = true;
+            this.report_path = result.getOutputDirectory();
+            this.optimization_passes = result.getPasses();
+
+            if (result.getPasses() != null && !result.getPasses().isEmpty()) {
+                com.backtester.report.OptimizationResult.Pass best = result.getBestByProfit();
+                if (best != null) {
+                    this.profit = best.getProfit();
+                    this.drawdown = best.getDrawdownPercent();
+                    this.trades = best.getTotalTrades();
+                    this.profit_factor = best.getProfitFactor();
+                    this.sharpe_ratio = best.getSharpeRatio();
+                }
+            }
         }
     }
 }

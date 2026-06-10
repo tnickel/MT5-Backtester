@@ -163,12 +163,7 @@ public class ControllingView {
         
         javafx.scene.layout.Region titleSpacer = new javafx.scene.layout.Region();
         HBox.setHgrow(titleSpacer, Priority.ALWAYS);
-        titleBox.getChildren().addAll(titleLabel, titleSpacer, DocHelper.createInfoButton("Controlling", 
-            "Das Controlling-Modul dient als analytische Schnittstelle zur Überprüfung und Re-Verifikation optimierter Handelssysteme.",
-            "Hier werden alle Portfolios und Strategie-Durchläufe aus abgeschlossenen Workflows zusammengeführt. Sie können:\n\n" +
-            "1. Durch das Archiv scrollen und die Leistungskurven vergleichen.\n" +
-            "2. Einzelne Strategiekonfigurationen (.set) exportieren.\n" +
-            "3. Einen unmittelbaren Nachtest (OHLC oder Every Tick) im MetaTrader auslösen, um die Stabilität manuell nachzuweisen."));
+        titleBox.getChildren().addAll(titleLabel, titleSpacer, DocHelper.createControllingInfoButton(titleLabel));
 
         // Filters HBox
         HBox filterBox = new HBox(15);
@@ -211,7 +206,11 @@ public class ControllingView {
         autoReviewBtn.getStyleClass().add("button");
         autoReviewBtn.setOnAction(e -> startAutomaticReview());
 
-        filterBox.getChildren().addAll(allFilterBtn, bestFilterBtn, bestInfoBtn, refreshBtn, autoReviewBtn);
+        Label exportPromptLabel = new Label("Export Prompt:");
+        exportPromptLabel.setStyle("-fx-text-fill: #7e889a; -fx-font-weight: bold;");
+        Button exportPromptBtn = DocHelper.createSmallInfoButton("Export-Prompt anzeigen", () -> showExportPromptDialog());
+
+        filterBox.getChildren().addAll(allFilterBtn, bestFilterBtn, bestInfoBtn, refreshBtn, autoReviewBtn, exportPromptLabel, exportPromptBtn);
 
         // Search and Date Filters HBox
         HBox searchFilterBox = new HBox(10);
@@ -259,8 +258,43 @@ public class ControllingView {
 
         // Table definition
         table = new TableView<>();
+        table.getSelectionModel().setSelectionMode(SelectionMode.MULTIPLE);
+        table.setOnKeyPressed(event -> {
+            if (event.isControlDown() && event.getCode() == javafx.scene.input.KeyCode.A) {
+                table.getSelectionModel().selectAll();
+                event.consume();
+            }
+        });
         table.setStyle("-fx-background-color: transparent;");
         VBox.setVgrow(table, Priority.ALWAYS);
+
+        TableColumn<ControllingStrategy, Boolean> selectCol = new TableColumn<>("");
+        selectCol.setPrefWidth(35);
+        selectCol.setResizable(false);
+        selectCol.setSortable(false);
+        selectCol.setCellValueFactory(cellData -> new javafx.beans.property.SimpleBooleanProperty(false));
+        selectCol.setCellFactory(column -> new TableCell<ControllingStrategy, Boolean>() {
+            private final CheckBox checkBox = new CheckBox();
+            {
+                checkBox.setMouseTransparent(true);
+                checkBox.setFocusTraversable(false);
+                setAlignment(Pos.CENTER);
+            }
+            @Override
+            protected void updateItem(Boolean item, boolean empty) {
+                super.updateItem(item, empty);
+                if (empty) {
+                    setGraphic(null);
+                } else {
+                    TableRow<?> row = getTableRow();
+                    if (row != null) {
+                        checkBox.selectedProperty().unbind();
+                        checkBox.selectedProperty().bind(row.selectedProperty());
+                    }
+                    setGraphic(checkBox);
+                }
+            }
+        });
 
         TableColumn<ControllingStrategy, String> dateCol = new TableColumn<>("Datum");
         dateCol.setCellValueFactory(cellData -> new SimpleStringProperty(df.format(new Date(cellData.getValue().getRunTimestamp()))));
@@ -306,7 +340,7 @@ public class ControllingView {
         reviewCol.setCellValueFactory(cellData -> new SimpleStringProperty(cellData.getValue().getReviewText()));
         reviewCol.setPrefWidth(120);
 
-        table.getColumns().addAll(dateCol, eaCol, symCol, tfCol, passCol, profitCol, ddCol, tableTradesCol, scoreCol, kiCol, reviewCol);
+        table.getColumns().addAll(selectCol, dateCol, eaCol, symCol, tfCol, passCol, profitCol, ddCol, tableTradesCol, scoreCol, kiCol, reviewCol);
         table.setItems(tableItems);
 
         // Context menu and coloring via RowFactory
@@ -375,7 +409,7 @@ public class ControllingView {
 
         exportFolderBox.getChildren().addAll(exportLabelBtn, exportDirField, browseExportBtn);
 
-        leftBox.getChildren().addAll(titleBox, filterBox, searchFilterBox, table, exportFolderBox);
+        leftBox.getChildren().addAll(titleBox, filterBox, searchFilterBox, table);
 
         // ==========================================
         // RIGHT SIDE: Details TabPane
@@ -494,7 +528,34 @@ public class ControllingView {
         VBox.setVgrow(paramTable, Priority.ALWAYS);
 
         TableColumn<EaParameter, String> paramNameCol = new TableColumn<>("Parameter Variable");
-        paramNameCol.setCellValueFactory(new PropertyValueFactory<>("name"));
+        paramNameCol.setCellValueFactory(cellData -> {
+            EaParameter param = cellData.getValue();
+            String display = param.getDisplayName();
+            if (display == null || display.trim().isEmpty()) {
+                display = param.getName();
+            }
+            return new javafx.beans.property.SimpleStringProperty(display);
+        });
+        paramNameCol.setCellFactory(column -> new javafx.scene.control.TableCell<EaParameter, String>() {
+            private final javafx.scene.control.Tooltip tooltip = new javafx.scene.control.Tooltip();
+            @Override
+            protected void updateItem(String item, boolean empty) {
+                super.updateItem(item, empty);
+                if (empty || item == null) {
+                    setText(null);
+                    setTooltip(null);
+                } else {
+                    setText(item);
+                    EaParameter param = getTableRow() != null ? getTableRow().getItem() : null;
+                    if (param != null) {
+                        tooltip.setText("Variable: " + param.getName());
+                        setTooltip(tooltip);
+                    } else {
+                        setTooltip(null);
+                    }
+                }
+            }
+        });
         paramNameCol.setPrefWidth(220);
 
         TableColumn<EaParameter, String> paramValCol = new TableColumn<>("Wert");
@@ -640,7 +701,7 @@ public class ControllingView {
         Tab tab3 = new Tab("🔍 Auto-Review", tab3Scroll);
 
         rightTabPane.getTabs().addAll(tab1, tab2, tab3);
-        rightBox.getChildren().addAll(rightTitle, rightTabPane);
+        rightBox.getChildren().addAll(rightTitle, rightTabPane, exportFolderBox);
 
         splitPane.getItems().addAll(leftBox, rightBox);
         root.setCenter(splitPane);
@@ -1040,30 +1101,80 @@ public class ControllingView {
         return finalParams;
     }
 
+    private boolean isMagicNumberParameter(String name) {
+        if (name == null) return false;
+        String lower = name.toLowerCase();
+        return lower.equals("magic") || lower.equals("inpmagicnumber") || lower.equals("magicnumber");
+    }
+
+    private boolean isOrderCommentParameter(String name) {
+        if (name == null) return false;
+        String lower = name.toLowerCase();
+        return lower.equals("comment") || lower.equals("inp_order_comment") || lower.equals("ordercomment") || lower.equals("order_comment");
+    }
+
     private void exportSettings() {
-        ControllingStrategy selected = table.getSelectionModel().getSelectedItem();
-        if (selected == null) {
-            Alert alert = new Alert(Alert.AlertType.WARNING, "Bitte wählen Sie zuerst eine Strategie aus der Tabelle aus.");
+        ObservableList<ControllingStrategy> selectedItems = table.getSelectionModel().getSelectedItems();
+        if (selectedItems == null || selectedItems.isEmpty()) {
+            Alert alert = new Alert(Alert.AlertType.WARNING, "Bitte wählen Sie zuerst mindestens eine Strategie aus der Tabelle aus.");
             alert.show();
             return;
         }
 
         try {
-            String eaName = EaParameterManager.extractEaBaseName(selected.getExpert());
-            String tf = selected.getPeriod().replaceAll("[^a-zA-Z0-9_.-]", "_");
-            String sym = selected.getSymbol().replaceAll("[^a-zA-Z0-9_.-]", "_");
-            String filename = String.format("%s_%s_%s_Pass%d.set", eaName, sym, tf, selected.getPassNumber());
-            
-            Path destPath = Paths.get(AppConfig.getInstance().getExportDirectory().toString()).resolve(filename);
-            
-            List<EaParameter> finalParams = getStrategyParameters(selected.getBaseParameters(), selected.combinedPass);
-            eaParamManager.writeSetFile(destPath, finalParams, eaName);
+            List<Path> exportedPaths = new ArrayList<>();
+            for (ControllingStrategy selected : selectedItems) {
+                String eaName = EaParameterManager.extractEaBaseName(selected.getExpert());
+                String tf = selected.getPeriod().replaceAll("[^a-zA-Z0-9_.-]", "_");
+                String sym = selected.getSymbol().replaceAll("[^a-zA-Z0-9_.-]", "_");
 
-            Alert alert = new Alert(Alert.AlertType.INFORMATION, "Die Parameter (.set) wurden erfolgreich exportiert:\n" + destPath.toAbsolutePath().toString());
+                double ddVal = selected.getBtDd(); // fallback
+                com.backtester.database.DatabaseManager.AutomaticReview autoReview = dbManager.getAutomaticReview(
+                    selected.getExpert(),
+                    selected.getSymbol(),
+                    selected.getPeriod(),
+                    selected.getRunTimestamp(),
+                    selected.getPassNumber()
+                );
+                if (autoReview != null && autoReview.getResult2yJson() != null && !autoReview.getResult2yJson().isEmpty()) {
+                    try {
+                        BacktestResult res2y = buildGson().fromJson(autoReview.getResult2yJson(), BacktestResult.class);
+                        if (res2y != null) {
+                            ddVal = res2y.getMaxDrawdown();
+                        }
+                    } catch (Exception ignored) {}
+                }
+                int ddPct = Double.isNaN(ddVal) ? 0 : (int) Math.round(ddVal);
+                String filename = String.format("%s_%s_%s_%dproz_Pass%d.set", eaName, sym, tf, ddPct, selected.getPassNumber());
+                
+                Path destPath = Paths.get(AppConfig.getInstance().getExportDirectory().toString()).resolve(filename);
+                
+                List<EaParameter> finalParams = getStrategyParameters(selected.getBaseParameters(), selected.combinedPass);
+                for (EaParameter p : finalParams) {
+                    if (isMagicNumberParameter(p.getName())) {
+                        p.setValue(String.valueOf(selected.getPassNumber()));
+                    }
+                    if (isOrderCommentParameter(p.getName())) {
+                        p.setValue(String.format("%dproz_Pass%d", ddPct, selected.getPassNumber()));
+                    }
+                }
+                eaParamManager.writeSetFile(destPath, finalParams, eaName);
+                exportedPaths.add(destPath);
+            }
+
+            StringBuilder sb = new StringBuilder();
+            if (exportedPaths.size() == 1) {
+                sb.append("Die Parameter (.set) wurden erfolgreich exportiert:\n").append(exportedPaths.get(0).toAbsolutePath().toString());
+            } else {
+                sb.append(String.format("%d Parameter-Dateien (.set) wurden erfolgreich exportiert nach:\n", exportedPaths.size()));
+                sb.append(AppConfig.getInstance().getExportDirectory().toAbsolutePath().toString());
+            }
+
+            Alert alert = new Alert(Alert.AlertType.INFORMATION, sb.toString());
             alert.setTitle("Export erfolgreich");
             alert.setHeaderText(null);
             alert.show();
-            logView.log("INFO", "Settings exportiert nach: " + destPath);
+            logView.log("INFO", String.format("%d Settings exportiert.", exportedPaths.size()));
 
         } catch (Exception ex) {
             Alert alert = new Alert(Alert.AlertType.ERROR, "Fehler beim Exportieren der Parameter:\n" + ex.getMessage());
@@ -1368,63 +1479,149 @@ public class ControllingView {
         }
     }
 
+    private void showExportPromptDialog() {
+        Dialog<ButtonType> dialog = new Dialog<>();
+        dialog.setTitle("Export Prompt");
+        dialog.setHeaderText("Finale Strategie-Auswahl Prompt");
+
+        dialog.getDialogPane().getStylesheets().add(getClass().getResource("/css/antigravity.css").toExternalForm());
+        dialog.getDialogPane().setStyle("-fx-background-color: #0b0d13;");
+
+        VBox layout = new VBox(10);
+        layout.setPadding(new Insets(10));
+
+        Label infoLabel = new Label("Kopieren Sie den folgenden Prompt, um eine vollautomatische Analyse und den Export der besten Strategien zu veranlassen:");
+        infoLabel.setStyle("-fx-text-fill: #cbd5e1; -fx-font-weight: bold;");
+        infoLabel.setWrapText(true);
+
+        String promptText = "Führe eine gründliche, datenbankgestützte Analyse aller im Controlling-System vorhandenen Strategien durch und exportiere für jedes Währungspaar (Symbol) die qualitativ beste Strategie. Gehe dazu wie folgt vor:\n\n" +
+            "### 1. Daten-Aggregation aus der H2-Datenbank\n" +
+            "Sammle alle verfügbaren Daten aus der Datenbank zu sämtlichen gelisteten Strategien (Pässen) – schreibe hierzu falls nötig ein temporäres Java-Hilfsskript oder greife direkt auf die DB-Klassen zu:\n" +
+            "- Basisdaten: Expert-Name, Symbol, Period, Pass-Nummer, Run-Timestamp.\n" +
+            "- Original-Performance: Gewinn, Drawdown, Trades, Recovery Factor und Unified Score aus dem Optimierungslauf.\n" +
+            "- Stabilitäts-Metriken: KI-Stabilitäts-Score (LLM Score) und schlechtester Variationskoeffizient (worst CV) der Sensitivitätsanalyse.\n" +
+            "- Nachtest-Daten (2-Jahres-Test): Lese die Ergebnisse des 2-Jahres-Nachtests aus STRATEGY_AUTOMATIC_REVIEWS aus (insbesondere Gesamtgewinn, maximaler Drawdown, Profit-Faktor und Trades).\n" +
+            "- Manuelle Bewertungen: Lese die Review-Texte und Farbbewertungen aus STRATEGY_REVIEWS.\n\n" +
+            "### 2. Analyse- und Vergleichsverfahren\n" +
+            "Gruppiere alle Strategien nach Währungspaar (Symbol) und vergleiche sie intensiv:\n" +
+            "- Drawdown im 2-Jahres-Test: Beurteile die Robustheit im längeren Backtest. Strategien mit einem kritisch hohen Drawdown (z. B. > 25 %) oder schlechtem Kurvenverlauf werden nicht gewählt.\n" +
+            "- Stabilitätsdaten: Bevorzuge Strategien mit hohem KI-Score (>= 70) und niedrigem Variationskoeffizient (CV < 30 %).\n" +
+            "- Ausschluss-Regel: Wenn für ein Währungspaar alle verfügbaren Strategien zu schlecht sind (unzureichende Performance oder hohe Risiken), wird für dieses Währungspaar keine Strategie exportiert.\n\n" +
+            "### 3. Erstellung des professionellen PDF-Reports\n" +
+            "Erstelle ein umfassendes, professionell formatiertes PDF-Dokument im konfigurierten Export-Ordner:\n" +
+            "- Vergleichstabelle: Eine Übersicht aller Währungspaare mit der jeweils ausgewählten Gewinner-Strategie (oder dem Vermerk \"Keine qualifizierte Strategie\").\n" +
+            "- Ausführliche Begründung: Schreibe für jede untersuchte Strategie (sowohl die ausgewählten als auch die abgelehnten) eine detaillierte Begründung, warum sie exportiert bzw. verworfen wurde.\n" +
+            "- Equity-Kurven & Kennzahlen: Stelle die Kapitalkurve des 2-Jahres-Nachtests grafisch dar und vergleiche die wichtigsten Kennzahlen tabellarisch (Original vs. 2-Jahres-Nachtest).\n\n" +
+            "### 4. Export der Settings und des Reports\n" +
+            "- Lese das aktuell konfigurierte Export-Verzeichnis aus (AppConfig.getInstance().getExportDirectory()).\n" +
+            "- Exportiere die Parameter-Dateien (.set) der ausgewählten besten Strategien in diesen Ordner.\n" +
+            "- Speichere den generierten PDF-Report ebenfalls dort ab.\n\n" +
+            "Gib mir nach Abschluss der Analyse eine Übersicht der Entscheidungen im Chat und nenne mir den genauen Pfad, unter dem die exportierten Settings und das PDF-Dokument abgelegt wurden.";
+
+        TextArea textArea = new TextArea(promptText);
+        textArea.setEditable(false);
+        textArea.setWrapText(true);
+        textArea.setPrefSize(600, 350);
+        textArea.setStyle("-fx-control-inner-background: #14161c; -fx-text-fill: #e6e9f0; -fx-border-color: #3e4555; -fx-font-family: monospace;");
+
+        Button copyBtn = new Button("📋 Prompt kopieren");
+        copyBtn.getStyleClass().add("button");
+        copyBtn.setOnAction(e -> {
+            javafx.scene.input.Clipboard clipboard = javafx.scene.input.Clipboard.getSystemClipboard();
+            javafx.scene.input.ClipboardContent contentData = new javafx.scene.input.ClipboardContent();
+            contentData.putString(promptText);
+            clipboard.setContent(contentData);
+            
+            Alert alert = new Alert(Alert.AlertType.INFORMATION, "Der Prompt wurde erfolgreich in die Zwischenablage kopiert.");
+            alert.getDialogPane().getStylesheets().add(getClass().getResource("/css/antigravity.css").toExternalForm());
+            alert.getDialogPane().setStyle("-fx-background-color: #0b0d13;");
+            alert.setTitle("Kopiert");
+            alert.setHeaderText(null);
+            alert.show();
+        });
+
+        layout.getChildren().addAll(infoLabel, textArea, copyBtn);
+        dialog.getDialogPane().setContent(layout);
+
+        dialog.getDialogPane().getButtonTypes().addAll(ButtonType.CLOSE);
+
+        dialog.showAndWait();
+    }
+
     private String capitalize(String str) {
         if (str == null || str.isEmpty()) return "";
         return Character.toUpperCase(str.charAt(0)) + str.substring(1).toLowerCase();
     }
 
     private void deleteSelectedStrategy() {
-        ControllingStrategy selected = table.getSelectionModel().getSelectedItem();
-        if (selected == null) {
-            Alert alert = new Alert(Alert.AlertType.WARNING, "Bitte wählen Sie zuerst eine Strategie aus der Tabelle aus.");
+        ObservableList<ControllingStrategy> selectedItems = table.getSelectionModel().getSelectedItems();
+        if (selectedItems == null || selectedItems.isEmpty()) {
+            Alert alert = new Alert(Alert.AlertType.WARNING, "Bitte wählen Sie zuerst mindestens eine Strategie aus der Tabelle aus.");
             alert.show();
             return;
         }
 
         // Sicherheitsabfrage (Confirmation Dialog)
         Alert confirm = new Alert(Alert.AlertType.CONFIRMATION);
-        confirm.setTitle("Strategie löschen");
-        confirm.setHeaderText("Strategie löschen bestätigen");
-        confirm.setContentText("Sind Sie sicher, dass Sie diese Strategie (Pass " + selected.getPassNumber() + ") unwiderruflich aus der Datenbank löschen möchten?");
+        confirm.setTitle("Strategien löschen");
+        confirm.setHeaderText("Strategien löschen bestätigen");
+        if (selectedItems.size() == 1) {
+            confirm.setContentText("Sind Sie sicher, dass Sie diese Strategie (Pass " + selectedItems.get(0).getPassNumber() + ") unwiderruflich aus der Datenbank löschen möchten?");
+        } else {
+            confirm.setContentText(String.format("Sind Sie sicher, dass Sie diese %d Strategien unwiderruflich aus der Datenbank löschen möchten?", selectedItems.size()));
+        }
         
         Optional<ButtonType> result = confirm.showAndWait();
         if (result.isPresent() && result.get() == ButtonType.OK) {
             try {
-                int runDbId = selected.getRunDbId();
-                int passNumber = selected.getPassNumber();
+                // Group selected items by runDbId so we can modify each run once
+                Map<Integer, List<ControllingStrategy>> groupedByRun = new HashMap<>();
+                for (ControllingStrategy strategy : selectedItems) {
+                    groupedByRun.computeIfAbsent(strategy.getRunDbId(), k -> new ArrayList<>()).add(strategy);
+                }
 
-                HistoryRun run = dbManager.getRunById(runDbId);
-                if (run != null) {
-                    Gson gson = buildGson();
-                    Map<String, Object> stateMap = gson.fromJson(run.getResultJson(), Map.class);
-                    if (stateMap != null) {
-                        String finalPassesJson = (String) stateMap.get("final_selected_passes_json");
-                        if (finalPassesJson != null && !finalPassesJson.isEmpty()) {
-                            java.lang.reflect.Type listType = new com.google.gson.reflect.TypeToken<List<CombinedPass>>(){}.getType();
-                            List<CombinedPass> finalPasses = gson.fromJson(finalPassesJson, listType);
-                            
-                            // Remove the matching pass
-                            int beforeSize = finalPasses.size();
-                            finalPasses.removeIf(cp -> cp.getPassNumber() == passNumber);
-                            
-                            if (finalPasses.size() < beforeSize) {
-                                // Delete strategy review from DB
-                                dbManager.deleteStrategyReview(
-                                    selected.getExpert(),
-                                    selected.getSymbol(),
-                                    selected.getPeriod(),
-                                    selected.getRunTimestamp(),
-                                    selected.getPassNumber()
-                                );
-                                // Delete automatic review from DB
-                                dbManager.deleteAutomaticReview(
-                                    selected.getExpert(),
-                                    selected.getSymbol(),
-                                    selected.getPeriod(),
-                                    selected.getRunTimestamp(),
-                                    selected.getPassNumber()
-                                );
+                int deletedCount = 0;
 
+                for (Map.Entry<Integer, List<ControllingStrategy>> entry : groupedByRun.entrySet()) {
+                    int runDbId = entry.getKey();
+                    List<ControllingStrategy> strategiesToDelete = entry.getValue();
+
+                    HistoryRun run = dbManager.getRunById(runDbId);
+                    if (run != null) {
+                        Gson gson = buildGson();
+                        Map<String, Object> stateMap = gson.fromJson(run.getResultJson(), Map.class);
+                        if (stateMap != null) {
+                            String finalPassesJson = (String) stateMap.get("final_selected_passes_json");
+                            if (finalPassesJson != null && !finalPassesJson.isEmpty()) {
+                                java.lang.reflect.Type listType = new com.google.gson.reflect.TypeToken<List<CombinedPass>>(){}.getType();
+                                List<CombinedPass> finalPasses = gson.fromJson(finalPassesJson, listType);
+                                
+                                int beforeSize = finalPasses.size();
+                                Set<Integer> passesToDelete = new HashSet<>();
+                                for (ControllingStrategy s : strategiesToDelete) {
+                                    passesToDelete.add(s.getPassNumber());
+                                    
+                                    // Delete strategy review from DB
+                                    dbManager.deleteStrategyReview(
+                                        s.getExpert(),
+                                        s.getSymbol(),
+                                        s.getPeriod(),
+                                        s.getRunTimestamp(),
+                                        s.getPassNumber()
+                                    );
+                                    // Delete automatic review from DB
+                                    dbManager.deleteAutomaticReview(
+                                        s.getExpert(),
+                                        s.getSymbol(),
+                                        s.getPeriod(),
+                                        s.getRunTimestamp(),
+                                        s.getPassNumber()
+                                    );
+                                    deletedCount++;
+                                }
+
+                                finalPasses.removeIf(cp -> passesToDelete.contains(cp.getPassNumber()));
+                                
                                 if (finalPasses.isEmpty()) {
                                     // No more strategies left in this workflow run - delete the entire run
                                     dbManager.deleteRun(runDbId);
@@ -1434,7 +1631,7 @@ public class ControllingView {
                                     stateMap.put("final_selected_passes_json", gson.toJson(finalPasses));
                                     String updatedResultJson = gson.toJson(stateMap);
                                     dbManager.updateRunResultJson(runDbId, updatedResultJson);
-                                    logView.log("INFO", "Strategie Pass " + passNumber + " aus Workflow-Lauf ID " + runDbId + " gelöscht.");
+                                    logView.log("INFO", String.format("Strategie(n) %s aus Workflow-Lauf ID %d gelöscht.", passesToDelete, runDbId));
                                 }
                             }
                         }
@@ -1445,12 +1642,15 @@ public class ControllingView {
                 refreshResults();
                 clearDetails();
 
-                Alert success = new Alert(Alert.AlertType.INFORMATION, "Die Strategie wurde erfolgreich gelöscht.");
+                String successMsg = (deletedCount == 1) 
+                    ? "Die Strategie wurde erfolgreich gelöscht." 
+                    : String.format("%d Strategien wurden erfolgreich gelöscht.", deletedCount);
+                Alert success = new Alert(Alert.AlertType.INFORMATION, successMsg);
                 success.show();
 
             } catch (Exception ex) {
-                log.error("Fehler beim Löschen der Strategie", ex);
-                Alert error = new Alert(Alert.AlertType.ERROR, "Fehler beim Löschen der Strategie:\n" + ex.getMessage());
+                log.error("Fehler beim Löschen der Strategien", ex);
+                Alert error = new Alert(Alert.AlertType.ERROR, "Fehler beim Löschen der Strategien:\n" + ex.getMessage());
                 error.show();
             }
         }
@@ -1633,20 +1833,87 @@ public class ControllingView {
             return;
         }
 
-        Alert confirm = new Alert(Alert.AlertType.CONFIRMATION);
-        confirm.setTitle("Automatisches Review starten");
-        confirm.setHeaderText("Automatisches Review ausführen?");
-        confirm.setContentText(String.format("Möchten Sie das automatische Review für alle %d Strategien in der Liste starten?\n" +
-            "Für jede Strategie wird ein 1-Jahres und ein 2-Jahres Nachtest mit Tick-Simulation im Hintergrund ausgeführt.\n" +
-            "Dies kann einige Zeit in Anspruch nehmen.", tableItems.size()));
-        
-        Optional<ButtonType> result = confirm.showAndWait();
-        if (result.isPresent() && result.get() == ButtonType.OK) {
-            triggerAutomaticReviewTask();
+        List<ControllingStrategy> reviewed = new ArrayList<>();
+        List<ControllingStrategy> notReviewed = new ArrayList<>();
+        for (ControllingStrategy strategy : tableItems) {
+            boolean hasReview = dbManager.getAutomaticReview(
+                strategy.getExpert(),
+                strategy.getSymbol(),
+                strategy.getPeriod(),
+                strategy.getRunTimestamp(),
+                strategy.getPassNumber()
+            ) != null;
+            if (hasReview) {
+                reviewed.add(strategy);
+            } else {
+                notReviewed.add(strategy);
+            }
+        }
+
+        if (reviewed.isEmpty()) {
+            // Standard confirmation dialog if there are no existing reviews
+            Alert confirm = new Alert(Alert.AlertType.CONFIRMATION);
+            confirm.setTitle("Automatisches Review starten");
+            confirm.setHeaderText("Automatisches Review ausführen?");
+            confirm.setContentText(String.format("Möchten Sie das automatische Review für alle %d Strategien in der Liste starten?\n" +
+                "Für jede Strategie wird ein 1-Jahres und ein 2-Jahres Nachtest mit Tick-Simulation im Hintergrund ausgeführt.\n" +
+                "Dies kann einige Zeit in Anspruch nehmen.", tableItems.size()));
+            
+            confirm.getDialogPane().getStylesheets().add(getClass().getResource("/css/antigravity.css").toExternalForm());
+            confirm.getDialogPane().setStyle("-fx-background-color: #0b0d13;");
+            
+            Optional<ButtonType> result = confirm.showAndWait();
+            if (result.isPresent() && result.get() == ButtonType.OK) {
+                triggerAutomaticReviewTask(tableItems);
+            }
+        } else if (notReviewed.isEmpty()) {
+            // Confirmation dialog to overwrite if all strategies have reviews
+            Alert confirm = new Alert(Alert.AlertType.CONFIRMATION);
+            confirm.setTitle("Automatisches Review starten");
+            confirm.setHeaderText("Reviews erneut ausführen?");
+            confirm.setContentText(String.format("Alle %d Strategien in der Liste wurden bereits einem Review unterzogen.\n" +
+                "Möchten Sie alle Reviews erneut ausführen (überschreiben)?", tableItems.size()));
+            
+            confirm.getDialogPane().getStylesheets().add(getClass().getResource("/css/antigravity.css").toExternalForm());
+            confirm.getDialogPane().setStyle("-fx-background-color: #0b0d13;");
+            
+            Optional<ButtonType> result = confirm.showAndWait();
+            if (result.isPresent() && result.get() == ButtonType.OK) {
+                triggerAutomaticReviewTask(tableItems);
+            }
+        } else {
+            // Mixed: ask if we want to overwrite existing or only review new ones
+            Alert confirm = new Alert(Alert.AlertType.CONFIRMATION);
+            confirm.setTitle("Automatisches Review");
+            confirm.setHeaderText("Bestehende Reviews überschreiben?");
+            confirm.setContentText(String.format(
+                "In der Liste befinden sich:\n" +
+                "  • %d neue Strategien (noch kein Review)\n" +
+                "  • %d bereits reviewte Strategien\n\n" +
+                "Wie möchten Sie fortfahren?",
+                notReviewed.size(), reviewed.size()));
+            
+            ButtonType btnOverwrite = new ButtonType("Bestehende überschreiben");
+            ButtonType btnOnlyNew = new ButtonType("Nur neue reviewen");
+            ButtonType btnCancel = new ButtonType("Abbrechen", ButtonBar.ButtonData.CANCEL_CLOSE);
+            
+            confirm.getButtonTypes().setAll(btnOverwrite, btnOnlyNew, btnCancel);
+            
+            confirm.getDialogPane().getStylesheets().add(getClass().getResource("/css/antigravity.css").toExternalForm());
+            confirm.getDialogPane().setStyle("-fx-background-color: #0b0d13;");
+            
+            Optional<ButtonType> result = confirm.showAndWait();
+            if (result.isPresent()) {
+                if (result.get() == btnOverwrite) {
+                    triggerAutomaticReviewTask(tableItems);
+                } else if (result.get() == btnOnlyNew) {
+                    triggerAutomaticReviewTask(notReviewed);
+                }
+            }
         }
     }
 
-    private void triggerAutomaticReviewTask() {
+    private void triggerAutomaticReviewTask(List<ControllingStrategy> targets) {
         // UI State
         runBacktestBtn.setDisable(true);
         exportSettingsBtn.setDisable(true);
@@ -1661,9 +1928,7 @@ public class ControllingView {
         table.setDisable(true);
         progress.setProgress(0);
 
-        logView.log("INFO", "Starte automatisches Review für alle gelisteten Strategien...");
-
-        List<ControllingStrategy> targets = new ArrayList<>(tableItems);
+        logView.log("INFO", String.format("Starte automatisches Review für %d Strategie(n)...", targets.size()));
 
         Task<Void> autoReviewTask = new Task<>() {
             @Override

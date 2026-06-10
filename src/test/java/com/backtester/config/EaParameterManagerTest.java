@@ -137,6 +137,63 @@ public class EaParameterManagerTest {
     }
 
     @Test
+    public void testWriteAndReadSetFileMt4() throws IOException {
+        EaParameterManager manager = new EaParameterManager();
+        Path setFile = tempFolder.newFile("test_mt4.set").toPath();
+
+        List<EaParameter> params = new ArrayList<>();
+        EaParameter p1 = new EaParameter();
+        p1.setName("TakeProfit");
+        p1.setValue("50");
+        p1.setSection("Trading Rules");
+        p1.setOptimizeEnabled(true);
+        p1.setOptimizeStart("10");
+        p1.setOptimizeStep("10");
+        p1.setOptimizeEnd("100");
+        p1.setStringType(false);
+        params.add(p1);
+
+        EaParameter p2 = new EaParameter();
+        p2.setName("StrategyName");
+        p2.setValue("SuperTrend");
+        p2.setStringType(true);
+        params.add(p2);
+
+        // Write file with MT4 expert path (ex4 suffix)
+        manager.writeSetFile(setFile, params, "Experts\\TestEA.ex4");
+
+        // Verify that it contains numerical suffixes in the file (1, 2, 3)
+        List<String> fileLines = Files.readAllLines(setFile, java.nio.charset.StandardCharsets.UTF_16LE);
+        boolean found1 = false, found2 = false, found3 = false;
+        for (String line : fileLines) {
+            if (line.contains("TakeProfit,1=10")) found1 = true;
+            if (line.contains("TakeProfit,2=10")) found2 = true;
+            if (line.contains("TakeProfit,3=100")) found3 = true;
+        }
+        assertTrue("TakeProfit,1 not found in MT4 config file", found1);
+        assertTrue("TakeProfit,2 not found in MT4 config file", found2);
+        assertTrue("TakeProfit,3 not found in MT4 config file", found3);
+
+        // Read file back and check parsed optimization ranges
+        List<EaParameter> readParams = manager.readSetFile(setFile);
+        assertEquals(2, readParams.size());
+
+        EaParameter r1 = readParams.get(0);
+        assertEquals("TakeProfit", r1.getName());
+        assertEquals("50", r1.getValue());
+        assertTrue(r1.isOptimizeEnabled());
+        assertEquals("10", r1.getOptimizeStart());
+        assertEquals("10", r1.getOptimizeStep());
+        assertEquals("100", r1.getOptimizeEnd());
+        assertFalse(r1.isStringType());
+
+        EaParameter r2 = readParams.get(1);
+        assertEquals("StrategyName", r2.getName());
+        assertEquals("SuperTrend", r2.getValue());
+        assertTrue(r2.isStringType());
+    }
+
+    @Test
     public void testCustomParametersLifecycle() {
         EaParameterManager manager = new EaParameterManager();
         String expertPath = "Experts\\MyAdvisors\\TestBot.ex5";
@@ -244,6 +301,47 @@ public class EaParameterManagerTest {
     }
 
     @Test
+    public void testReadIniFileWithBlocks() throws IOException {
+        EaParameterManager manager = new EaParameterManager();
+        Path iniFile = tempFolder.newFile("test_blocks.ini").toPath();
+
+        List<String> lines = new ArrayList<>();
+        lines.add("<common>");
+        lines.add("deposit=10000");
+        lines.add("currency=USD");
+        lines.add("</common>");
+        lines.add("<inputs>");
+        lines.add("Lots=0.1");
+        lines.add("Lots,F=1");
+        lines.add("Lots,1=0.01");
+        lines.add("Lots,2=0.01");
+        lines.add("Lots,3=0.5");
+        lines.add("Password=secret");
+        lines.add("</inputs>");
+        lines.add("<limits>");
+        lines.add("balance=200");
+        lines.add("</limits>");
+
+        Files.write(iniFile, lines, java.nio.charset.StandardCharsets.UTF_8);
+
+        List<EaParameter> parsed = manager.readSetFile(iniFile);
+        // Should only contain Lots and Password from the <inputs> block
+        assertEquals(2, parsed.size());
+
+        EaParameter p1 = parsed.get(0);
+        assertEquals("Lots", p1.getName());
+        assertEquals("0.1", p1.getValue());
+        assertTrue(p1.isOptimizeEnabled());
+        assertEquals("0.01", p1.getOptimizeStart());
+        assertEquals("0.01", p1.getOptimizeStep());
+        assertEquals("0.5", p1.getOptimizeEnd());
+
+        EaParameter p2 = parsed.get(1);
+        assertEquals("Password", p2.getName());
+        assertEquals("secret", p2.getValue());
+    }
+
+    @Test
     public void testExtractEaBaseNameEdgeCases() {
         assertEquals("", EaParameterManager.extractEaBaseName("Experts/"));
         assertEquals("", EaParameterManager.extractEaBaseName("Experts\\"));
@@ -307,5 +405,21 @@ public class EaParameterManagerTest {
     public void testCountModifiedParametersWithNonexistentExpert() {
         EaParameterManager manager = new EaParameterManager();
         assertEquals(0, manager.countModifiedParameters("NonExistentBot"));
+    }
+
+    @Test
+    public void testApplyTranslations() {
+        EaParameterManager manager = new EaParameterManager();
+        String expertPath = "Experts\\ToTheMoon.ex5";
+        
+        List<EaParameter> params = new ArrayList<>();
+        params.add(new EaParameter("Inp_Maximo_Ativos_Robo", "5"));
+        params.add(new EaParameter("Inp_Lucro_Alvo", "100"));
+        
+        manager.applyTranslations(expertPath, params);
+        
+        // Verify display names are exactly the raw names
+        assertEquals("Inp_Maximo_Ativos_Robo", params.get(0).getDisplayName());
+        assertEquals("Inp_Lucro_Alvo", params.get(1).getDisplayName());
     }
 }
