@@ -138,8 +138,18 @@ public class EaParameterManager {
      * When custom config exists, it merges default values for the "default" column.
      */
     public List<EaParameter> getEffectiveParameters(String expertPath) {
-        List<EaParameter> defaults = loadDefaultParameters(expertPath);
         List<EaParameter> custom = loadCustomParameters(expertPath);
+        return getEffectiveParameters(expertPath, custom);
+    }
+
+    /**
+     * Gets the effective parameters for an EA, merging a custom list with defaults.
+     * Priority: Custom list > Default config > null
+     * 
+     * When custom list exists, it merges default values for the "default" column and preserves missing ones.
+     */
+    public List<EaParameter> getEffectiveParameters(String expertPath, List<EaParameter> custom) {
+        List<EaParameter> defaults = loadDefaultParameters(expertPath);
 
         List<EaParameter> result = null;
         if (custom != null && defaults != null) {
