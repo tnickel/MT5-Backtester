@@ -301,6 +301,60 @@ public class EaParameterManagerTest {
     }
 
     @Test
+    public void testEffectiveParametersPreservesDefaultsWhenCustomMissing() throws Exception {
+        AppConfig config = AppConfig.getInstance();
+        Path tempMt5Dir = tempFolder.newFolder("MockMT5_Missing").toPath();
+        Path mockTerminal = tempMt5Dir.resolve("terminal64.exe");
+        Files.createFile(mockTerminal);
+        config.setMt5TerminalPath(mockTerminal.toAbsolutePath().toString());
+
+        EaParameterManager manager = new EaParameterManager();
+        String expertPath = "MyExpertMissingTest";
+
+        // Write a mock default .set file with two parameters
+        Path defaultTesterDir = tempMt5Dir.resolve("MQL5").resolve("Profiles").resolve("Tester");
+        Files.createDirectories(defaultTesterDir);
+        Path defaultSetFile = defaultTesterDir.resolve("MyExpertMissingTest.set");
+
+        List<EaParameter> defaultParams = new ArrayList<>();
+        EaParameter pDefault1 = new EaParameter("TakeProfit", "50");
+        pDefault1.setStringType(true);
+        defaultParams.add(pDefault1);
+
+        EaParameter pDefault2 = new EaParameter("StopLoss", "100");
+        pDefault2.setStringType(true);
+        defaultParams.add(pDefault2);
+
+        manager.writeSetFile(defaultSetFile, defaultParams, expertPath);
+
+        // Now save a custom parameters file with ONLY TakeProfit (missing StopLoss)
+        List<EaParameter> customParams = new ArrayList<>();
+        EaParameter pCustom = new EaParameter("TakeProfit", "70");
+        pCustom.setStringType(true);
+        customParams.add(pCustom);
+        manager.saveCustomParameters(expertPath, customParams);
+
+        // Get effective parameters
+        List<EaParameter> effective = manager.getEffectiveParameters(expertPath);
+        assertNotNull(effective);
+        assertEquals(2, effective.size());
+
+        // Check TakeProfit
+        EaParameter ep1 = effective.get(0);
+        assertEquals("TakeProfit", ep1.getName());
+        assertEquals("70", ep1.getValue());
+        assertEquals("50", ep1.getDefaultValue());
+        assertTrue(ep1.isModified());
+
+        // Check StopLoss (preserved default)
+        EaParameter ep2 = effective.get(1);
+        assertEquals("StopLoss", ep2.getName());
+        assertEquals("100", ep2.getValue());
+        assertEquals("100", ep2.getDefaultValue());
+        assertFalse(ep2.isModified());
+    }
+
+    @Test
     public void testReadIniFileWithBlocks() throws IOException {
         EaParameterManager manager = new EaParameterManager();
         Path iniFile = tempFolder.newFile("test_blocks.ini").toPath();
