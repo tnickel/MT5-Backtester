@@ -846,7 +846,8 @@ public class WorkflowConfigDialogs {
                 List<EaParameter> pList = eaParamManager.readSetFile(file.toPath());
                 if (pList != null && !pList.isEmpty()) {
                     String expertPath = expertField.getText().trim();
-                    List<EaParameter> merged = eaParamManager.getEffectiveParameters(expertPath, pList);
+                    List<EaParameter> existing = new ArrayList<>(paramTable.getItems());
+                    List<EaParameter> merged = eaParamManager.mergeLoadedWithExisting(pList, existing);
                     eaParamManager.applyTranslations(expertPath, merged);
                     paramTable.getItems().setAll(merged);
                 }
