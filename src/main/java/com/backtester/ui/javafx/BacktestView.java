@@ -877,8 +877,9 @@ public class BacktestView {
             java.util.List<com.backtester.config.EaParameter> params = eaParamManager.readSetFile(file.toPath());
             if (params != null && !params.isEmpty()) {
                 String expertPath = expertField.getText().trim();
-                eaParamManager.applyTranslations(expertPath, params);
-                paramTable.getItems().setAll(params);
+                java.util.List<com.backtester.config.EaParameter> merged = eaParamManager.getEffectiveParameters(expertPath, params);
+                eaParamManager.applyTranslations(expertPath, merged);
+                paramTable.getItems().setAll(merged);
                 logView.log("INFO", "Loaded parameters from " + file.getName());
             } else {
                 logView.log("ERROR", "Failed to load parameters or file is empty.");
