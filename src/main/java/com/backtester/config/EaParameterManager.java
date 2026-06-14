@@ -214,6 +214,54 @@ public class EaParameterManager {
     }
 
     /**
+     * Merges parameters loaded from a .set file with existing parameters already shown in the UI.
+     * Parameters from the loaded file update existing ones (by name), but existing parameters
+     * not present in the loaded file are preserved with their current values.
+     * This prevents new parameters from disappearing when an older .set file is loaded.
+     *
+     * @param loadedParams   parameters parsed from the loaded .set file
+     * @param existingParams parameters currently shown in the UI table
+     * @return merged list: loaded values applied on top of existing, with missing ones preserved
+     */
+    public List<EaParameter> mergeLoadedWithExisting(List<EaParameter> loadedParams, List<EaParameter> existingParams) {
+        if (loadedParams == null || loadedParams.isEmpty()) return existingParams;
+        if (existingParams == null || existingParams.isEmpty()) return loadedParams;
+
+        Map<String, EaParameter> loadedMap = new LinkedHashMap<>();
+        for (EaParameter lp : loadedParams) {
+            loadedMap.put(lp.getName(), lp);
+        }
+
+        List<EaParameter> merged = new ArrayList<>();
+        Set<String> seen = new LinkedHashSet<>();
+
+        // Walk through existing params in order; update values from loaded file if available
+        for (EaParameter ep : existingParams) {
+            EaParameter lp = loadedMap.get(ep.getName());
+            if (lp != null) {
+                // Update existing param with loaded values
+                ep.setValue(lp.getValue());
+                if (lp.getOptimizeStart() != null) ep.setOptimizeStart(lp.getOptimizeStart());
+                if (lp.getOptimizeStep() != null) ep.setOptimizeStep(lp.getOptimizeStep());
+                if (lp.getOptimizeEnd() != null) ep.setOptimizeEnd(lp.getOptimizeEnd());
+                ep.setOptimizeEnabled(lp.isOptimizeEnabled());
+            }
+            // Always keep the existing parameter
+            merged.add(ep);
+            seen.add(ep.getName());
+        }
+
+        // Append any parameters from the loaded file that were NOT in the existing list
+        for (EaParameter lp : loadedParams) {
+            if (!seen.contains(lp.getName())) {
+                merged.add(lp);
+            }
+        }
+
+        return merged;
+    }
+
+    /**
      * Saves custom parameters for an EA to config/ea_params/.
      */
     public void saveCustomParameters(String expertPath, List<EaParameter> params) {
