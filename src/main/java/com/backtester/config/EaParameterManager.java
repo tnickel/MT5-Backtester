@@ -143,18 +143,38 @@ public class EaParameterManager {
 
         List<EaParameter> result = null;
         if (custom != null && defaults != null) {
-            // Merge: use custom values but keep default values for comparison
-            Map<String, EaParameter> defaultMap = new LinkedHashMap<>();
-            for (EaParameter dp : defaults) {
-                defaultMap.put(dp.getName(), dp);
-            }
+            // Merge: use custom values but keep default values for comparison.
+            // Also ensure default parameters missing from custom list are preserved.
+            Map<String, EaParameter> customMap = new LinkedHashMap<>();
             for (EaParameter cp : custom) {
-                EaParameter dp = defaultMap.get(cp.getName());
-                if (dp != null) {
+                customMap.put(cp.getName(), cp);
+            }
+            List<EaParameter> merged = new ArrayList<>();
+            for (EaParameter dp : defaults) {
+                EaParameter cp = customMap.remove(dp.getName());
+                if (cp != null) {
                     cp.setDefaultValue(dp.getValue());
+                    merged.add(cp);
+                } else {
+                    EaParameter cpMissing = new EaParameter();
+                    cpMissing.setName(dp.getName());
+                    cpMissing.setValue(dp.getValue());
+                    cpMissing.setDefaultValue(dp.getValue());
+                    cpMissing.setSection(dp.getSection());
+                    cpMissing.setOptimizeStart(dp.getOptimizeStart());
+                    cpMissing.setOptimizeStep(dp.getOptimizeStep());
+                    cpMissing.setOptimizeEnd(dp.getOptimizeEnd());
+                    cpMissing.setOptimizeEnabled(dp.isOptimizeEnabled());
+                    cpMissing.setStringType(dp.isStringType());
+                    cpMissing.setRawLine(dp.getRawLine());
+                    merged.add(cpMissing);
                 }
             }
-            result = custom;
+            // Append any custom parameters that were not in defaults
+            for (EaParameter cp : customMap.values()) {
+                merged.add(cp);
+            }
+            result = merged;
         } else if (custom != null) {
             result = custom;
         } else if (defaults != null) {
