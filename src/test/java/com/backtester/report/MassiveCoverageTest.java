@@ -641,10 +641,10 @@ public class MassiveCoverageTest {
     @Test
     public void test081_scoreWeightsDefaultsTotal() {
         OptimizationResult.ScoreWeights w = OptimizationResult.ScoreWeights.defaults();
-        double total = w.wBtProfit + w.wFwProfit + w.wConsistency + w.wRisk + 
-                       w.wEquityConsist + w.wSampleSize + w.wSymmetry + 
-                       w.wTailRisk + w.wFwTrades + w.wRecovery;
-        assertEquals(150.0, total, 0.001);
+        double total = w.wBtProfit + w.wFwProfit + w.wConsistency + w.wRisk +
+                       w.wEquityConsist + w.wSampleSize + w.wFwTrades + w.wRecovery;
+        assertEquals(140.0, total, 0.001);
+        assertEquals(total, w.total(), 0.001);
     }
 
     @Test
@@ -656,8 +656,6 @@ public class MassiveCoverageTest {
         assertEquals(10.0, w.wRisk, 0.001);
         assertEquals(10.0, w.wEquityConsist, 0.001);
         assertEquals(25.0, w.wSampleSize, 0.001);
-        assertEquals(5.0, w.wSymmetry, 0.001);
-        assertEquals(5.0, w.wTailRisk, 0.001);
         assertEquals(30.0, w.wFwTrades, 0.001);
         assertEquals(25.0, w.wRecovery, 0.001);
     }
@@ -727,7 +725,7 @@ public class MassiveCoverageTest {
         w.wFwTrades = 100.0; // Focus only on FwTrades
         // Make sure all other weights are 0 so we isolate FwTrades
         w.wBtProfit = 0; w.wFwProfit = 0; w.wConsistency = 0; w.wRisk = 0;
-        w.wEquityConsist = 0; w.wSampleSize = 0; w.wSymmetry = 0; w.wTailRisk = 0; w.wRecovery = 0;
+        w.wEquityConsist = 0; w.wSampleSize = 0; w.wRecovery = 0;
 
         List<OptimizationResult.CombinedPass> list = r.buildCombinedPasses(true, w);
         assertEquals(1, list.size());
@@ -740,7 +738,7 @@ public class MassiveCoverageTest {
         OptimizationResult.Pass bt = new OptimizationResult.Pass();
         bt.setTotalTrades(200);
         bt.setProfit(100.0);
-        
+
         OptimizationResult.Pass fw = new OptimizationResult.Pass();
         fw.setTotalTrades(100); // Low trade count
         fw.setProfit(100.0);
@@ -752,7 +750,7 @@ public class MassiveCoverageTest {
         OptimizationResult.ScoreWeights w = new OptimizationResult.ScoreWeights();
         w.wFwTrades = 100.0;
         w.wBtProfit = 0; w.wFwProfit = 0; w.wConsistency = 0; w.wRisk = 0;
-        w.wEquityConsist = 0; w.wSampleSize = 0; w.wSymmetry = 0; w.wTailRisk = 0; w.wRecovery = 0;
+        w.wEquityConsist = 0; w.wSampleSize = 0; w.wRecovery = 0;
 
         List<OptimizationResult.CombinedPass> list = r.buildCombinedPasses(true, w);
         assertEquals(1, list.size());
@@ -777,7 +775,7 @@ public class MassiveCoverageTest {
         OptimizationResult.ScoreWeights w = new OptimizationResult.ScoreWeights();
         w.wConsistency = 100.0;
         w.wBtProfit = 0; w.wFwProfit = 0; w.wRisk = 0; w.wEquityConsist = 0;
-        w.wSampleSize = 0; w.wSymmetry = 0; w.wTailRisk = 0; w.wFwTrades = 0; w.wRecovery = 0;
+        w.wSampleSize = 0; w.wFwTrades = 0; w.wRecovery = 0;
 
         List<OptimizationResult.CombinedPass> list = r.buildCombinedPasses(true, w);
         assertEquals(1, list.size());
@@ -802,7 +800,7 @@ public class MassiveCoverageTest {
         OptimizationResult.ScoreWeights w = new OptimizationResult.ScoreWeights();
         w.wConsistency = 100.0;
         w.wBtProfit = 0; w.wFwProfit = 0; w.wRisk = 0; w.wEquityConsist = 0;
-        w.wSampleSize = 0; w.wSymmetry = 0; w.wTailRisk = 0; w.wFwTrades = 0; w.wRecovery = 0;
+        w.wSampleSize = 0; w.wFwTrades = 0; w.wRecovery = 0;
 
         List<OptimizationResult.CombinedPass> list = r.buildCombinedPasses(true, w);
         assertEquals(1, list.size());
@@ -823,7 +821,7 @@ public class MassiveCoverageTest {
         OptimizationResult.ScoreWeights w = new OptimizationResult.ScoreWeights();
         w.wBtProfit = 100.0;
         w.wFwProfit = 0; w.wConsistency = 0; w.wRisk = 0; w.wEquityConsist = 0;
-        w.wSampleSize = 0; w.wSymmetry = 0; w.wTailRisk = 0; w.wFwTrades = 0; w.wRecovery = 0;
+        w.wSampleSize = 0; w.wFwTrades = 0; w.wRecovery = 0;
 
         List<OptimizationResult.CombinedPass> list = r.buildCombinedPasses(false, w);
         assertEquals(1, list.size());
@@ -844,7 +842,7 @@ public class MassiveCoverageTest {
         OptimizationResult.ScoreWeights w = new OptimizationResult.ScoreWeights();
         w.wBtProfit = 100.0;
         w.wFwProfit = 0; w.wConsistency = 0; w.wRisk = 0; w.wEquityConsist = 0;
-        w.wSampleSize = 0; w.wSymmetry = 0; w.wTailRisk = 0; w.wFwTrades = 0; w.wRecovery = 0;
+        w.wSampleSize = 0; w.wFwTrades = 0; w.wRecovery = 0;
 
         List<OptimizationResult.CombinedPass> list = r.buildCombinedPasses(false, w);
         assertEquals(1, list.size());
@@ -857,7 +855,7 @@ public class MassiveCoverageTest {
         OptimizationResult.ScoreWeights w = new OptimizationResult.ScoreWeights();
         w.wBtProfit = 100.0;
         w.wFwProfit = 0; w.wConsistency = 0; w.wRisk = 0; w.wEquityConsist = 0;
-        w.wSampleSize = 0; w.wSymmetry = 0; w.wTailRisk = 0; w.wFwTrades = 0; w.wRecovery = 0;
+        w.wSampleSize = 0; w.wFwTrades = 0; w.wRecovery = 0;
         assertEquals(100.0, w.total(), 0.001);
     }
 
@@ -865,7 +863,7 @@ public class MassiveCoverageTest {
     public void test092_scoreWeightsRecoveryOnly() {
         OptimizationResult.ScoreWeights w = new OptimizationResult.ScoreWeights();
         w.wBtProfit = 0; w.wFwProfit = 0; w.wConsistency = 0; w.wRisk = 0;
-        w.wEquityConsist = 0; w.wSampleSize = 0; w.wSymmetry = 0; w.wTailRisk = 0; w.wFwTrades = 0;
+        w.wEquityConsist = 0; w.wSampleSize = 0; w.wFwTrades = 0;
         w.wRecovery = 100.0;
         assertEquals(100.0, w.total(), 0.001);
     }
@@ -874,7 +872,7 @@ public class MassiveCoverageTest {
     public void test093_scoreWeightsFwTradesOnly() {
         OptimizationResult.ScoreWeights w = new OptimizationResult.ScoreWeights();
         w.wBtProfit = 0; w.wFwProfit = 0; w.wConsistency = 0; w.wRisk = 0;
-        w.wEquityConsist = 0; w.wSampleSize = 0; w.wSymmetry = 0; w.wTailRisk = 0;
+        w.wEquityConsist = 0; w.wSampleSize = 0;
         w.wFwTrades = 100.0;
         w.wRecovery = 0;
         assertEquals(100.0, w.total(), 0.001);
@@ -891,7 +889,7 @@ public class MassiveCoverageTest {
         OptimizationResult.ScoreWeights w = new OptimizationResult.ScoreWeights();
         w.wBtProfit = 100.0;
         w.wFwProfit = 0; w.wConsistency = 0; w.wRisk = 0; w.wEquityConsist = 0;
-        w.wSampleSize = 0; w.wSymmetry = 0; w.wTailRisk = 0; w.wFwTrades = 0; w.wRecovery = 0;
+        w.wSampleSize = 0; w.wFwTrades = 0; w.wRecovery = 0;
 
         List<OptimizationResult.CombinedPass> list = r.buildCombinedPasses(false, w);
         assertEquals(1, list.size());
@@ -910,7 +908,7 @@ public class MassiveCoverageTest {
         OptimizationResult.ScoreWeights w = new OptimizationResult.ScoreWeights();
         w.wBtProfit = 100.0;
         w.wFwProfit = 0; w.wConsistency = 0; w.wRisk = 0; w.wEquityConsist = 0;
-        w.wSampleSize = 0; w.wSymmetry = 0; w.wTailRisk = 0; w.wFwTrades = 0; w.wRecovery = 0;
+        w.wSampleSize = 0; w.wFwTrades = 0; w.wRecovery = 0;
 
         List<OptimizationResult.CombinedPass> list = r.buildCombinedPasses(false, w);
         assertEquals(1, list.size());
@@ -927,9 +925,7 @@ public class MassiveCoverageTest {
         w.wRisk = 20.0;
         w.wEquityConsist = 8.0;
         w.wSampleSize = 12.0;
-        w.wSymmetry = 7.0;
-        w.wTailRisk = 3.0;
-        w.wFwTrades = 11.0;
+        w.wFwTrades = 21.0;
         w.wRecovery = 9.0;
 
         assertEquals(10.0, w.wBtProfit, 0.001);
@@ -938,70 +934,88 @@ public class MassiveCoverageTest {
         assertEquals(20.0, w.wRisk, 0.001);
         assertEquals(8.0, w.wEquityConsist, 0.001);
         assertEquals(12.0, w.wSampleSize, 0.001);
-        assertEquals(7.0, w.wSymmetry, 0.001);
-        assertEquals(3.0, w.wTailRisk, 0.001);
-        assertEquals(11.0, w.wFwTrades, 0.001);
+        assertEquals(21.0, w.wFwTrades, 0.001);
         assertEquals(9.0, w.wRecovery, 0.001);
         assertEquals(100.0, w.total(), 0.001);
     }
 
     @Test
-    public void test097_scoreSymmetryWeights() {
-        OptimizationResult.Pass bt = new OptimizationResult.Pass();
-        bt.setTotalTrades(100);
-        bt.setProfit(100.0);
+    public void test097_scoreSharpeDeterministicAcrossPassNumbers() {
+        // Anti-Curvefitting-Invariante: identische Kennzahlen müssen unabhängig
+        // von der Pass-Nummer denselben Score ergeben. (Die frühere synthetische
+        // "Equity-Konsistenz" hing per RNG-Seed an der Pass-Nummer.)
+        OptimizationResult.Pass bt1 = new OptimizationResult.Pass();
+        bt1.setPassNumber(1);
+        bt1.setProfit(500.0);
+        bt1.setTotalTrades(200);
+        bt1.setProfitFactor(1.8);
+        bt1.setSharpeRatio(1.1);
+        bt1.setRecoveryFactor(3.0);
+
+        OptimizationResult.Pass bt2 = new OptimizationResult.Pass();
+        bt2.setPassNumber(99999); // andere Pass-Nummer, sonst identisch
+        bt2.setProfit(500.0);
+        bt2.setTotalTrades(200);
+        bt2.setProfitFactor(1.8);
+        bt2.setSharpeRatio(1.1);
+        bt2.setRecoveryFactor(3.0);
 
         OptimizationResult r = new OptimizationResult();
-        r.addPass(bt);
+        r.addPass(bt1);
+        r.addPass(bt2);
 
-        OptimizationResult.ScoreWeights w = new OptimizationResult.ScoreWeights();
-        w.wSymmetry = 100.0;
-        w.wBtProfit = 0; w.wFwProfit = 0; w.wConsistency = 0; w.wRisk = 0;
-        w.wEquityConsist = 0; w.wSampleSize = 0; w.wTailRisk = 0; w.wFwTrades = 0; w.wRecovery = 0;
-
-        List<OptimizationResult.CombinedPass> list = r.buildCombinedPasses(false, w);
-        assertEquals(1, list.size());
-        OptimizationResult.CombinedPass cp = list.get(0);
-        assertTrue(cp.getScore() > 0.0);
+        List<OptimizationResult.CombinedPass> list = r.buildCombinedPasses(false);
+        assertEquals(2, list.size());
+        assertEquals(list.get(0).getScore(), list.get(1).getScore(), 0.0001);
     }
 
     @Test
-    public void test098_scoreTailRiskWeights() {
-        OptimizationResult.Pass bt = new OptimizationResult.Pass();
-        bt.setExpectedPayoff(10.0);
-        bt.setProfit(100.0);
-
-        OptimizationResult r = new OptimizationResult();
-        r.addPass(bt);
-
+    public void test098_scoreSharpeMonotonic() {
+        // Höhere (echte) Sharpe Ratio muss bei isolierter Sharpe-Säule einen
+        // höheren Score ergeben.
         OptimizationResult.ScoreWeights w = new OptimizationResult.ScoreWeights();
-        w.wTailRisk = 100.0;
+        w.wEquityConsist = 100.0;
         w.wBtProfit = 0; w.wFwProfit = 0; w.wConsistency = 0; w.wRisk = 0;
-        w.wEquityConsist = 0; w.wSampleSize = 0; w.wSymmetry = 0; w.wFwTrades = 0; w.wRecovery = 0;
+        w.wSampleSize = 0; w.wFwTrades = 0; w.wRecovery = 0;
 
-        List<OptimizationResult.CombinedPass> list = r.buildCombinedPasses(false, w);
-        assertEquals(1, list.size());
-        OptimizationResult.CombinedPass cp = list.get(0);
-        assertTrue(cp.getScore() > 0.0);
+        OptimizationResult.Pass low = new OptimizationResult.Pass();
+        low.setPassNumber(1);
+        low.setProfit(100.0);
+        low.setSharpeRatio(0.2);
+
+        OptimizationResult rLow = new OptimizationResult();
+        rLow.addPass(low);
+        double scoreLow = rLow.buildCombinedPasses(false, w).get(0).getScore();
+
+        OptimizationResult.Pass high = new OptimizationResult.Pass();
+        high.setPassNumber(1);
+        high.setProfit(100.0);
+        high.setSharpeRatio(1.5);
+
+        OptimizationResult rHigh = new OptimizationResult();
+        rHigh.addPass(high);
+        double scoreHigh = rHigh.buildCombinedPasses(false, w).get(0).getScore();
+
+        assertTrue("Score mit Sharpe 1.5 muss höher sein als mit Sharpe 0.2", scoreHigh > scoreLow);
     }
 
     @Test
     public void test099_scoreEquityConsistency() {
         OptimizationResult.Pass bt = new OptimizationResult.Pass();
         bt.setProfit(100.0);
-        
+
         OptimizationResult r = new OptimizationResult();
         r.addPass(bt);
 
         OptimizationResult.ScoreWeights w = new OptimizationResult.ScoreWeights();
         w.wEquityConsist = 100.0;
         w.wBtProfit = 0; w.wFwProfit = 0; w.wConsistency = 0; w.wRisk = 0;
-        w.wSampleSize = 0; w.wSymmetry = 0; w.wTailRisk = 0; w.wFwTrades = 0; w.wRecovery = 0;
+        w.wSampleSize = 0; w.wFwTrades = 0; w.wRecovery = 0;
 
         List<OptimizationResult.CombinedPass> list = r.buildCombinedPasses(false, w);
         assertEquals(1, list.size());
         OptimizationResult.CombinedPass cp = list.get(0);
-        // Default equity consistency score when no equity history is present should be 0.0 or neutral
+        // Ohne gemessene Sharpe Ratio (0.0) trägt die Säule nichts bei
         assertEquals(0.0, cp.getScore(), 0.001);
     }
 

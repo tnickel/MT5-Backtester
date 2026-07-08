@@ -399,8 +399,8 @@ public class StrategyEvaluatorDialog extends Stage {
         consistCol.setPrefWidth(95);
 
         TableColumn<CombinedPass, String> robScoreCol = new TableColumn<>();
-        robScoreCol.setGraphic(DocHelper.createHeaderWithTooltip("Rob. Scorecard", 
-            "Robustness Scorecard (0-100):\nErgebnis des Monte-Carlo-Stresstests und systematischen Parameter-Shifting. Simuliert Rauschen (Slippage, Spread, Execution) und bewertet die Geradlinigkeit (R²-Stabilität) der Equity-Kurve."));
+        robScoreCol.setGraphic(DocHelper.createHeaderWithTooltip("Rob. Scorecard",
+            "Robustness Scorecard (0-100):\nGewichteter Score aus 8 Säulen echter MT5-Messdaten: Profitabilität (BT+FW), FW/BT-Konsistenz, Risiko-Verhältnis, Sharpe Ratio, Stichprobengröße, FW-Trades und Erholungsfaktor."));
         robScoreCol.setCellValueFactory(c -> {
             String fromDateStr = "Unbekannt";
             String toDateStr = "Unbekannt";
@@ -842,7 +842,7 @@ public class StrategyEvaluatorDialog extends Stage {
             "• Der normale 'Score' in den Tabellen basiert auf Ihren individuellen Gewichtungen (im Hauptfenster konfigurierbar unter 'Score-Gewichtung...'). " +
             "Wichtig: Dieser Score bewertet ausschließlich die endgültigen Kennzahlen am Schluss und ignoriert den eigentlichen Verlauf der Kennlinie.\n\n" +
             "• Der 'Robustness-Index (RI)' ist ein mathematisch fixierter Standard-Benchmark, der Ihnen eine objektive, einheitliche Bewertung Ihrer EAs unabhängig von Ihren gewählten UI-Gewichtungen erlaubt. " +
-            "Er baut auf dem Robustness Score auf und betrachtet somit indirekt auch den Verlauf der Equity-Kurve (Kennlinie) per R²-Stabilität."
+            "Er baut auf dem Robustness Score auf und bewertet mit festen Formeln Recovery-Faktor, Trade-Anzahl und Forward-Konsistenz."
         );
         scoreComparisonText.setWrapText(true);
         scoreComparisonText.setTextFill(Color.web("#e6e9f0"));
@@ -930,24 +930,24 @@ public class StrategyEvaluatorDialog extends Stage {
         Label comparisonNote = new Label(
             "⚠️ WICHTIGER UNTERSCHIED ZUM GESAMT-SCORE:\n" +
             "Der normale Gesamt-Score bewertet ausschließlich die endgültigen Kennzahlen am Schluss (Gewinn, Drawdown, etc.). " +
-            "Nur der Robustness Score analysiert den tatsächlichen Verlauf der Kennlinie (Equity-Kurve) per linearer Regression (R²-Stabilität), " +
-            "um Glückstreffer oder instabile Verläufe aufzudecken."
+            "Der Robustness Score gewichtet zusätzlich Konsistenz (FW/BT), Sharpe Ratio und Stichprobengröße, " +
+            "um Glückstreffer oder instabile Strategien aufzudecken."
         );
         comparisonNote.setWrapText(true);
         comparisonNote.setTextFill(Color.web("#ffd740"));
         comparisonNote.setFont(javafx.scene.text.Font.font("Segoe UI", javafx.scene.text.FontWeight.BOLD, 12));
 
-        Label pillarsTitle = new Label("Die 6 Säulen der Robustheit:");
+        Label pillarsTitle = new Label("Die Säulen der Robustheit (nur echte Messdaten):");
         pillarsTitle.setFont(javafx.scene.text.Font.font("Segoe UI", javafx.scene.text.FontWeight.BOLD, 13));
         pillarsTitle.setTextFill(Color.web("#00e5ff"));
 
         Label pillarsText = new Label(
-            "• 1. Profitabilität (Profitability): Bewertet Profit, Profit Factor und Sharpe Ratio.\n" +
-            "• 2. Risiko-Verhältnis (Risk/Reward): Bewertet Calmar Ratio und Recovery Factor.\n" +
-            "• 3. Stabilität (Stability R²): Misst die Linearität des Kapitalwachstums der Equity-Kurve.\n" +
-            "• 4. Stichprobengröße (Sample Size): Bewertet die Anzahl der ausgeführten Trades.\n" +
-            "• 5. Symmetrie (Symmetry): Bewertet das Verhältnis von Long- zu Short-Trades.\n" +
-            "• 6. Tail-Risk: Bewertet das Risiko extrem großer Verlust-Trades."
+            "• 1. Profitabilität (BT + FW): Bewertet ROI und Profit Factor in beiden Phasen.\n" +
+            "• 2. Konsistenz (FW/BT): Reproduzierbarkeit der Ergebnisse im Forward-Test.\n" +
+            "• 3. Risiko-Verhältnis (Risk/Reward): Bewertet Calmar Ratio und Recovery Factor.\n" +
+            "• 4. Sharpe Ratio: Von MT5 gemessene Ertragsgleichmäßigkeit (BT + FW).\n" +
+            "• 5. Stichprobengröße (Sample Size): Trades und reale Testjahre.\n" +
+            "• 6. FW Trade Count: Statistische Belastbarkeit der Forward-Phase."
         );
         pillarsText.setWrapText(true);
         pillarsText.setTextFill(Color.web("#e6e9f0"));
@@ -1198,7 +1198,7 @@ public class StrategyEvaluatorDialog extends Stage {
             "  - 2. Sekundäres Kriterium: Robustness Score als Tie-Breaker\n" +
             "    Haben zwei Strategien exakt denselben RI (z. B. wenn mehrere EAs bei einem RI von 0.25 gleichauf liegen), entscheidet der Robustness Score. Eine Strategie mit einem Score von 67 wird somit bevorzugt vor einer Strategie mit 66 ausgewählt.\n\n" +
             "• Wichtiger Hinweis:\n" +
-            "  Der normale Gesamt-Score bewertet ausschließlich die endgültigen Kennzahlen am Schluss (Gewinn, Drawdown, etc.) und ignoriert den Verlauf. Nur der Robustness Score (sowie der RI, der darauf aufbaut) analysiert den Verlauf der Kennlinie (Equity-Kurve) per linearer Regression (R²-Stabilität)."
+            "  Der normale Gesamt-Score bewertet ausschließlich die endgültigen Kennzahlen am Schluss (Gewinn, Drawdown, etc.). Der Robustness Score und der RI gewichten zusätzlich Forward-Konsistenz, Sharpe Ratio und Stichprobengröße, um instabile Strategien abzuwerten. Den tatsächlichen Kennlinien-VERLAUF bewertet die Sensitivitätsanalyse (Schritt 4) mit der KI-Auswertung (Schritt 5)."
         );
         logicText.setWrapText(true);
         logicText.setTextFill(Color.web("#e6e9f0"));

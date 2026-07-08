@@ -4,9 +4,11 @@ import com.backtester.config.AppConfig;
 import com.backtester.config.EaParameter;
 import com.backtester.config.EaParameterManager;
 import com.backtester.database.DatabaseManager;
+import com.backtester.report.BacktestResult;
 import com.backtester.report.OptimizationResult;
 import com.backtester.report.OptimizationResult.CombinedPass;
 import com.backtester.report.SensitivityResult;
+import com.backtester.report.ValidationResult;
 import com.backtester.report.PdfReportGenerator;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -74,9 +76,27 @@ public class WorkflowEngine {
     private List<CombinedPass> finalSelectedPasses = new ArrayList<>();
     private int lastActiveStep = 0;
 
+    /**
+     * True when the Step-6 KI gate (KI score >= 30) filtered out ALL candidates
+     * and the fallback re-admitted them. The exported portfolio is then NOT
+     * validated by the KI gate — exports are marked accordingly.
+     */
+    private boolean kiGateBypassed = false;
+
+    // Step 7 State (Out-of-Sample Validation on untouched data)
+    /** Start of the validation window; null = derived (toDate + 1 day). */
+    private LocalDate validationFromDate = null;
+    /** End of the validation window; null = derived (today). */
+    private LocalDate validationToDate = null;
+    private List<ValidationResult> validationResults = new ArrayList<>();
+
+    /** Directory of the most recent portfolio export (used to attach the validation report). */
+    private String lastExportDirectory = "";
+
     // Pipeline Runners
     private OptimizationRunner currentOptRunner;
     private SensitivityRunner currentSensitivityRunner;
+    private BacktestRunner currentValidationRunner;
 
     public WorkflowEngine(AppConfig config) {
         this.config = config;
@@ -180,6 +200,8 @@ public class WorkflowEngine {
         public String openRouterApiKey;
         public String openRouterModel;
         public String openRouterPrompt;
+        public String validationFromDate;
+        public String validationToDate;
     }
 
     public void changeExpert(String newExpert) {
@@ -219,6 +241,9 @@ public class WorkflowEngine {
         this.kiReportText = "";
         this.finalSelectedPasses = new ArrayList<>();
         this.lastActiveStep = 0;
+        this.kiGateBypassed = false;
+        this.validationResults = new ArrayList<>();
+        this.lastExportDirectory = "";
     }
 
     public void saveStrategyConfig(String expertName) {
@@ -251,6 +276,8 @@ public class WorkflowEngine {
             sc.openRouterApiKey = this.openRouterApiKey;
             sc.openRouterModel = this.openRouterModel;
             sc.openRouterPrompt = this.openRouterPrompt;
+            sc.validationFromDate = this.validationFromDate != null ? this.validationFromDate.toString() : null;
+            sc.validationToDate = this.validationToDate != null ? this.validationToDate.toString() : null;
 
             com.google.gson.Gson gson = buildGson();
             String json = gson.toJson(sc);
@@ -301,6 +328,8 @@ public class WorkflowEngine {
             this.openRouterApiKey = sc.openRouterApiKey != null ? sc.openRouterApiKey : "";
             this.openRouterModel = sc.openRouterModel != null ? sc.openRouterModel : LlmAnalysisService.DEFAULT_MODEL;
             this.openRouterPrompt = sc.openRouterPrompt != null ? sc.openRouterPrompt : LlmAnalysisService.DEFAULT_PROMPT;
+            this.validationFromDate = sc.validationFromDate != null ? LocalDate.parse(sc.validationFromDate) : null;
+            this.validationToDate = sc.validationToDate != null ? LocalDate.parse(sc.validationToDate) : null;
 
             log.info("Successfully loaded strategy configuration for: {}", expertName);
             return true;
@@ -321,6 +350,7 @@ public class WorkflowEngine {
             String selectedDiverseJson = gson.toJson(selectedDiversePasses);
             String sensitivityJson = gson.toJson(sensitivityResults);
             String finalSelectedJson = gson.toJson(finalSelectedPasses);
+            String validationJson = gson.toJson(validationResults);
 
             DatabaseManager.getInstance().saveWorkflowState(
                 expert,
@@ -338,7 +368,9 @@ public class WorkflowEngine {
                 sensitivityJson,
                 kiReportText,
                 finalSelectedJson,
-                lastActiveStep
+                lastActiveStep,
+                validationJson,
+                kiGateBypassed
             );
         } catch (Exception e) {
             log.error("Failed to save workflow state to database", e);
@@ -404,6 +436,13 @@ public class WorkflowEngine {
             if (data[15] != null) {
                 this.lastActiveStep = (Integer) data[15];
             }
+
+            if (data.length > 16) {
+                this.validationResults = parseValidationResults(gson, (String) data[16]);
+            }
+            if (data.length > 17 && data[17] instanceof Boolean) {
+                this.kiGateBypassed = (Boolean) data[17];
+            }
             log.info("Loaded workflow state from database. Last active step: {}", lastActiveStep);
         } catch (Exception e) {
             log.error("Failed to load workflow state from database", e);
@@ -427,7 +466,12 @@ public class WorkflowEngine {
         this.kiReportText = "";
         this.finalSelectedPasses = new ArrayList<>();
         this.lastActiveStep = 0;
-        
+        this.kiGateBypassed = false;
+        this.validationFromDate = null;
+        this.validationToDate = null;
+        this.validationResults = new ArrayList<>();
+        this.lastExportDirectory = "";
+
         try {
             DatabaseManager.getInstance().clearWorkflowState();
         } catch (Exception e) {
@@ -490,9 +534,11 @@ public class WorkflowEngine {
         optConfig.setUseLocal(true);
         optConfig.setShutdownTerminal(true);
 
-        // Precompute total passes
-        long totalPasses = 1000; // heuristic default
-        
+        // Precompute total passes from the parameter search space. Exact for
+        // the Complete algorithm; the Genetic algorithm decides its own pass
+        // count, so the progress callback treats the value only as an upper bound.
+        long totalPasses = computeTotalPasses(eaParameters);
+
         currentOptRunner = new OptimizationRunner(config);
         currentOptRunner.setLogCallback(logCallback);
         currentOptRunner.setProgressCallback(progressCallback);
@@ -507,33 +553,69 @@ public class WorkflowEngine {
         return optResult;
     }
 
+    /**
+     * Loads the unified score weights. Delegates to
+     * {@link OptimizationResult.ScoreWeights#loadFromDatabase()} — the single
+     * source of truth for DB keys and default values — so Step-3 ranking,
+     * scorecard display and UI dialogs always use identical defaults.
+     */
     public OptimizationResult.ScoreWeights loadScoreWeightsFromDb() {
-        OptimizationResult.ScoreWeights w = new OptimizationResult.ScoreWeights();
-        com.backtester.database.DatabaseManager db = com.backtester.database.DatabaseManager.getInstance();
-        try {
-            w.wBtProfit = Double.parseDouble(db.getSetting("opt.weight.btProfit", "10"));
-            w.wFwProfit = Double.parseDouble(db.getSetting("opt.weight.fwProfit", "15"));
-            w.wConsistency = Double.parseDouble(db.getSetting("opt.weight.consistency", "15"));
-            w.wRisk = Double.parseDouble(db.getSetting("opt.weight.risk", "15"));
-            w.wEquityConsist = Double.parseDouble(db.getSetting("opt.weight.equityConsist", "10"));
-            w.wSampleSize = Double.parseDouble(db.getSetting("opt.weight.sampleSize", "10"));
-            w.wSymmetry = Double.parseDouble(db.getSetting("opt.weight.symmetry", "5"));
-            w.wTailRisk = Double.parseDouble(db.getSetting("opt.weight.tailRisk", "10"));
-            w.wFwTrades = Double.parseDouble(db.getSetting("opt.weight.fwTrades", "5"));
-            w.wRecovery = Double.parseDouble(db.getSetting("opt.weight.recovery", "5"));
-            w.recoveryMin = Double.parseDouble(db.getSetting("opt.weight.recovery.min", "1.0"));
-            w.recoveryMax = Double.parseDouble(db.getSetting("opt.weight.recovery.max", "5.0"));
-        } catch (Exception e) {
-            log.warn("Fehler beim Laden der Unified Score-Gewichtung aus der DB: {}", e.getMessage());
+        return OptimizationResult.ScoreWeights.loadFromDatabase();
+    }
+
+    /**
+     * Product of the step counts of all optimize-enabled numeric parameters.
+     * Replaces the former hardcoded heuristic of 1000, which made the progress
+     * display wrong for the Complete algorithm. Capped at Integer.MAX_VALUE.
+     *
+     * <p>Overflow-safe: the step count per parameter is capped BEFORE the
+     * cast (a huge double would saturate/overflow the long), and the
+     * multiplication is guarded BEFORE it happens — a post-check would miss
+     * wrap-arounds that land on small positive values.
+     */
+    static long computeTotalPasses(List<EaParameter> params) {
+        long total = 1;
+        boolean anyEnabled = false;
+        if (params != null) {
+            for (EaParameter p : params) {
+                if (!p.isOptimizeEnabled() || p.isStringType()) continue;
+                try {
+                    double start = Double.parseDouble(p.getOptimizeStart());
+                    double end = Double.parseDouble(p.getOptimizeEnd());
+                    double step = Double.parseDouble(p.getOptimizeStep());
+                    if (step <= 0) continue;
+                    double steps = Math.abs(end - start) / step;
+                    if (Double.isNaN(steps)) continue;
+                    anyEnabled = true;
+                    if (steps >= Integer.MAX_VALUE) {
+                        return Integer.MAX_VALUE;
+                    }
+                    long count = (long) steps + 1;
+                    if (count < 1) count = 1;
+                    if (total > Integer.MAX_VALUE / count) {
+                        return Integer.MAX_VALUE;
+                    }
+                    total *= count;
+                } catch (Exception ignored) {
+                    // parameter without a parseable range does not multiply
+                }
+            }
         }
-        return w;
+        return anyEnabled ? total : 1;
     }
 
     public List<CombinedPass> runStep3() {
         if (optResult == null) {
             throw new IllegalStateException("Kein Optimierungsergebnis vorhanden. Bitte führe zuerst Schritt 2 aus.");
         }
-        
+        if (optResult.getPasses().isEmpty()) {
+            // Schritt 2 meldet auch bei fehlendem Report "Erfolg mit 0 Pässen",
+            // damit der Workflow nicht blockiert — hier machen wir das sichtbar
+            // statt still eine leere Auswahl weiterzureichen.
+            log.warn("Schritt 3: Optimierungsergebnis enthält 0 Pässe (kein Report erzeugt?). " +
+                    "Diversitätsfilter liefert eine leere Auswahl.");
+        }
+
         // Build combined passes from optResult
         List<CombinedPass> allPasses = optResult.buildCombinedPasses(forwardMode > 0, loadScoreWeightsFromDb());
         selectedDiversePasses = filterDiversePasses(allPasses);
@@ -666,15 +748,23 @@ public class WorkflowEngine {
             finalFiltered.add(cp);
         }
 
-        // Fallback: if we filtered out everything, restore them to have at least some output
-        if (finalFiltered.isEmpty()) {
+        // Fallback: if we filtered out everything, restore them to have at least
+        // some output — but flag the run so exports are visibly marked as
+        // NOT KI-validated instead of silently looking like a normal portfolio.
+        this.kiGateBypassed = finalFiltered.isEmpty() && !candidates.isEmpty();
+        if (kiGateBypassed) {
+            log.warn("KI-Gate: ALLE {} Kandidaten haben KI-Score < 30. Fallback aktiv — "
+                    + "der Export wird als NICHT VALIDIERT markiert!", candidates.size());
             finalFiltered.addAll(candidates);
         }
 
         // Keep 3-5 strategies
         int targetCount = Math.max(3, Math.min(5, finalFiltered.size()));
         finalSelectedPasses = new ArrayList<>(finalFiltered.subList(0, Math.min(targetCount, finalFiltered.size())));
-        
+
+        // A new final selection invalidates any previous validation results
+        this.validationResults = new ArrayList<>();
+
         this.lastActiveStep = Math.max(this.lastActiveStep, 6);
         saveState();
 
@@ -690,6 +780,266 @@ public class WorkflowEngine {
         saveWorkflowToHistory();
 
         return finalSelectedPasses;
+    }
+
+    // --- Step 7: Out-of-Sample Validation ---------------------------------
+
+    /**
+     * Effective start of the validation window: configured value, or the day
+     * after the optimization range ends.
+     */
+    public LocalDate getEffectiveValidationFromDate() {
+        if (validationFromDate != null) return validationFromDate;
+        return toDate != null ? toDate.plusDays(1) : null;
+    }
+
+    /**
+     * Effective end of the validation window: configured value, or today.
+     */
+    public LocalDate getEffectiveValidationToDate() {
+        if (validationToDate != null) return validationToDate;
+        return LocalDate.now();
+    }
+
+    /**
+     * True when a usable validation window exists: it must start after the
+     * optimization range (never-seen data) and span at least
+     * {@code minDays} days.
+     */
+    public boolean hasUsableValidationWindow(int minDays) {
+        LocalDate vFrom = getEffectiveValidationFromDate();
+        LocalDate vTo = getEffectiveValidationToDate();
+        if (vFrom == null || vTo == null || toDate == null) return false;
+        if (!vFrom.isAfter(toDate)) return false;
+        return java.time.temporal.ChronoUnit.DAYS.between(vFrom, vTo) >= minDays;
+    }
+
+    /**
+     * Step 7: validates the final selected strategies on a time window that
+     * was used neither for optimization nor for selection.
+     *
+     * <p><b>Warum:</b> Das Forward-Fenster wird in Schritt 3–6 bereits als
+     * Auswahlkriterium verbraucht (Selektion nach FW-Metriken über tausende
+     * Pässe = Multiple-Testing-Bias). Erst dieser Schritt liefert eine echte
+     * Out-of-Sample-Schätzung. Das Fenster liegt standardmäßig NACH dem
+     * Optimierungszeitraum (toDate+1 bis heute) und darf sich nicht mit ihm
+     * überlappen — das wird hart geprüft.
+     *
+     * @param logCallback      receives progress log lines
+     * @param progressCallback (current, total) candidate progress; may be null
+     * @return validation results, one per final selected pass
+     */
+    public List<ValidationResult> runStep7(Consumer<String> logCallback,
+                                           java.util.function.BiConsumer<Integer, Integer> progressCallback) throws Exception {
+        if (finalSelectedPasses == null || finalSelectedPasses.isEmpty()) {
+            throw new IllegalStateException("Keine finalen Strategien vorhanden. Bitte führe zuerst Schritt 6 aus.");
+        }
+
+        LocalDate vFrom = getEffectiveValidationFromDate();
+        LocalDate vTo = getEffectiveValidationToDate();
+        if (vFrom == null || vTo == null || !vFrom.isBefore(vTo)) {
+            throw new IllegalStateException(
+                    "Kein gültiges Validierungsfenster (" + vFrom + " bis " + vTo + "). " +
+                    "Beende die Optimierung früher (toDate in der Vergangenheit) oder konfiguriere das Fenster in Schritt 7.");
+        }
+        if (toDate != null && !vFrom.isAfter(toDate)) {
+            throw new IllegalStateException(
+                    "Validierungsfenster (" + vFrom + " bis " + vTo + ") überlappt mit dem Optimierungszeitraum (bis " + toDate + "). " +
+                    "Die Validierung ist nur aussagekräftig auf Daten, die weder Optimierung noch Selektion gesehen haben.");
+        }
+
+        if (logCallback != null) {
+            logCallback.accept(String.format("Validierung von %d Strategien auf unberührtem Fenster %s bis %s",
+                    finalSelectedPasses.size(), vFrom, vTo));
+        }
+
+        java.nio.file.Path presetsDir = config.getTesterProfilesDir(expert);
+        java.nio.file.Files.createDirectories(presetsDir);
+
+        List<ValidationResult> results = new ArrayList<>();
+        int total = finalSelectedPasses.size();
+        int current = 0;
+
+        for (CombinedPass cp : finalSelectedPasses) {
+            current++;
+            if (progressCallback != null) progressCallback.accept(current, total);
+
+            ValidationResult vr = new ValidationResult(cp.getPassNumber());
+            vr.setValidationFrom(vFrom.toString());
+            vr.setValidationTo(vTo.toString());
+            vr.setBtProfit(cp.getBtProfit());
+            vr.setFwProfit(Double.isNaN(cp.getFwProfit()) ? 0.0 : cp.getFwProfit());
+
+            try {
+                // Write the pass parameters as a .set file for the tester
+                String presetFileName = "Validation_Pass" + cp.getPassNumber() + ".set";
+                java.nio.file.Path presetFile = presetsDir.resolve(presetFileName);
+                List<EaParameter> finalParams = buildFinalParams(cp);
+                eaParamManager.writeSetFile(presetFile, finalParams, expert);
+
+                BacktestConfig btConfig = new BacktestConfig();
+                btConfig.setExpert(expert);
+                btConfig.setExpertParameters(presetFileName);
+                btConfig.setSymbol(symbol);
+                btConfig.setPeriod(period);
+                btConfig.setModel(tickModel);
+                btConfig.setFromDate(vFrom);
+                btConfig.setToDate(vTo);
+                btConfig.setDeposit(deposit);
+                btConfig.setCurrency(currency);
+                btConfig.setLeverage(leverage);
+                btConfig.setShutdownTerminal(true);
+                btConfig.setAutoKillMt5(true);
+                btConfig.setReportFileName("ValidationReport_Pass" + cp.getPassNumber());
+
+                if (logCallback != null) {
+                    logCallback.accept(String.format("Pass %d: Validierungs-Backtest (%d/%d)...",
+                            cp.getPassNumber(), current, total));
+                }
+
+                currentValidationRunner = new BacktestRunner();
+                if (logCallback != null) {
+                    final Consumer<String> lc = logCallback;
+                    currentValidationRunner.setLogCallback(msg -> lc.accept("  [MT] " + msg));
+                }
+                BacktestResult btResult = currentValidationRunner.runBacktest(btConfig);
+
+                if (btResult == null || !btResult.isSuccess()) {
+                    vr.setVerdict(ValidationResult.ERROR);
+                    vr.setMessage(btResult != null ? btResult.getMessage() : "Backtest fehlgeschlagen (kein Ergebnis)");
+                } else {
+                    vr.setProfit(btResult.getTotalProfit());
+                    vr.setTrades(btResult.getTotalTrades());
+                    vr.setProfitFactor(btResult.getProfitFactor());
+                    vr.setDrawdownPercent(btResult.getMaxDrawdownPercent());
+                    vr.setRecoveryFactor(btResult.getRecoveryFactor());
+                    vr.computeVerdict();
+                }
+            } catch (Exception e) {
+                log.error("Validation backtest for pass " + cp.getPassNumber() + " failed", e);
+                vr.setVerdict(ValidationResult.ERROR);
+                vr.setMessage(e.getMessage());
+            }
+
+            if (logCallback != null) logCallback.accept(vr.toSummaryLine());
+            results.add(vr);
+        }
+
+        this.validationResults = results;
+        this.lastActiveStep = Math.max(this.lastActiveStep, 7);
+        saveState();
+        saveWorkflowToHistory();
+
+        // Attach the validation report to the last export & flag failed
+        // strategies that were already copied to the "best" folder.
+        try {
+            writeValidationArtifacts();
+        } catch (Exception e) {
+            log.error("Failed to write validation report artifacts", e);
+        }
+
+        long passed = results.stream().filter(ValidationResult::isPassed).count();
+        if (logCallback != null) {
+            logCallback.accept(String.format("Validierung abgeschlossen: %d von %d Strategien auf unberührten Daten profitabel.",
+                    passed, results.size()));
+        }
+        return results;
+    }
+
+    /**
+     * Builds the final (non-optimizing) parameter set for a pass by merging
+     * the pass values over the base EA parameters. Magic number and order
+     * comment are stamped with the pass identity — same rules as the export.
+     */
+    private List<EaParameter> buildFinalParams(CombinedPass cp) {
+        int passNum = cp.getPassNumber();
+        double btDd = cp.getBtDd();
+        int ddPct = Double.isNaN(btDd) ? 0 : (int) Math.round(btDd);
+
+        List<EaParameter> finalParams = new ArrayList<>();
+        for (EaParameter base : getEaParameters()) {
+            EaParameter p = new EaParameter();
+            p.setName(base.getName());
+            p.setStringType(base.isStringType());
+            String passVal = cp.getBacktestPass().getParameter(base.getName());
+            if (passVal != null && !passVal.isEmpty()) {
+                p.setValue(passVal);
+            } else {
+                p.setValue(base.getValue());
+            }
+            if (isMagicNumberParameter(p.getName())) {
+                p.setValue(String.valueOf(passNum));
+            }
+            if (isOrderCommentParameter(p.getName())) {
+                p.setValue(String.format("%dproz_Pass%d", ddPct, passNum));
+            }
+            p.setOptimizeEnabled(false);
+            finalParams.add(p);
+        }
+        return finalParams;
+    }
+
+    /**
+     * Writes VALIDIERUNGS_REPORT.txt into the last export directory and, for
+     * strategies that FAILED validation but were already copied to the
+     * "best" folder, a companion warning file next to their .set file.
+     * Never deletes user files — it marks them.
+     */
+    private void writeValidationArtifacts() throws IOException {
+        if (validationResults == null || validationResults.isEmpty()) return;
+
+        StringBuilder report = new StringBuilder();
+        report.append("=== SCHRITT 7: OUT-OF-SAMPLE VALIDIERUNG ===\n");
+        report.append("Fenster: ").append(getEffectiveValidationFromDate())
+              .append(" bis ").append(getEffectiveValidationToDate()).append("\n");
+        report.append("Dieses Zeitfenster wurde weder für die Optimierung noch für die Selektion benutzt.\n");
+        report.append("Nur diese Ergebnisse sind eine echte Out-of-Sample-Schätzung — die Forward-Werte\n");
+        report.append("wurden bereits als Auswahlkriterium verbraucht (Selection Bias).\n\n");
+        for (ValidationResult vr : validationResults) {
+            report.append(vr.toSummaryLine()).append("\n");
+        }
+        long passed = validationResults.stream().filter(ValidationResult::isPassed).count();
+        report.append(String.format("%nErgebnis: %d von %d Strategien bestanden.%n", passed, validationResults.size()));
+
+        if (lastExportDirectory != null && !lastExportDirectory.isEmpty()) {
+            java.nio.file.Path exportPath = java.nio.file.Paths.get(lastExportDirectory);
+            if (Files.exists(exportPath)) {
+                Files.write(exportPath.resolve("VALIDIERUNGS_REPORT.txt"),
+                        report.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                log.info("Validation report written to {}", exportPath);
+            }
+        }
+
+        // Mark all non-passed strategies in the best folder (files were copied
+        // there in Step 6 before validation existed). Warn files are OUR
+        // artifacts: write them for every non-PASSED verdict and remove stale
+        // ones only when a pass actually passes a later validation run —
+        // otherwise an outdated warning would discredit a now-valid strategy.
+        java.nio.file.Path bestPath = com.backtester.config.AppConfig.getInstance().getBestExportDirectory();
+        if (bestPath != null && Files.exists(bestPath)) {
+            for (ValidationResult vr : validationResults) {
+                java.nio.file.Path warnFile = validationWarnFile(bestPath, vr.getPassNumber());
+                if (!ValidationResult.PASSED.equals(vr.getVerdict())) {
+                    String msg = "Pass " + vr.getPassNumber() + " hat die Out-of-Sample-Validierung NICHT bestanden"
+                            + " (Verdict: " + vr.getVerdict() + "):\n"
+                            + vr.toSummaryLine() + "\n"
+                            + "Die zugehörigen .set/.pdf-Dateien in diesem Ordner sollten nicht live eingesetzt werden.\n";
+                    Files.write(warnFile, msg.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                    log.warn("Marked non-passed validation ({}) for pass {} in best folder.",
+                            vr.getVerdict(), vr.getPassNumber());
+                } else {
+                    if (Files.deleteIfExists(warnFile)) {
+                        log.info("Removed stale validation warning for pass {} (verdict now {}).",
+                                vr.getPassNumber(), vr.getVerdict());
+                    }
+                }
+            }
+        }
+    }
+
+    /** Location of the per-pass validation warning marker in the best folder. */
+    private static java.nio.file.Path validationWarnFile(java.nio.file.Path bestPath, int passNum) {
+        return bestPath.resolve("WARNUNG_Pass" + passNum + "_VALIDIERUNG_FEHLGESCHLAGEN.txt");
     }
 
     private boolean isMagicNumberParameter(String name) {
@@ -727,6 +1077,19 @@ public class WorkflowEngine {
             
             java.nio.file.Path exportPath = java.nio.file.Paths.get(exportDirStr).resolve(subDirName);
             java.nio.file.Files.createDirectories(exportPath);
+            this.lastExportDirectory = exportPath.toString();
+
+            // Visible marker when the Step-6 KI gate had to be bypassed:
+            // this portfolio was NOT validated by the stability gate.
+            if (kiGateBypassed) {
+                String warn = "WARNUNG: Alle Kandidaten dieses Portfolios hatten einen KI-Stabilitäts-Score < 30.\n"
+                        + "Das KI-Gate wurde umgangen, damit überhaupt ein Export entsteht.\n"
+                        + "Diese Strategien gelten als FRAGIL und sollten NICHT live eingesetzt werden,\n"
+                        + "bevor sie Schritt 7 (Out-of-Sample-Validierung) bestanden haben.\n";
+                java.nio.file.Files.write(exportPath.resolve("WARNUNG_KI_GATE_UMGANGEN.txt"),
+                        warn.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                log.warn("Export {} als NICHT KI-validiert markiert.", exportPath);
+            }
 
             // 1. Export individual set files & detailed PDF reports
             for (CombinedPass cp : finalSelectedPasses) {
@@ -735,28 +1098,9 @@ public class WorkflowEngine {
                 int ddPct = Double.isNaN(btDd) ? 0 : (int) Math.round(btDd);
                 String baseFileName = String.format("%s_%s_%s_%dproz_Pass%d", eaName, symbol, timeframe, ddPct, passNum);
 
-                // Set file
+                // Set file (parameter merge shared with Step-7 validation)
                 java.nio.file.Path setFile = exportPath.resolve(baseFileName + ".set");
-                List<EaParameter> finalParams = new ArrayList<>();
-                for (EaParameter base : getEaParameters()) {
-                    EaParameter p = new EaParameter();
-                    p.setName(base.getName());
-                    p.setStringType(base.isStringType());
-                    String passVal = cp.getBacktestPass().getParameter(base.getName());
-                    if (passVal != null && !passVal.isEmpty()) {
-                        p.setValue(passVal);
-                    } else {
-                        p.setValue(base.getValue());
-                    }
-                    if (isMagicNumberParameter(p.getName())) {
-                        p.setValue(String.valueOf(passNum));
-                    }
-                    if (isOrderCommentParameter(p.getName())) {
-                        p.setValue(String.format("%dproz_Pass%d", ddPct, passNum));
-                    }
-                    p.setOptimizeEnabled(false);
-                    finalParams.add(p);
-                }
+                List<EaParameter> finalParams = buildFinalParams(cp);
                 eaParamManager.writeSetFile(setFile, finalParams, eaName);
                 log.info("Exported preset file to {}", setFile);
 
@@ -772,12 +1116,26 @@ public class WorkflowEngine {
             com.backtester.report.PdfReportGenerator.generatePortfolioReport(this, finalSelectedPasses, combinedPdfFile);
             log.info("Exported combined portfolio report to {}", combinedPdfFile);
 
-            // 3. Copy good and stable strategies (KI score >= 70) to the target best directory
+            // 3. Copy good and stable strategies (KI score >= 70) to the target best directory.
+            //    If Step-7 validation results exist, the strategy must also have PASSED
+            //    the out-of-sample validation — failed strategies never reach "best".
             java.nio.file.Path bestPath = java.nio.file.Paths.get(bestDirStr);
             boolean createdBestDir = false;
 
             for (CombinedPass cp : finalSelectedPasses) {
                 int kiScore = getKiScore(cp.getPassNumber());
+                if (!isValidationPassedOrPending(cp.getPassNumber())) {
+                    log.warn("Pass {} wird NICHT in den Best-Ordner kopiert: Out-of-Sample-Validierung nicht bestanden.", cp.getPassNumber());
+                    continue;
+                }
+                // Stale warning from an earlier validation run? The pass is
+                // no longer FAILED — remove our own marker before re-exporting.
+                try {
+                    java.nio.file.Files.deleteIfExists(validationWarnFile(bestPath, cp.getPassNumber()));
+                } catch (Exception cleanupEx) {
+                    log.warn("Konnte alte Validierungs-Warndatei für Pass {} nicht entfernen: {}",
+                            cp.getPassNumber(), cleanupEx.getMessage());
+                }
                 if (kiScore >= 70) {
                     if (!createdBestDir) {
                         java.nio.file.Files.createDirectories(bestPath);
@@ -833,6 +1191,8 @@ public class WorkflowEngine {
             stateMap.put("ki_report_text", kiReportText);
             stateMap.put("final_selected_passes_json", gson.toJson(finalSelectedPasses));
             stateMap.put("last_active_step", lastActiveStep);
+            stateMap.put("validation_results_json", gson.toJson(validationResults));
+            stateMap.put("ki_gate_bypassed", kiGateBypassed);
 
             String stateJson = gson.toJson(stateMap);
             DatabaseManager.getInstance().saveRun("Workflow", expert, System.currentTimeMillis(), stateJson, "");
@@ -917,6 +1277,11 @@ public class WorkflowEngine {
                 this.lastActiveStep = 0;
             }
 
+            // validation results (Step 7)
+            this.validationResults = parseValidationResults(gson, (String) stateMap.get("validation_results_json"));
+            Object bypassed = stateMap.get("ki_gate_bypassed");
+            this.kiGateBypassed = bypassed instanceof Boolean && (Boolean) bypassed;
+
             // Save this restored state as the current active one in WORKFLOW_STATE table
             saveState();
             log.info("Successfully restored workflow state from database history.");
@@ -944,14 +1309,21 @@ public class WorkflowEngine {
         return performanceWeight * combinedScore + stabilityWeight * kiScore;
     }
 
+    /**
+     * Worst-case CV for a pass from the sensitivity analysis.
+     *
+     * @return the CV, or {@link Double#NaN} when no sensitivity data exists
+     *         for the pass. NaN (displayed as "n/a") instead of 0.0, because
+     *         0.0 would make missing data look like perfect robustness.
+     */
     public double getWorstCvForPass(int passNum, boolean forward) {
-        if (sensitivityResults == null) return 0.0;
+        if (sensitivityResults == null) return Double.NaN;
         for (SensitivityResult sr : sensitivityResults) {
             if (sr.getOriginalPass() != null && sr.getOriginalPass().getPassNumber() == passNum) {
                 return forward ? sr.getOverallCVFw() : sr.getOverallCV();
             }
         }
-        return 0.0;
+        return Double.NaN;
     }
 
     public int getKiScoreForPass(int passNum) {
@@ -971,6 +1343,39 @@ public class WorkflowEngine {
             }
         }
         return -1; // no KI score available
+    }
+
+    /**
+     * True when no Step-7 validation has been run yet (pending), or when the
+     * pass explicitly PASSED. Once validation results exist, every other state
+     * (FAILED, ERROR, NO_TRADES, or missing result) blocks the best-folder
+     * export.
+     */
+    private boolean isValidationPassedOrPending(int passNum) {
+        if (validationResults == null || validationResults.isEmpty()) return true;
+        for (ValidationResult vr : validationResults) {
+            if (vr.getPassNumber() == passNum) {
+                return ValidationResult.PASSED.equals(vr.getVerdict());
+            }
+        }
+        return false;
+    }
+
+    /** Returns the Step-7 validation result for a pass, or null if not validated. */
+    public ValidationResult getValidationResultForPass(int passNum) {
+        if (validationResults == null) return null;
+        for (ValidationResult vr : validationResults) {
+            if (vr.getPassNumber() == passNum) return vr;
+        }
+        return null;
+    }
+
+    /** Deserialises the Step-7 validation results; empty list on null/empty JSON. */
+    private static List<ValidationResult> parseValidationResults(com.google.gson.Gson gson, String json) {
+        if (json == null || json.isEmpty()) return new ArrayList<>();
+        java.lang.reflect.Type valType = new com.google.gson.reflect.TypeToken<List<ValidationResult>>(){}.getType();
+        List<ValidationResult> loaded = gson.fromJson(json, valType);
+        return loaded != null ? loaded : new ArrayList<>();
     }
 
     // --- Helper Logic (Diversity Filter Algorithm) ---
@@ -1137,6 +1542,9 @@ public class WorkflowEngine {
         if (currentSensitivityRunner != null) {
             currentSensitivityRunner.cancel();
         }
+        if (currentValidationRunner != null) {
+            currentValidationRunner.cancel();
+        }
     }
 
     // --- Getters & Setters ---
@@ -1239,6 +1647,21 @@ public class WorkflowEngine {
 
     public int getLastActiveStep() { return lastActiveStep; }
     public void setLastActiveStep(int lastActiveStep) { this.lastActiveStep = lastActiveStep; }
+
+    public boolean isKiGateBypassed() { return kiGateBypassed; }
+
+    public LocalDate getValidationFromDate() { return validationFromDate; }
+    public void setValidationFromDate(LocalDate validationFromDate) { this.validationFromDate = validationFromDate; }
+
+    public LocalDate getValidationToDate() { return validationToDate; }
+    public void setValidationToDate(LocalDate validationToDate) { this.validationToDate = validationToDate; }
+
+    public List<ValidationResult> getValidationResults() { return validationResults; }
+    public void setValidationResults(List<ValidationResult> validationResults) {
+        this.validationResults = validationResults != null ? validationResults : new ArrayList<>();
+    }
+
+    public String getLastExportDirectory() { return lastExportDirectory; }
 
     public double getPerformanceWeight() { return performanceWeight; }
     public void setPerformanceWeight(double performanceWeight) { this.performanceWeight = performanceWeight; }

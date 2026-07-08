@@ -156,8 +156,10 @@ public class PdfReportGenerator {
         addTableCell(perfTable, "Worst Parameter CV:", BOLD_FONT);
         double btCv = engine.getWorstCvForPass(passNum, false);
         double fwCv = engine.getWorstCvForPass(passNum, true);
-        addTableCellColored(perfTable, btCv > 0 ? String.format(Locale.US, "%.2f %%", btCv) : "-", btCv > 60 ? RED_FONT : GREEN_FONT);
-        addTableCellColored(perfTable, fwCv > 0 ? String.format(Locale.US, "%.2f %%", fwCv) : "-", fwCv > 60 ? RED_FONT : GREEN_FONT);
+        // NaN = keine Sensitivitätsdaten vorhanden — als "n/a" ausweisen statt
+        // wie ein perfektes Ergebnis auszusehen
+        addTableCellColored(perfTable, !Double.isNaN(btCv) && btCv > 0 ? String.format(Locale.US, "%.2f %%", btCv) : "n/a", btCv > 60 ? RED_FONT : (Double.isNaN(btCv) ? BOLD_FONT : GREEN_FONT));
+        addTableCellColored(perfTable, !Double.isNaN(fwCv) && fwCv > 0 ? String.format(Locale.US, "%.2f %%", fwCv) : "n/a", fwCv > 60 ? RED_FONT : (Double.isNaN(fwCv) ? BOLD_FONT : GREEN_FONT));
 
         addTableCell(perfTable, "KI Stabilität Score:", BOLD_FONT);
         int kiScore = engine.getKiScoreForPass(passNum);

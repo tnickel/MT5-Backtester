@@ -209,26 +209,31 @@ public class OptimizationResult {
     // ─── Combined Analysis ────────────────────────────────────────────────────
 
     /**
-     * Configurable score weights for the Combined Analysis tab.
-     * All values are fractions (0.0–1.0). They are normalised internally
-     * so they don't need to sum to exactly 1.
-     */
-    /**
-     * Unified score weights covering ALL quality dimensions:
-     * performance (BT+FW), consistency, risk, equity-stability,
-     * sample size, symmetry, tail-risk, trade count, and recovery.
+     * Unified score weights covering all quality dimensions that can be derived
+     * from REAL MetaTrader report data: performance (BT+FW), consistency, risk,
+     * Sharpe ratio, sample size, trade count, and recovery.
      *
-     * Values are relative — the sum is normalised automatically.
+     * <p>Values are relative — the sum is normalised automatically.
+     *
+     * <p><b>History:</b> The former pillars "Symmetrie" (hardcoded 0.80),
+     * "Tail-Risk" (synthetically derived from an assumed loss distribution) and
+     * the R²/SQN-based "Equity-Konsistenz" (computed on a randomly generated
+     * equity curve) were removed because they were not based on measured data
+     * and added noise or dead weight to the ranking. The Equity pillar now uses
+     * the real Sharpe ratio reported by MetaTrader per pass.
+     *
+     * <p>This class is the <b>single source of truth</b> for the default weights.
+     * All DB fallbacks (workflow ranking, scorecard, UI dialogs) must go through
+     * {@link #loadFromDatabase()} / {@link #defaults()} — never hardcode defaults
+     * elsewhere.
      */
     public static class ScoreWeights {
         public double wBtProfit      = 15;  // BT Profitabilität (ROI + PF)
         public double wFwProfit      = 15;  // FW Profitabilität (ROI + PF)
         public double wConsistency   = 10;  // FW/BT Konsistenz (Profit-Verhältnis)
         public double wRisk          = 10;  // Risiko-Verhältnis (Return/DD, Calmar)
-        public double wEquityConsist = 10;  // Equity-Konsistenz (R² Stability, SQN)
+        public double wEquityConsist = 10;  // Sharpe Ratio (BT+FW, echte MT5-Kennzahl)
         public double wSampleSize    = 25;  // Stichprobengröße (Trades, Jahre)
-        public double wSymmetry      =  5;  // Symmetrie (L/S Balance)
-        public double wTailRisk      =  5;  // Tail-Risk (MaxLoss/AvgLoss, MaxLoss/NetProfit)
         public double wFwTrades      = 30;  // FW Trade Count
         public double wRecovery      = 25;  // Erholungsfaktor (BT+FW Recovery)
         public double recoveryMin    = 1.0; // Min threshold for recovery scaling
@@ -240,8 +245,44 @@ public class OptimizationResult {
         /** Sum of all weights (used for normalisation). */
         public double total() {
             return wBtProfit + wFwProfit + wConsistency + wRisk
-                 + wEquityConsist + wSampleSize + wSymmetry + wTailRisk
+                 + wEquityConsist + wSampleSize
                  + wFwTrades + wRecovery;
+        }
+
+        /**
+         * Loads the weights from the settings database. Missing or unparseable
+         * entries fall back to the field defaults of this class, per key —
+         * one bad entry does not reset the others.
+         *
+         * <p>This is the only place that maps DB keys to weight fields; the
+         * workflow ranking (Step 3), the robustness scorecard and the UI
+         * dialogs all read through here so ranking and display can never
+         * disagree on defaults again.
+         */
+        public static ScoreWeights loadFromDatabase() {
+            com.backtester.database.DatabaseManager db = com.backtester.database.DatabaseManager.getInstance();
+            ScoreWeights d = defaults();
+            ScoreWeights w = new ScoreWeights();
+            w.wBtProfit      = readSetting(db, "opt.weight.btProfit",      d.wBtProfit);
+            w.wFwProfit      = readSetting(db, "opt.weight.fwProfit",      d.wFwProfit);
+            w.wConsistency   = readSetting(db, "opt.weight.consistency",   d.wConsistency);
+            w.wRisk          = readSetting(db, "opt.weight.risk",          d.wRisk);
+            w.wEquityConsist = readSetting(db, "opt.weight.equityConsist", d.wEquityConsist);
+            w.wSampleSize    = readSetting(db, "opt.weight.sampleSize",    d.wSampleSize);
+            w.wFwTrades      = readSetting(db, "opt.weight.fwTrades",      d.wFwTrades);
+            w.wRecovery      = readSetting(db, "opt.weight.recovery",      d.wRecovery);
+            w.recoveryMin    = readSetting(db, "opt.weight.recovery.min",  d.recoveryMin);
+            w.recoveryMax    = readSetting(db, "opt.weight.recovery.max",  d.recoveryMax);
+            return w;
+        }
+
+        private static double readSetting(com.backtester.database.DatabaseManager db, String key, double def) {
+            try {
+                String v = db.getSetting(key, String.valueOf(def));
+                return Double.parseDouble(v);
+            } catch (Exception e) {
+                return def;
+            }
         }
     }
 
@@ -263,6 +304,10 @@ public class OptimizationResult {
         // but never below 50 % so other metrics still matter.
         double fwTradesThreshold = computeFwTradesThreshold(forwardPasses);
 
+        // Real test-range length in years (full optimization range incl. forward
+        // window; falls back to 3.0 when the dates are missing/unparseable).
+        double years = yearsBetween(fromDate, toDate);
+
         List<CombinedPass> combined = new ArrayList<>();
         for (Pass bt : passes) {
             Pass fw = fwIndex.get(bt.getPassNumber());
@@ -271,10 +316,29 @@ public class OptimizationResult {
             double consistency = computeConsistency(bt, fw);
             StringBuilder debug = new StringBuilder();
             double score       = computeScore(bt, fw, consistency, passes, forwardPasses,
-                                              fwTradesThreshold, weights, debug);
+                                              fwTradesThreshold, years, weights, debug);
             combined.add(new CombinedPass(bt, fw, score, consistency, debug.toString()));
         }
         return combined;
+    }
+
+    /**
+     * Length of the test range in years, computed from ISO dates.
+     * Returns 3.0 as a documented fallback when either date is missing or
+     * unparseable (matches the historic hardcoded assumption).
+     */
+    public static double yearsBetween(String fromDate, String toDate) {
+        if (fromDate != null && toDate != null && !fromDate.isEmpty() && !toDate.isEmpty()) {
+            try {
+                java.time.LocalDate start = java.time.LocalDate.parse(fromDate);
+                java.time.LocalDate end = java.time.LocalDate.parse(toDate);
+                long days = java.time.temporal.ChronoUnit.DAYS.between(start, end);
+                if (days > 0) {
+                    return Math.max(0.1, days / 365.25);
+                }
+            } catch (Exception ignored) {}
+        }
+        return 3.0;
     }
 
     /**
@@ -330,16 +394,11 @@ public class OptimizationResult {
     }
 
     /**
-     * Normalises a value within the range [min, max] to [0, 1].
-     * Returns 0 if the range is zero.
-     */
-    private static double norm(double value, double min, double max) {
-        if (max == min) return 0.5;
-        return Math.max(0.0, Math.min(1.0, (value - min) / (max - min)));
-    }
-
-    /**
      * Score = weighted sum of normalised metrics (weights normalised to sum=1).
+     *
+     * <p>Every pillar is derived from REAL report data (profit, trades, PF,
+     * recovery, Sharpe, dates). No pillar is estimated from assumed win rates
+     * or synthetic equity curves — see {@link ScoreWeights} for the history.
      *
      * <p>Trade count enters the score in two ways:
      * <ol>
@@ -352,15 +411,19 @@ public class OptimizationResult {
      *       hardly any trades is dampened but not destroyed — the other metrics
      *       still carry weight.</li>
      * </ol>
+     *
+     * @param years real length of the test range in years (see {@link #yearsBetween})
      */
     private static double computeScore(Pass bt, Pass fw,
                                        double consistency,
                                        List<Pass> allBt, List<Pass> allFw,
                                        double fwTradesThreshold,
+                                       double years,
                                        ScoreWeights w,
                                        StringBuilder debug) {
         double total = w.total();
         if (total <= 0) total = 1.0;
+        if (years <= 0) years = 3.0;
 
         // ── 1. BT Profitabilität (ROI + PF) ──
         double deposit = bt.getBalance() - bt.getProfit();
@@ -383,49 +446,36 @@ public class OptimizationResult {
         double rdd = bt.getRecoveryFactor();
         if (Double.isNaN(rdd) || rdd <= 0) rdd = 0.1;
         double nRdd = pwl(rdd, new double[][]{{1.0, 0}, {3.0, 50}, {8.0, 100}});
-        // Calmar = annualised return / max DD — approximate with years=3 if unknown
-        double calmar = rdd / 3.0;
+        // Calmar ≈ Recovery-Faktor annualisiert über die reale Testdauer
+        double calmar = rdd / years;
         double nCalmar = pwl(calmar, new double[][]{{0, 0}, {1.0, 50}, {3.0, 100}});
         double sRisk = avg(nRdd, nCalmar) / 100.0;
 
-        // ── 5. Equity-Konsistenz (R² Stability, SQN) ──
-        double pf = bt.getProfitFactor();
-        if (Double.isNaN(pf) || pf <= 1.0) pf = 1.05;
-        double sqn = computeSqn(bt.getProfit(), bt.getTotalTrades(), pf);
-        double stability = computeStability(bt.getProfit(), bt.getTotalTrades(), pf, bt.getPassNumber());
-        double nStab = pwl(stability, new double[][]{{0, 0}, {0.9, 100}});
-        double nSqn = pwl(sqn, new double[][]{{1.0, 0}, {2.5, 50}, {5.0, 100}});
-        double sEquityConsist = avg(nStab, nSqn) / 100.0;
+        // ── 5. Sharpe Ratio (BT + FW) — echte MT5-Kennzahl pro Pass ──
+        // Absolute Skala, damit Ranking (Step 3) und Scorecard identisch rechnen.
+        double nBtSharpe = pwl(safeMetric(bt.getSharpeRatio()), SHARPE_PWL);
+        double sEquityConsist;
+        if (fw != null) {
+            double nFwSharpe = pwl(safeMetric(fw.getSharpeRatio()), SHARPE_PWL);
+            sEquityConsist = avg(nBtSharpe, nFwSharpe) / 100.0;
+        } else {
+            sEquityConsist = nBtSharpe / 100.0;
+        }
 
-        // ── 6. Stichprobengröße (Trades, Jahre ≈ 3 default) ──
+        // ── 6. Stichprobengröße (Trades, reale Jahre) ──
         double nTrades = pwl(bt.getTotalTrades(), new double[][]{{100, 0}, {300, 50}, {1000, 100}});
-        double nYears = pwl(3.0, new double[][]{{1, 0}, {3, 50}, {7, 100}});  // 3 years default
+        double nYears = pwl(years, new double[][]{{1, 0}, {3, 50}, {7, 100}});
         double sSample = avg(nTrades, nYears) / 100.0;
         if (bt.getTotalTrades() < 100) {
             sSample = Math.min(sSample, 0.30); // Cap at 30% for small samples
         }
 
-        // ── 7. Symmetrie (L/S) — estimated at 0.80 since MT5 doesn't report this ──
-        double symmetryVal = 0.80;
-        double sSymmetry = pwl(symmetryVal, new double[][]{{0, 0}, {0.5, 50}, {1.0, 100}}) / 100.0;
-
-        // ── 8. Tail-Risk (MaxLoss/AvgLoss, MaxLoss/NetProfit) ──
-        double grossLoss = bt.getProfit() / Math.max(pf - 1.0, 0.01);
-        int losses = Math.max(1, (int) Math.round(bt.getTotalTrades() * 0.45));
-        double avgLoss = grossLoss / losses;
-        double maxLoss = avgLoss * 2.8;
-        double mlAlRatio = Math.abs(maxLoss / Math.max(Math.abs(avgLoss), 0.01));
-        double mlNpRatio = Math.abs(maxLoss) / Math.max(Math.abs(bt.getProfit()), 0.01);
-        double nMlAl = pwl(mlAlRatio, new double[][]{{2.0, 100}, {5.0, 50}, {10.0, 0}});
-        double nMlNp = pwl(mlNpRatio, new double[][]{{0.05, 100}, {0.25, 50}, {0.5, 0}});
-        double sTailRisk = avg(nMlAl, nMlNp) / 100.0;
-
-        // ── 9. FW Trade Count ──
+        // ── 7. FW Trade Count ──
         double sFwTrades = fw != null
                 ? pwl(fw.getTotalTrades(), new double[][]{{100, 0}, {300, 50}, {1000, 100}}) / 100.0
                 : 0.0;
 
-        // ── 10. Erholungsfaktor (BT + FW Recovery) ──
+        // ── 8. Erholungsfaktor (BT + FW Recovery) ──
         double recRange = w.recoveryMax - w.recoveryMin;
         if (recRange <= 0.0) recRange = 1.0;
         double nBtRec = Math.max(0.0, Math.min(1.0, (bt.getRecoveryFactor() - w.recoveryMin) / recRange));
@@ -439,26 +489,22 @@ public class OptimizationResult {
                     + w.wRisk          * sRisk
                     + w.wEquityConsist * sEquityConsist
                     + w.wSampleSize    * sSample
-                    + w.wSymmetry      * sSymmetry
-                    + w.wTailRisk      * sTailRisk
                     + w.wFwTrades      * sFwTrades
                     + w.wRecovery      * sRecovery) / total;
 
         if (debug != null) {
-            debug.append("=== UNIFIED SCORE (10 Säulen) ===\n\n");
+            debug.append("=== UNIFIED SCORE (8 Säulen, nur echte Messdaten) ===\n\n");
             debug.append(String.format("Gewichte: BT-Profit=%.0f | FW-Profit=%.0f | Konsistenz=%.0f | Risiko=%.0f | " +
-                    "Equity-Konsist=%.0f | Stichprobe=%.0f | Symmetrie=%.0f | Tail-Risk=%.0f | FW-Trades=%.0f | Recovery=%.0f\n\n",
+                    "Sharpe=%.0f | Stichprobe=%.0f | FW-Trades=%.0f | Recovery=%.0f\n\n",
                     w.wBtProfit, w.wFwProfit, w.wConsistency, w.wRisk, w.wEquityConsist,
-                    w.wSampleSize, w.wSymmetry, w.wTailRisk, w.wFwTrades, w.wRecovery));
+                    w.wSampleSize, w.wFwTrades, w.wRecovery));
             debug.append("Teil-Scores (0.0 – 1.0):\n");
             debug.append(String.format("- BT Profitabilität: %.2f (ROI=%.2f%%, PF=%.2f) * %.0f\n", sBtProfit, btRoi*100, bt.getProfitFactor(), w.wBtProfit));
             debug.append(String.format("- FW Profitabilität: %.2f (ROI=%.2f%%, PF=%.2f) * %.0f\n", sFwProfit, fwRoi*100, fw != null ? fw.getProfitFactor() : 0, w.wFwProfit));
             debug.append(String.format("- FW/BT Konsistenz:  %.2f (Ratio=%.2f) * %.0f\n", sConsist, consistency, w.wConsistency));
-            debug.append(String.format("- Risiko-Verhältnis: %.2f (Return/DD=%.2f, Calmar=%.2f) * %.0f\n", sRisk, rdd, calmar, w.wRisk));
-            debug.append(String.format("- Equity-Konsistenz: %.2f (R²=%.2f, SQN=%.2f) * %.0f\n", sEquityConsist, stability, sqn, w.wEquityConsist));
-            debug.append(String.format("- Stichprobengröße:  %.2f (Trades=%d) * %.0f\n", sSample, bt.getTotalTrades(), w.wSampleSize));
-            debug.append(String.format("- Symmetrie:         %.2f (L/S=%.2f) * %.0f\n", sSymmetry, symmetryVal, w.wSymmetry));
-            debug.append(String.format("- Tail-Risk:         %.2f (ML/AL=%.1f, ML/NP=%.1f%%) * %.0f\n", sTailRisk, mlAlRatio, mlNpRatio*100, w.wTailRisk));
+            debug.append(String.format("- Risiko-Verhältnis: %.2f (Return/DD=%.2f, Calmar=%.2f, Jahre=%.1f) * %.0f\n", sRisk, rdd, calmar, years, w.wRisk));
+            debug.append(String.format("- Sharpe Ratio:      %.2f (BT=%.2f, FW=%.2f) * %.0f\n", sEquityConsist, bt.getSharpeRatio(), fw != null ? fw.getSharpeRatio() : 0, w.wEquityConsist));
+            debug.append(String.format("- Stichprobengröße:  %.2f (Trades=%d, Jahre=%.1f) * %.0f\n", sSample, bt.getTotalTrades(), years, w.wSampleSize));
             debug.append(String.format("- FW Trades:         %.2f (Raw=%d) * %.0f\n", sFwTrades, fw != null ? fw.getTotalTrades() : 0, w.wFwTrades));
             debug.append(String.format("- Erholungsfaktor:   %.2f (BT=%.2f, FW=%.2f) * %.0f\n", sRecovery, bt.getRecoveryFactor(), fw != null ? fw.getRecoveryFactor() : 0, w.wRecovery));
             debug.append(String.format("\n=> Raw Score: %.3f\n", raw));
@@ -486,8 +532,20 @@ public class OptimizationResult {
 
     // ── Scoring helper methods ──────────────────────────────────────────────
 
+    /**
+     * Piecewise-linear mapping for the MT5 Sharpe ratio → 0..100.
+     * Shared by the ranking score and the robustness scorecard so both
+     * display the same pillar value. Absolute scale: 0 → 0, 0.5 → 50, 2.0 → 100.
+     */
+    public static final double[][] SHARPE_PWL = {{0, 0}, {0.5, 50}, {2.0, 100}};
+
+    /** Maps NaN metrics to 0 so they contribute nothing instead of poisoning the sum. */
+    private static double safeMetric(double v) {
+        return Double.isNaN(v) ? 0.0 : v;
+    }
+
     /** Piecewise-linear normalisation: points = {{x0,y0},{x1,y1},...}, ascending x, y in 0..100 */
-    private static double pwl(double x, double[][] points) {
+    public static double pwl(double x, double[][] points) {
         if (x <= points[0][0]) return points[0][1];
         if (x >= points[points.length - 1][0]) return points[points.length - 1][1];
         for (int i = 1; i < points.length; i++) {
@@ -502,58 +560,6 @@ public class OptimizationResult {
     /** Average of two values */
     private static double avg(double a, double b) {
         return (a + b) / 2.0;
-    }
-
-    /** SQN = (mean trade profit / stddev) * sqrt(trades), capped at 10 */
-    private static double computeSqn(double profit, int trades, double pf) {
-        if (trades < 2 || pf <= 1.0) return 0.0;
-        double grossLoss = profit / (pf - 1.0);
-        double grossWin = profit + grossLoss;
-        int wins = (int) Math.round(trades * 0.55);
-        int losses = trades - wins;
-        if (wins < 1 || losses < 1) return 0.0;
-        double avgWin = grossWin / wins;
-        double avgLoss = grossLoss / losses;
-        double mean = profit / trades;
-        double varSum = wins * Math.pow(avgWin - mean, 2) + losses * Math.pow(-avgLoss - mean, 2);
-        double stdDev = Math.sqrt(varSum / trades);
-        if (stdDev < 1e-9) return 0.0;
-        return Math.min(10.0, (mean / stdDev) * Math.sqrt(trades));
-    }
-
-    /** R² stability of a synthetic equity curve (0 = chaotic, 1 = perfect line) */
-    private static double computeStability(double profit, int trades, double pf, int passNumber) {
-        if (trades < 5) return 0.0;
-        double startBalance = 10000.0;
-        // Generate synthetic equity curve
-        double grossLoss = profit / Math.max(pf - 1.0, 0.01);
-        double grossWin = profit + grossLoss;
-        int wins = (int) Math.round(trades * 0.55);
-        int losses = trades - wins;
-        if (wins < 1 || losses < 1) return 0.5;
-        double avgWin = grossWin / wins;
-        double avgLoss = grossLoss / losses;
-        List<Double> curve = new ArrayList<>();
-        curve.add(startBalance);
-        Random rng = new Random(passNumber * 31L + trades);
-        double balance = startBalance;
-        for (int i = 0; i < trades; i++) {
-            boolean isWin = rng.nextDouble() < 0.55;
-            balance += isWin ? avgWin : -avgLoss;
-            curve.add(balance);
-        }
-        // R² via linear regression
-        int n = curve.size();
-        double sumX = 0, sumY = 0, sumXY = 0, sumX2 = 0, sumY2 = 0;
-        for (int i = 0; i < n; i++) {
-            sumX += i; sumY += curve.get(i);
-            sumXY += i * curve.get(i); sumX2 += (double) i * i;
-            sumY2 += curve.get(i) * curve.get(i);
-        }
-        double denom = (n * sumX2 - sumX * sumX) * (n * sumY2 - sumY * sumY);
-        if (denom <= 0) return 0.5;
-        double r = (n * sumXY - sumX * sumY) / Math.sqrt(denom);
-        return Math.max(0.0, Math.min(1.0, r * r));
     }
 }
 

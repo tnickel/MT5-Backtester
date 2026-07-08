@@ -160,10 +160,8 @@ public class OptimizationView {
     private Spinner<Integer> wFwProfitSpin;
     private Spinner<Integer> wConsistSpin;
     private Spinner<Integer> wRiskSpin;
-    private Spinner<Integer> wEquityConsistSpin;
+    private Spinner<Integer> wEquityConsistSpin; // Sharpe-Ratio-Säule (DB-Key: opt.weight.equityConsist)
     private Spinner<Integer> wSampleSizeSpin;
-    private Spinner<Integer> wSymmetrySpin;
-    private Spinner<Integer> wTailRiskSpin;
     private Spinner<Integer> wFwTradesSpin;
     private Spinner<Integer> wRecoverySpin;
     private Label weightSumLabel;
@@ -1321,16 +1319,16 @@ public class OptimizationView {
 
         toolbarContainer.getChildren().addAll(filterRow, actionRow);
 
-        wBtProfitSpin     = makeWeightSpinner(15);
-        wFwProfitSpin     = makeWeightSpinner(15);
-        wConsistSpin      = makeWeightSpinner(10);
-        wRiskSpin         = makeWeightSpinner(10);
-        wEquityConsistSpin = makeWeightSpinner(10);
-        wSampleSizeSpin   = makeWeightSpinner(25);
-        wSymmetrySpin     = makeWeightSpinner(5);
-        wTailRiskSpin     = makeWeightSpinner(5);
-        wFwTradesSpin     = makeWeightSpinner(30);
-        wRecoverySpin     = makeWeightSpinner(25);
+        // Defaults kommen aus der einzigen Quelle ScoreWeights.defaults()
+        OptimizationResult.ScoreWeights wDef = OptimizationResult.ScoreWeights.defaults();
+        wBtProfitSpin     = makeWeightSpinner((int) wDef.wBtProfit);
+        wFwProfitSpin     = makeWeightSpinner((int) wDef.wFwProfit);
+        wConsistSpin      = makeWeightSpinner((int) wDef.wConsistency);
+        wRiskSpin         = makeWeightSpinner((int) wDef.wRisk);
+        wEquityConsistSpin = makeWeightSpinner((int) wDef.wEquityConsist);
+        wSampleSizeSpin   = makeWeightSpinner((int) wDef.wSampleSize);
+        wFwTradesSpin     = makeWeightSpinner((int) wDef.wFwTrades);
+        wRecoverySpin     = makeWeightSpinner((int) wDef.wRecovery);
 
         // ── Combined Table ────────────────────────────────────────────────────
         combinedTable = createCombinedTable();
@@ -1349,8 +1347,6 @@ public class OptimizationView {
         weights.wRisk          = wRiskSpin.getValue();
         weights.wEquityConsist = wEquityConsistSpin.getValue();
         weights.wSampleSize    = wSampleSizeSpin.getValue();
-        weights.wSymmetry      = wSymmetrySpin.getValue();
-        weights.wTailRisk      = wTailRiskSpin.getValue();
         weights.wFwTrades      = wFwTradesSpin.getValue();
         weights.wRecovery      = wRecoverySpin.getValue();
 
@@ -2787,7 +2783,7 @@ public class OptimizationView {
         hint.setWrapText(true);
         hint.setStyle("-fx-text-fill: #7e889a; -fx-font-size: 11px;");
 
-        // \u2500\u2500 Slider rows (10 S\u00e4ulen)
+        // \u2500\u2500 Slider rows (8 S\u00e4ulen \u2014 nur echte Messdaten)
         GridPane grid = new GridPane();
         grid.setHgap(14);
         grid.setVgap(10);
@@ -2797,10 +2793,8 @@ public class OptimizationView {
             dialogLabel("FW Profitabilit\u00e4t"),
             dialogLabel("Konsistenz FW/BT"),
             dialogLabel("Risiko-Verh\u00e4ltnis"),
-            dialogLabel("Equity-Konsistenz"),
+            dialogLabel("Sharpe Ratio"),
             dialogLabel("Stichprobengr\u00f6\u00dfe"),
-            dialogLabel("Symmetrie L/S"),
-            dialogLabel("Tail-Risk"),
             dialogLabel("FW Trade Count"),
             dialogLabel("Erholungsfaktor")
         };
@@ -2809,16 +2803,14 @@ public class OptimizationView {
             "Forward ROI + Profit Factor \u2014 Wie profitabel ist die Strategie Out-of-Sample?",
             "Verh\u00e4ltnis FW/BT: 1.0 = perfekte Reproduzierbarkeit der Ergebnisse",
             "Return/Drawdown + Calmar Ratio \u2014 Gewinn im Verh\u00e4ltnis zum Risiko",
-            "R\u00b2 Stability + SQN \u2014 Wie gleichm\u00e4\u00dfig steigt die Equity-Kurve?",
-            "Anzahl Trades + Testjahre \u2014 Statistische Signifikanz der Ergebnisse",
-            "Long/Short Balance \u2014 Funktioniert die Strategie in beide Richtungen?",
-            "MaxLoss/AvgLoss + MaxLoss/Profit \u2014 Risiko seltener Extremverluste",
+            "Von MT5 gemessene Sharpe Ratio (BT + FW gemittelt) \u2014 echte Kennzahl statt gesch\u00e4tzter Equity-Stabilit\u00e4t",
+            "Anzahl Trades + reale Testjahre \u2014 Statistische Signifikanz der Ergebnisse",
             "Mehr FW-Trades = statistisch belastbarer. Zus\u00e4tzlich automatische Strafe wenn FW-Trades < median/2.",
             "Recovery Factor: Net Profit / Max Drawdown (BT und FW gemittelt)"
         };
         Spinner<Integer>[] spinners = new Spinner[]{
                 wBtProfitSpin, wFwProfitSpin, wConsistSpin, wRiskSpin,
-                wEquityConsistSpin, wSampleSizeSpin, wSymmetrySpin, wTailRiskSpin,
+                wEquityConsistSpin, wSampleSizeSpin,
                 wFwTradesSpin, wRecoverySpin};
 
         final int N = spinners.length;
@@ -2929,7 +2921,7 @@ public class OptimizationView {
         Label autoPenaltyHint = new Label(
             "Automatische Schutzschwelle: FW-Trades unter median/2 erhalten zus\u00e4tzlich " +
             "eine multiplikative Strafe (max. \u221250 %).\n" +
-            "Hinweis: Symmetrie + Tail-Risk werden gesch\u00e4tzt, da MT5 keine L/S-Aufschl\u00fcsselung liefert.");
+            "Alle 8 S\u00e4ulen basieren auf echten MT5-Messwerten (keine gesch\u00e4tzten Kennzahlen).");
         autoPenaltyHint.setWrapText(true);
         autoPenaltyHint.setStyle("-fx-text-fill: #7e889a; -fx-font-size: 10px; -fx-font-style: italic;");
 
@@ -2937,12 +2929,15 @@ public class OptimizationView {
         Button resetBtn = new Button("\u21ba Zur\u00fccksetzen");
         resetBtn.setStyle("-fx-background-color: #2a2d3a; -fx-text-fill: #b4bac8; -fx-border-color: #444; -fx-border-width: 1;");
         resetBtn.setOnAction(e -> {
-            int[] defaults = {10, 15, 15, 15, 10, 10, 5, 10, 5, 5};
+            // Einzige Quelle f\u00fcr Defaults: ScoreWeights.defaults()
+            OptimizationResult.ScoreWeights d = OptimizationResult.ScoreWeights.defaults();
+            double[] defaults = {d.wBtProfit, d.wFwProfit, d.wConsistency, d.wRisk,
+                    d.wEquityConsist, d.wSampleSize, d.wFwTrades, d.wRecovery};
             for (int i = 0; i < N; i++) {
                 sliders[i].setValue(defaults[i]);
             }
-            tfMin.setText("1.0");
-            tfMax.setText("5.0");
+            tfMin.setText(String.valueOf(d.recoveryMin));
+            tfMax.setText(String.valueOf(d.recoveryMax));
         });
 
         boolean[] applied = {false};
@@ -3030,8 +3025,6 @@ public class OptimizationView {
             db.saveSetting("opt.weight.risk", String.valueOf(wRiskSpin.getValue()));
             db.saveSetting("opt.weight.equityConsist", String.valueOf(wEquityConsistSpin.getValue()));
             db.saveSetting("opt.weight.sampleSize", String.valueOf(wSampleSizeSpin.getValue()));
-            db.saveSetting("opt.weight.symmetry", String.valueOf(wSymmetrySpin.getValue()));
-            db.saveSetting("opt.weight.tailRisk", String.valueOf(wTailRiskSpin.getValue()));
             db.saveSetting("opt.weight.fwTrades", String.valueOf(wFwTradesSpin.getValue()));
             db.saveSetting("opt.weight.recovery", String.valueOf(wRecoverySpin.getValue()));
             applyCombinedFilter();
@@ -3451,16 +3444,16 @@ public class OptimizationView {
             boolean onlyMatched = Boolean.parseBoolean(db.getSetting("opt.filter.onlyMatched", "true"));
             if (onlyMatchedCheck != null) onlyMatchedCheck.setSelected(onlyMatched);
             
-            if (wBtProfitSpin != null) wBtProfitSpin.getValueFactory().setValue(Integer.parseInt(db.getSetting("opt.weight.btProfit", "15")));
-            if (wFwProfitSpin != null) wFwProfitSpin.getValueFactory().setValue(Integer.parseInt(db.getSetting("opt.weight.fwProfit", "15")));
-            if (wConsistSpin != null) wConsistSpin.getValueFactory().setValue(Integer.parseInt(db.getSetting("opt.weight.consistency", "10")));
-            if (wRiskSpin != null) wRiskSpin.getValueFactory().setValue(Integer.parseInt(db.getSetting("opt.weight.risk", "10")));
-            if (wEquityConsistSpin != null) wEquityConsistSpin.getValueFactory().setValue(Integer.parseInt(db.getSetting("opt.weight.equityConsist", "10")));
-            if (wSampleSizeSpin != null) wSampleSizeSpin.getValueFactory().setValue(Integer.parseInt(db.getSetting("opt.weight.sampleSize", "25")));
-            if (wSymmetrySpin != null) wSymmetrySpin.getValueFactory().setValue(Integer.parseInt(db.getSetting("opt.weight.symmetry", "5")));
-            if (wTailRiskSpin != null) wTailRiskSpin.getValueFactory().setValue(Integer.parseInt(db.getSetting("opt.weight.tailRisk", "5")));
-            if (wFwTradesSpin != null) wFwTradesSpin.getValueFactory().setValue(Integer.parseInt(db.getSetting("opt.weight.fwTrades", "30")));
-            if (wRecoverySpin != null) wRecoverySpin.getValueFactory().setValue(Integer.parseInt(db.getSetting("opt.weight.recovery", "25")));
+            // Gewichte über die einzige Default-Quelle laden (ScoreWeights.loadFromDatabase)
+            OptimizationResult.ScoreWeights sw = OptimizationResult.ScoreWeights.loadFromDatabase();
+            if (wBtProfitSpin != null) wBtProfitSpin.getValueFactory().setValue((int) sw.wBtProfit);
+            if (wFwProfitSpin != null) wFwProfitSpin.getValueFactory().setValue((int) sw.wFwProfit);
+            if (wConsistSpin != null) wConsistSpin.getValueFactory().setValue((int) sw.wConsistency);
+            if (wRiskSpin != null) wRiskSpin.getValueFactory().setValue((int) sw.wRisk);
+            if (wEquityConsistSpin != null) wEquityConsistSpin.getValueFactory().setValue((int) sw.wEquityConsist);
+            if (wSampleSizeSpin != null) wSampleSizeSpin.getValueFactory().setValue((int) sw.wSampleSize);
+            if (wFwTradesSpin != null) wFwTradesSpin.getValueFactory().setValue((int) sw.wFwTrades);
+            if (wRecoverySpin != null) wRecoverySpin.getValueFactory().setValue((int) sw.wRecovery);
         } catch (Exception e) {
             log.error("Failed to load weights and filters from DB", e);
         }
