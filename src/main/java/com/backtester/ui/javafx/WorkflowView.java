@@ -91,10 +91,10 @@ public class WorkflowView {
     private Label noStatsLabel;
 
     // Visual boxes for the 6 stages
-    private VBox step1Box, step2Box, step3Box, step4Box, step5Box, step6Box;
-    private Label step1Status, step2Status, step3Status, step4Status, step5Status, step6Status;
-    private Label step1Details, step2Details, step3Details, step4Details, step5Details, step6Details;
-    private ProgressIndicator step1Spinner, step2Spinner, step3Spinner, step4Spinner, step5Spinner, step6Spinner;
+    private VBox step1Box, step2Box, step3Box, step4Box, step5Box, step6Box, step7Box;
+    private Label step1Status, step2Status, step3Status, step4Status, step5Status, step6Status, step7Status;
+    private Label step1Details, step2Details, step3Details, step4Details, step5Details, step6Details, step7Details;
+    private ProgressIndicator step1Spinner, step2Spinner, step3Spinner, step4Spinner, step5Spinner, step6Spinner, step7Spinner;
     private int currentlyRunningStep = -1;
     private volatile String currentRunningSymbol = "";
     private volatile int currentSymbolIndex = 0;
@@ -189,6 +189,7 @@ public class WorkflowView {
         step4Spinner = createSpinner();
         step5Spinner = createSpinner();
         step6Spinner = createSpinner();
+        step7Spinner = createSpinner();
 
         // Step 1 Box
         step1Box = buildStepBox("1. Strategie-Auswahl", "Symbol & Parameterbereich festlegen", step1Spinner);
@@ -269,6 +270,21 @@ public class WorkflowView {
         step6Box.setCursor(javafx.scene.Cursor.HAND);
         step6Box.setOnMouseClicked(e -> selectStep(6));
 
+        // Step 7 Box — Out-of-Sample Validierung auf unberührten Daten.
+        // Das Forward-Fenster wird in Schritt 3-6 als Auswahlkriterium verbraucht;
+        // erst dieser Schritt testet auf Daten, die keiner der Schritte je gesehen hat.
+        step7Box = buildStepBox("7. Validierung (OOS)", "Finale Strategien auf unberührten Daten testen", step7Spinner);
+        step7Status = (Label) step7Box.getChildren().get(2);
+        step7Details = (Label) step7Box.getChildren().get(3);
+        Button btn7 = (Button) step7Box.getChildren().get(4);
+        btn7.setOnAction(e -> {
+            WorkflowConfigDialogs.showStep7Dialog(engine, root.getScene().getWindow());
+            updateVisualStates();
+            selectStep(7);
+        });
+        step7Box.setCursor(javafx.scene.Cursor.HAND);
+        step7Box.setOnMouseClicked(e -> selectStep(7));
+
         // Set up context menus for single step execution
         setupContextMenu(step1Box, 1);
         setupContextMenu(step2Box, 2);
@@ -276,14 +292,16 @@ public class WorkflowView {
         setupContextMenu(step4Box, 4);
         setupContextMenu(step5Box, 5);
         setupContextMenu(step6Box, 6);
+        setupContextMenu(step7Box, 7);
 
         row.getChildren().addAll(
-            step1Box, createArrow(), 
-            step2Box, createArrow(), 
-            step3Box, createArrow(), 
-            step4Box, createArrow(), 
-            step5Box, createArrow(), 
-            step6Box
+            step1Box, createArrow(),
+            step2Box, createArrow(),
+            step3Box, createArrow(),
+            step4Box, createArrow(),
+            step5Box, createArrow(),
+            step6Box, createArrow(),
+            step7Box
         );
         return row;
     }
@@ -1160,6 +1178,7 @@ public class WorkflowView {
             case 4: stepName = "4. Robustness Test (CV)"; break;
             case 5: stepName = "5. KI-Bewertung"; break;
             case 6: stepName = "6. Portfolio Export"; break;
+            case 7: stepName = "7. Validierung (OOS)"; break;
         }
 
         resultsTab.setText("Ergebnisse: " + stepName);
@@ -1192,6 +1211,20 @@ public class WorkflowView {
                     listToShow = engine.getFinalSelectedPasses();
                 } else {
                     noDataText = "Kein finales Portfolio vorhanden. Bitte führen Sie den Workflow komplett aus.";
+                }
+                break;
+            case 7:
+                if (!engine.getFinalSelectedPasses().isEmpty()) {
+                    listToShow = engine.getFinalSelectedPasses();
+                    if (engine.getValidationResults() == null || engine.getValidationResults().isEmpty()) {
+                        logToConsole("VALIDIERUNG", "Noch keine Validierungsergebnisse. Rechtsklick auf Schritt 7 → 'Nur diesen Schritt ausführen'.");
+                    } else {
+                        for (com.backtester.report.ValidationResult vr : engine.getValidationResults()) {
+                            logToConsole("VALIDIERUNG", vr.toSummaryLine());
+                        }
+                    }
+                } else {
+                    noDataText = "Kein finales Portfolio vorhanden. Die Validierung benötigt Schritt 6.";
                 }
                 break;
         }
@@ -1247,6 +1280,7 @@ public class WorkflowView {
         if (step4Spinner != null) { step4Spinner.setVisible(false); step4Spinner.setManaged(false); }
         if (step5Spinner != null) { step5Spinner.setVisible(false); step5Spinner.setManaged(false); }
         if (step6Spinner != null) { step6Spinner.setVisible(false); step6Spinner.setManaged(false); }
+        if (step7Spinner != null) { step7Spinner.setVisible(false); step7Spinner.setManaged(false); }
 
         // Show active spinner
         if (currentlyRunningStep == 1 && step1Spinner != null) { step1Spinner.setVisible(true); step1Spinner.setManaged(true); }
@@ -1255,6 +1289,7 @@ public class WorkflowView {
         if (currentlyRunningStep == 4 && step4Spinner != null) { step4Spinner.setVisible(true); step4Spinner.setManaged(true); }
         if (currentlyRunningStep == 5 && step5Spinner != null) { step5Spinner.setVisible(true); step5Spinner.setManaged(true); }
         if (currentlyRunningStep == 6 && step6Spinner != null) { step6Spinner.setVisible(true); step6Spinner.setManaged(true); }
+        if (currentlyRunningStep == 7 && step7Spinner != null) { step7Spinner.setVisible(true); step7Spinner.setManaged(true); }
 
         String runningInfo = "";
         if (currentlyRunningStep != -1 && currentRunningSymbol != null && !currentRunningSymbol.isEmpty()) {
@@ -1321,8 +1356,28 @@ public class WorkflowView {
             setStepBoxState(step6Box, step6Status, step6Details, "LÄUFT...", "Portfolio: " + runningInfo, "#00e5ff", selectedStep == 6);
         } else if (engine.getFinalSelectedPasses().isEmpty()) {
             setStepBoxState(step6Box, step6Status, step6Details, "WARTEND", "Kein Export", "#ffb300", selectedStep == 6);
+        } else if (engine.isKiGateBypassed()) {
+            setStepBoxState(step6Box, step6Status, step6Details, "WARNUNG", engine.getFinalSelectedPasses().size() + " Strategien exportiert — KI-Gate umgangen (alle fragil)!", "#ff5252", selectedStep == 6);
         } else {
             setStepBoxState(step6Box, step6Status, step6Details, "BEREIT", engine.getFinalSelectedPasses().size() + " Best-Strategien exportiert", "#00e676", selectedStep == 6);
+        }
+
+        // Step 7 (Out-of-Sample Validierung)
+        if (currentlyRunningStep == 7) {
+            setStepBoxState(step7Box, step7Status, step7Details, "LÄUFT...", "Validierung: " + runningInfo, "#00e5ff", selectedStep == 7);
+        } else if (engine.getValidationResults() == null || engine.getValidationResults().isEmpty()) {
+            String hint = engine.hasUsableValidationWindow(14)
+                    ? "Fenster " + engine.getEffectiveValidationFromDate() + " – " + engine.getEffectiveValidationToDate()
+                    : "Kein unberührtes Zeitfenster verfügbar";
+            setStepBoxState(step7Box, step7Status, step7Details, "WARTEND", hint, "#ffb300", selectedStep == 7);
+        } else {
+            long passed = engine.getValidationResults().stream()
+                    .filter(com.backtester.report.ValidationResult::isPassed).count();
+            int totalV = engine.getValidationResults().size();
+            String color = passed == totalV ? "#00e676" : (passed == 0 ? "#ff5252" : "#ffd740");
+            setStepBoxState(step7Box, step7Status, step7Details,
+                    passed == totalV ? "BESTANDEN" : (passed == 0 ? "DURCHGEFALLEN" : "TEILWEISE"),
+                    passed + " / " + totalV + " Strategien auf unberührten Daten profitabel", color, selectedStep == 7);
         }
         updateStatsTab();
     }
@@ -1506,7 +1561,35 @@ public class WorkflowView {
                         updateVisualStates();
                         selectStep(6);
                     });
-                    
+                    if (isCancelled()) return null;
+
+                    // Step 7: Out-of-Sample Validierung — nur wenn ein unberührtes
+                    // Zeitfenster nach dem Optimierungszeitraum existiert.
+                    if (engine.hasUsableValidationWindow(14)) {
+                        setRunningStep(7);
+                        updateProgressUI(baseProgress + (0.97 / symbols.length), "[" + currentSym + "] Schritt 7: Validierung auf unberührten Daten...");
+                        logToConsole("WORKFLOW", "[" + currentSym + "] Schritt 7: Teste finale Strategien auf Daten, die weder Optimierung noch Selektion gesehen haben...");
+                        try {
+                            engine.runStep7(
+                                logMsg -> logToConsole("VALIDIERUNG [" + symPrefix + "]", logMsg),
+                                (curr, tot) -> updateProgressUI(baseProgress + (0.97 / symbols.length), "[" + symPrefix + "] Validierung: Strategie " + curr + " / " + tot)
+                            );
+                            Platform.runLater(() -> {
+                                updateVisualStates();
+                                selectStep(7);
+                            });
+                        } catch (Exception validationEx) {
+                            logToConsole("VALIDIERUNG [" + symPrefix + "]",
+                                    "Schritt 7 konnte nicht ausgeführt werden und wird für dieses Symbol übersprungen: "
+                                            + validationEx.getMessage());
+                            log.warn("Step 7 validation skipped for symbol {}: {}", symPrefix, validationEx.getMessage(), validationEx);
+                            Platform.runLater(this::updateVisualStates);
+                        }
+                    } else {
+                        logToConsole("WORKFLOW", "[" + currentSym + "] Schritt 7 übersprungen: Kein unberührtes Validierungsfenster (min. 14 Tage nach Optimierungsende). " +
+                                "Tipp: Optimierungs-Enddatum in die Vergangenheit legen, damit Daten für die Validierung übrig bleiben.");
+                    }
+
                     logToConsole("WORKFLOW", "=== SYMBOL " + currentSym + " ERFOLGREICH BEENDET ===");
 
                     if (i < symbols.length - 1) {
@@ -1689,6 +1772,14 @@ public class WorkflowView {
                     case 6:
                         updateProgressUI(0.80, "Führe Schritt 6: Portfolio Export aus...");
                         engine.runStep6();
+                        break;
+                    case 7:
+                        updateProgressUI(0.10, "Führe Schritt 7: Out-of-Sample Validierung aus...");
+                        engine.runStep7(
+                            logMsg -> logToConsole("VALIDIERUNG", logMsg),
+                            (curr, tot) -> updateProgressUI(0.10 + 0.90 * ((double) curr / Math.max(tot, 1)),
+                                    "Validierung: Strategie " + curr + " / " + tot)
+                        );
                         break;
                 }
                 updateProgressUI(1.0, "Schritt " + stepNum + " erfolgreich abgeschlossen!");

@@ -60,60 +60,17 @@ public class SensitivityRunner {
     }
 
     /**
-     * Determines the end date of the backtest portion of the original optimization,
-     * mirroring how MT5 splits the period when forward testing is enabled.
-     *
-     * MT5 ForwardMode values:
-     *   0 = no forward (full range is backtest)
-     *   1 = 1/2 (forward = last half of the range)
-     *   2 = 1/3 (forward = last third)
-     *   3 = 1/4 (forward = last quarter)
-     *   4 = custom (use ForwardDate)
+     * End date of the backtest portion, mirroring MT5's forward split.
+     * Logic lives in {@link ForwardSplit} so it is unit-testable — see there
+     * for why exactness matters.
      */
     private java.time.LocalDate computeBacktestEndDate(OptimizationConfig cfg) {
-        java.time.LocalDate from = cfg.getFromDate();
-        java.time.LocalDate to = cfg.getToDate();
-        int mode = cfg.getForwardMode();
-
-        if (mode == 0 || from == null || to == null) {
-            return to;
-        }
-        if (mode == 4) {
-            java.time.LocalDate fwd = cfg.getForwardDate();
-            if (fwd != null && fwd.isAfter(from) && fwd.isBefore(to)) {
-                return fwd.minusDays(1);
-            }
-            return to;
-        }
-
-        long totalDays = java.time.temporal.ChronoUnit.DAYS.between(from, to);
-        long backtestDays;
-        switch (mode) {
-            case 1: backtestDays = totalDays / 2;       break; // forward = last 1/2
-            case 2: backtestDays = (totalDays * 2) / 3; break; // forward = last 1/3
-            case 3: backtestDays = (totalDays * 3) / 4; break; // forward = last 1/4
-            default: return to;
-        }
-        if (backtestDays <= 0) return to;
-        return from.plusDays(backtestDays);
+        return ForwardSplit.computeBacktestEndDate(cfg.getFromDate(), cfg.getToDate(), cfg.getForwardMode(), cfg.getForwardDate());
     }
 
     /** Returns the start date of the forward window, or null if there is no forward. */
     private java.time.LocalDate computeForwardStartDate(OptimizationConfig cfg) {
-        java.time.LocalDate from = cfg.getFromDate();
-        java.time.LocalDate to = cfg.getToDate();
-        int mode = cfg.getForwardMode();
-
-        if (mode == 0 || from == null || to == null) return null;
-        if (mode == 4) {
-            java.time.LocalDate fwd = cfg.getForwardDate();
-            if (fwd != null && fwd.isAfter(from) && fwd.isBefore(to)) return fwd;
-            return null;
-        }
-
-        java.time.LocalDate btEnd = computeBacktestEndDate(cfg);
-        if (btEnd == null || !btEnd.isBefore(to)) return null;
-        return btEnd.plusDays(1);
+        return ForwardSplit.computeForwardStartDate(cfg.getFromDate(), cfg.getToDate(), cfg.getForwardMode(), cfg.getForwardDate());
     }
 
     /**

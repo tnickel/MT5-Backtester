@@ -33,7 +33,7 @@ import java.time.format.DateTimeFormatter;
 import java.util.*;
 
 /**
- * Modals and settings dialogs for the 6 visual workflow pipeline steps.
+ * Modals and settings dialogs for the 7 visual workflow pipeline steps.
  */
 public class WorkflowConfigDialogs {
 
@@ -1398,26 +1398,30 @@ public class WorkflowConfigDialogs {
 
         String[] names = {
             "BT Profitabilität", "FW Profitabilität", "Konsistenz FW/BT", "Risiko-Verhältnis",
-            "Equity-Konsistenz", "Stichprobengröße", "Symmetrie L/S", "Tail-Risk",
+            "Sharpe Ratio", "Stichprobengröße",
             "FW Trade Count", "Erholungsfaktor"
         };
         String[] dbKeys = {
             "opt.weight.btProfit", "opt.weight.fwProfit", "opt.weight.consistency", "opt.weight.risk",
-            "opt.weight.equityConsist", "opt.weight.sampleSize", "opt.weight.symmetry", "opt.weight.tailRisk",
+            "opt.weight.equityConsist", "opt.weight.sampleSize",
             "opt.weight.fwTrades", "opt.weight.recovery"
         };
+        // Defaults aus der einzigen Quelle ScoreWeights.defaults()
+        com.backtester.report.OptimizationResult.ScoreWeights wDef =
+                com.backtester.report.OptimizationResult.ScoreWeights.defaults();
         String[] defaults = {
-            "15", "15", "10", "10", "10", "25", "5", "5", "30", "25"
+            String.valueOf((int) wDef.wBtProfit), String.valueOf((int) wDef.wFwProfit),
+            String.valueOf((int) wDef.wConsistency), String.valueOf((int) wDef.wRisk),
+            String.valueOf((int) wDef.wEquityConsist), String.valueOf((int) wDef.wSampleSize),
+            String.valueOf((int) wDef.wFwTrades), String.valueOf((int) wDef.wRecovery)
         };
         String[] tooltips = {
             "Backtest ROI + Profit Factor — Wie profitabel ist die Strategie im In-Sample?",
             "Forward ROI + Profit Factor — Wie profitabel ist die Strategie Out-of-Sample?",
             "Verhältnis FW/BT: 1.0 = perfekte Reproduzierbarkeit der Ergebnisse",
             "Return/Drawdown + Calmar Ratio — Gewinn im Verhältnis zum Risiko",
-            "R² Stability + SQN — Wie gleichmäßig steigt die Equity-Kurve?",
-            "Anzahl Trades + Testjahre — Statistische Signifikanz der Ergebnisse",
-            "Long/Short Balance — Funktioniert die Strategie in beide Richtungen?",
-            "MaxLoss/AvgLoss + MaxLoss/Profit — Risiko seltener Extremverluste",
+            "Von MT5 gemessene Sharpe Ratio (BT + FW gemittelt) — echte Kennzahl statt geschätzter Equity-Stabilität",
+            "Anzahl Trades + reale Testjahre — Statistische Signifikanz der Ergebnisse",
             "Mehr FW-Trades = statistisch belastbarer. Zusätzlich automatische Strafe wenn FW-Trades < median/2.",
             "Recovery Factor: Net Profit / Max Drawdown (BT und FW gemittelt)"
         };
@@ -1531,7 +1535,7 @@ public class WorkflowConfigDialogs {
         Label autoPenaltyHint = new Label(
             "Automatische Schutzschwelle: FW-Trades unter median/2 erhalten zusätzlich " +
             "eine multiplikative Strafe (max. −50 %).\n" +
-            "Hinweis: Symmetrie + Tail-Risk werden geschätzt, da MT5 keine L/S-Aufschlüsselung liefert.");
+            "Alle 8 Säulen basieren auf echten MT5-Messwerten (keine geschätzten Kennzahlen).");
         autoPenaltyHint.setWrapText(true);
         autoPenaltyHint.setStyle("-fx-text-fill: #7e889a; -fx-font-size: 10px; -fx-font-style: italic;");
 
@@ -1572,28 +1576,28 @@ public class WorkflowConfigDialogs {
         Button btnPresetLow = new Button("Low / Zahm");
         btnPresetLow.setStyle("-fx-background-color: #2a2d3a; -fx-text-fill: #a7f3d0; -fx-border-color: #10b981; -fx-border-width: 1; -fx-cursor: hand;");
         btnPresetLow.setOnAction(e -> {
-            int[] lowWeights = {15, 15, 10, 10, 5, 15, 3, 5, 20, 15};
+            int[] lowWeights = {15, 15, 10, 10, 5, 15, 20, 15};
             for (int i = 0; i < N; i++) sliders[i].setValue(lowWeights[i]);
         });
 
         Button btnPresetMed = new Button("Med / Ausgewogen");
         btnPresetMed.setStyle("-fx-background-color: #2a2d3a; -fx-text-fill: #fde047; -fx-border-color: #eab308; -fx-border-width: 1; -fx-cursor: hand;");
         btnPresetMed.setOnAction(e -> {
-            int[] medWeights = {10, 15, 15, 15, 10, 25, 5, 10, 30, 25};
+            int[] medWeights = {10, 15, 15, 15, 10, 25, 30, 25};
             for (int i = 0; i < N; i++) sliders[i].setValue(medWeights[i]);
         });
 
         Button btnPresetHigh = new Button("High / Streng");
         btnPresetHigh.setStyle("-fx-background-color: #2a2d3a; -fx-text-fill: #fca5a5; -fx-border-color: #ef4444; -fx-border-width: 1; -fx-cursor: hand;");
         btnPresetHigh.setOnAction(e -> {
-            int[] highWeights = {5, 10, 15, 15, 15, 25, 5, 15, 35, 30};
+            int[] highWeights = {5, 10, 15, 15, 15, 25, 35, 30};
             for (int i = 0; i < N; i++) sliders[i].setValue(highWeights[i]);
         });
 
         Button btnPresetGrid = new Button("Grid / High-Trade");
         btnPresetGrid.setStyle("-fx-background-color: #2a2d3a; -fx-text-fill: #38bdf8; -fx-border-color: #0284c7; -fx-border-width: 1; -fx-cursor: hand;");
         btnPresetGrid.setOnAction(e -> {
-            int[] gridWeights = {5, 5, 15, 5, 5, 35, 5, 5, 35, 40};
+            int[] gridWeights = {5, 5, 15, 5, 5, 35, 35, 40};
             for (int i = 0; i < N; i++) sliders[i].setValue(gridWeights[i]);
         });
 
@@ -1901,6 +1905,122 @@ public class WorkflowConfigDialogs {
 
     // ─── Step 6: Export & Final Selection ──────────────────────────────────────
 
+    /**
+     * Schritt 7: Konfiguration des Out-of-Sample-Validierungsfensters.
+     *
+     * <p>Das Fenster muss NACH dem Optimierungszeitraum liegen, damit die
+     * finalen Strategien auf Daten getestet werden, die weder die Optimierung
+     * (Schritt 2) noch die Selektion (Schritte 3–6, die das Forward-Fenster
+     * als Auswahlkriterium verbrauchen) je gesehen haben.
+     */
+    public static void showStep7Dialog(WorkflowEngine engine, Window owner) {
+        Stage stage = new Stage();
+        stage.setTitle("Schritt 7: Out-of-Sample Validierung");
+
+        VBox layout = new VBox(15);
+        layout.setStyle("-fx-background-color: #0b0d13; -fx-padding: 20;");
+        layout.setPrefWidth(620);
+
+        Label title = new Label("VALIDIERUNG AUF UNBERÜHRTEN DATEN");
+        title.setFont(Font.font("Segoe UI", FontWeight.BOLD, 18));
+        title.setTextFill(Color.web("#00e5ff"));
+
+        Label info = new Label(
+            "Warum dieser Schritt? Das Forward-Fenster wird in den Schritten 3–6 bereits als " +
+            "Auswahlkriterium benutzt. Wer aus tausenden Pässen die besten nach Forward-Performance " +
+            "auswählt, verbraucht das Forward-Fenster (Selection Bias) — einige Pässe sehen dort " +
+            "rein zufällig gut aus. Erst ein Backtest auf einem Zeitfenster, das KEIN Schritt je " +
+            "gesehen hat, liefert eine ehrliche Out-of-Sample-Schätzung.\n\n" +
+            "Standard: Das Fenster beginnt einen Tag nach dem Optimierungs-Enddatum und endet heute. " +
+            "Es darf sich nicht mit dem Optimierungszeitraum überlappen."
+        );
+        info.setWrapText(true);
+        info.setStyle("-fx-text-fill: #b4bac8; -fx-font-size: 12px;");
+
+        String optRange = (engine.getFromDate() != null ? engine.getFromDate().toString() : "?") +
+                " bis " + (engine.getToDate() != null ? engine.getToDate().toString() : "?");
+        Label optRangeLabel = new Label("Optimierungszeitraum (bereits verbraucht): " + optRange);
+        optRangeLabel.setStyle("-fx-text-fill: #7e889a; -fx-font-size: 11px;");
+
+        GridPane grid = new GridPane();
+        grid.setHgap(12);
+        grid.setVgap(10);
+
+        Label fromLabel = new Label("Validierung von:");
+        fromLabel.setStyle("-fx-text-fill: #b4bac8;");
+        DatePicker fromPicker = new DatePicker(engine.getEffectiveValidationFromDate());
+
+        Label toLabel = new Label("Validierung bis:");
+        toLabel.setStyle("-fx-text-fill: #b4bac8;");
+        DatePicker toPicker = new DatePicker(engine.getEffectiveValidationToDate());
+
+        grid.add(fromLabel, 0, 0);
+        grid.add(fromPicker, 1, 0);
+        grid.add(toLabel, 0, 1);
+        grid.add(toPicker, 1, 1);
+
+        Label statusLabel = new Label();
+        statusLabel.setWrapText(true);
+        statusLabel.setStyle("-fx-text-fill: #ffd740; -fx-font-size: 11px;");
+        Runnable refreshStatus = () -> {
+            LocalDate f = fromPicker.getValue();
+            LocalDate t = toPicker.getValue();
+            if (f == null || t == null || !f.isBefore(t)) {
+                statusLabel.setText("⚠ Ungültiges Fenster: 'von' muss vor 'bis' liegen.");
+                statusLabel.setStyle("-fx-text-fill: #ff5252; -fx-font-size: 11px;");
+            } else if (engine.getToDate() != null && !f.isAfter(engine.getToDate())) {
+                statusLabel.setText("⚠ Fenster überlappt mit dem Optimierungszeitraum — Ergebnis wäre KEINE echte Out-of-Sample-Validierung!");
+                statusLabel.setStyle("-fx-text-fill: #ff5252; -fx-font-size: 11px;");
+            } else {
+                long days = java.time.temporal.ChronoUnit.DAYS.between(f, t);
+                statusLabel.setText("✓ Gültiges Fenster (" + days + " Tage unberührte Daten)." +
+                        (days < 30 ? " Hinweis: Kurze Fenster liefern nur schwache Evidenz." : ""));
+                statusLabel.setStyle("-fx-text-fill: #00e676; -fx-font-size: 11px;");
+            }
+        };
+        fromPicker.valueProperty().addListener((o, a, b) -> refreshStatus.run());
+        toPicker.valueProperty().addListener((o, a, b) -> refreshStatus.run());
+        refreshStatus.run();
+
+        // Bisherige Ergebnisse anzeigen
+        VBox resultsBox = new VBox(4);
+        if (engine.getValidationResults() != null && !engine.getValidationResults().isEmpty()) {
+            Label resTitle = new Label("Letzte Validierungsergebnisse:");
+            resTitle.setStyle("-fx-text-fill: #00e5ff; -fx-font-weight: bold; -fx-font-size: 12px;");
+            resultsBox.getChildren().add(resTitle);
+            for (com.backtester.report.ValidationResult vr : engine.getValidationResults()) {
+                Label line = new Label(vr.toSummaryLine());
+                line.setStyle("-fx-font-size: 11px; -fx-text-fill: " +
+                        (vr.isPassed() ? "#00e676" : "#ff5252") + ";");
+                resultsBox.getChildren().add(line);
+            }
+        }
+
+        Button saveBtn = new Button("✔ Übernehmen & Schließen");
+        saveBtn.setStyle("-fx-background-color: #00e5ff; -fx-text-fill: #0d0f17; -fx-font-weight: bold;");
+        saveBtn.setOnAction(e -> {
+            engine.setValidationFromDate(fromPicker.getValue());
+            engine.setValidationToDate(toPicker.getValue());
+            engine.saveStrategyConfig(engine.getExpert());
+            engine.saveState();
+            stage.close();
+        });
+
+        Button cancelBtn = new Button("Abbrechen");
+        cancelBtn.setStyle("-fx-background-color: #2a2d3a; -fx-text-fill: #b4bac8; -fx-border-color: #444; -fx-border-width: 1;");
+        cancelBtn.setOnAction(e -> stage.close());
+
+        HBox btnRow = new HBox(10, saveBtn, cancelBtn);
+        btnRow.setAlignment(Pos.CENTER_RIGHT);
+
+        layout.getChildren().addAll(title, info, optRangeLabel, grid, statusLabel, resultsBox, btnRow);
+
+        Scene scene = new Scene(layout);
+        stage.setScene(scene);
+        applyTheme(stage, owner);
+        stage.showAndWait();
+    }
+
     public static void showStep6Dialog(WorkflowEngine engine, Window owner) {
         Stage stage = new Stage();
         stage.setTitle("Schritt 6: Finales Portfolio & Export");
@@ -1925,8 +2045,8 @@ public class WorkflowConfigDialogs {
         passCol.setStyle("-fx-alignment: CENTER;");
 
         TableColumn<CombinedPass, Double> scoreCol = new TableColumn<>();
-        scoreCol.setGraphic(DocHelper.createHeaderWithTooltip("Score", 
-            "Unified Score (0-100):\nGewichteter Gesamtwert aus 10 Kriterien (Profit, DD, PF etc.). Konfigurierbar über das Regler-Symbol. Zeigt die beste Gesamtperformance."));
+        scoreCol.setGraphic(DocHelper.createHeaderWithTooltip("Score",
+            "Unified Score (0-100):\nGewichteter Gesamtwert aus 8 Säulen echter MT5-Messdaten (Profit, DD, PF, Sharpe etc.). Konfigurierbar über das Regler-Symbol. Zeigt die beste Gesamtperformance."));
         scoreCol.setCellValueFactory(c -> new javafx.beans.property.SimpleObjectProperty<>(c.getValue().getScore()));
         scoreCol.setPrefWidth(100);
         scoreCol.setStyle("-fx-alignment: CENTER;");
@@ -1945,8 +2065,8 @@ public class WorkflowConfigDialogs {
         });
 
         TableColumn<CombinedPass, String> robScoreCol = new TableColumn<>();
-        robScoreCol.setGraphic(DocHelper.createHeaderWithTooltip("Rob. Scorecard", 
-            "Robustness Scorecard (0-100):\nErgebnis des Monte-Carlo-Stresstests und systematischen Parameter-Shifting. Simuliert Rauschen (Slippage, Spread, Execution) und bewertet die Geradlinigkeit (R²-Stabilität) der Equity-Kurve."));
+        robScoreCol.setGraphic(DocHelper.createHeaderWithTooltip("Rob. Scorecard",
+            "Robustness Scorecard (0-100):\nGewichteter Score aus 8 Säulen echter MT5-Messdaten: Profitabilität (BT+FW), FW/BT-Konsistenz, Risiko-Verhältnis, Sharpe Ratio, Stichprobengröße, FW-Trades und Erholungsfaktor."));
         robScoreCol.setCellValueFactory(c -> {
             String fromDateStr = engine.getFromDate() != null ? engine.getFromDate().toString() : "Unbekannt";
             String toDateStr = engine.getToDate() != null ? engine.getToDate().toString() : "Unbekannt";

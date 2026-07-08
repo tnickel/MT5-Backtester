@@ -215,8 +215,6 @@ public class OptimizationResultTest {
         gridWeights.wRisk = 5.0;
         gridWeights.wEquityConsist = 5.0;
         gridWeights.wSampleSize = 35.0; // High weight on trades!
-        gridWeights.wSymmetry = 5.0;
-        gridWeights.wTailRisk = 5.0;
         gridWeights.wFwTrades = 35.0;  // High weight on trades!
         gridWeights.wRecovery = 40.0;  // High weight on recovery!
         gridWeights.recoveryMin = 1.0;

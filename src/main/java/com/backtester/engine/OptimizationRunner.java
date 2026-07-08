@@ -28,8 +28,11 @@ public class OptimizationRunner {
     private final AppConfig config;
     private final IniGenerator iniGenerator;
     private final OptimizationReportParser parser;
-    private Process currentProcess;
-    private boolean cancelled = false;
+    // volatile: cancel() is called from the UI thread while runOptimization()
+    // polls these fields in its worker loop — without volatile the loop may
+    // never see the cancellation.
+    private volatile Process currentProcess;
+    private volatile boolean cancelled = false;
     private Consumer<String> logCallback;
     private java.util.function.BiConsumer<Integer, Integer> progressCallback;
     private long totalPasses = 1;
@@ -72,7 +75,7 @@ public class OptimizationRunner {
         MetaTraderPlatform platform = config.getPlatform(optConfig.getExpert());
 
         // Pre-flight: check for stale MetaTrader processes from previous runs
-        if (!Mt5ProcessGuard.ensureNoStaleProcesses(null, this::logMessage)) {
+        if (!Mt5ProcessGuard.ensureNoStaleProcesses(null, this::logMessage, optConfig.isShutdownTerminal())) {
             logMessage("Optimization aborted: user declined to kill stale MetaTrader process.");
             result.setMessage("Aborted: stale MetaTrader process");
             return result;
@@ -148,6 +151,10 @@ public class OptimizationRunner {
             currentProcess = VirtualDesktopHelper.startOnDesktop2(terminalPath, mt5Args, mt5Dir);
             if (currentProcess != null) {
                 Mt5ProcessGuard.registerProcess(currentProcess);
+            } else {
+                logMessage("ERROR: Failed to launch MT5 process or it exited immediately (likely another instance is running or lock folder is locked).");
+                result.setMessage("Failed to launch MT5 process");
+                return result;
             }
 
             // Wait for completion
@@ -210,13 +217,26 @@ public class OptimizationRunner {
             } else {
                 logMessage("Waiting for optimization to finish (" + platformName + " will remain open)...");
                 boolean finished = false;
+                // Watchdog: same inactivity limits as the shutdown branch. Without
+                // this, a terminal that never writes a report would keep this loop
+                // spinning forever (the process stays alive because the terminal
+                // remains open by design in this mode).
+                long lastActivityDeadline = System.currentTimeMillis();
                 while (!finished && !cancelled && currentProcess.isAlive()) {
                     Thread.sleep(2000);
+                    long now = System.currentTimeMillis();
+                    if (now - tailer.getLastActivityTime() < 600_000) {
+                        lastActivityDeadline = now;
+                    } else if (now - lastActivityDeadline > 600_000) {
+                        logMessage("ERROR: No optimization log activity for 10 minutes (terminal stays open mode). Giving up waiting for the report.");
+                        result.setMessage("Progress timeout (terminal remains open)");
+                        break;
+                    }
                     reportFile = getOptimizationReportPath(mt5Dir, platform);
                     if (Files.exists(reportFile)) {
                         // Let terminal finish writing to the file completely
                         Thread.sleep(2000);
-                        
+
                         // If forward mode is enabled, wait for forward XML as well (only for MT5)
                         if (platform == MetaTraderPlatform.MT5 && optConfig.getForwardMode() > 0) {
                             Path forwardXml = mt5Dir.resolve(REPORT_FILENAME + ".forward.xml");

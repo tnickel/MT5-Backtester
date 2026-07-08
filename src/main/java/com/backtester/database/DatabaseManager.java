@@ -147,7 +147,9 @@ public class DatabaseManager {
                 "sensitivity_results_json TEXT," +
                 "ki_report_text TEXT," +
                 "final_selected_passes_json TEXT," +
-                "last_active_step INTEGER" +
+                "last_active_step INTEGER," +
+                "validation_results_json TEXT," +
+                "ki_gate_bypassed INTEGER DEFAULT 0" +
                 ");";
 
         String sqlWorkflowStrategyConfigs = "CREATE TABLE IF NOT EXISTS WORKFLOW_STRATEGY_CONFIGS (" +
@@ -216,6 +218,29 @@ public class DatabaseManager {
             stmt.execute(sqlSettings);
             stmt.execute(sqlKiReports);
             stmt.execute(sqlMultiBatches);
+
+            // Migration: WORKFLOW_STATE gained validation_results_json (Step 7)
+            // and ki_gate_bypassed (visible KI-gate fallback across restarts)
+            try {
+                ResultSet rs = stmt.executeQuery("PRAGMA table_info(WORKFLOW_STATE)");
+                boolean hasValidation = false;
+                boolean hasKiGate = false;
+                while (rs.next()) {
+                    String col = rs.getString("name");
+                    if ("validation_results_json".equals(col)) hasValidation = true;
+                    if ("ki_gate_bypassed".equals(col)) hasKiGate = true;
+                }
+                if (!hasValidation) {
+                    log.info("Migrating WORKFLOW_STATE: adding validation_results_json column...");
+                    stmt.execute("ALTER TABLE WORKFLOW_STATE ADD COLUMN validation_results_json TEXT");
+                }
+                if (!hasKiGate) {
+                    log.info("Migrating WORKFLOW_STATE: adding ki_gate_bypassed column...");
+                    stmt.execute("ALTER TABLE WORKFLOW_STATE ADD COLUMN ki_gate_bypassed INTEGER DEFAULT 0");
+                }
+            } catch (Exception e) {
+                log.warn("Could not migrate WORKFLOW_STATE for validation/ki-gate columns", e);
+            }
 
             // Check if SENSITIVITY_DETAIL has the new 'verdict' column, otherwise recreate it
             try {
@@ -773,15 +798,16 @@ public class DatabaseManager {
             String eaParametersJson, String optResultJson,
             String selectedDiversePassesJson, String sensitivityResultsJson,
             String kiReportText, String finalSelectedPassesJson,
-            int lastActiveStep) {
-        
+            int lastActiveStep, String validationResultsJson,
+            boolean kiGateBypassed) {
+
         String sql = "INSERT OR REPLACE INTO WORKFLOW_STATE (" +
                 "id, expert_name, symbol, period, from_date, to_date, deposit, " +
                 "currency, leverage, tick_model, ea_parameters_json, opt_result_json, " +
                 "selected_diverse_passes_json, sensitivity_results_json, ki_report_text, " +
-                "final_selected_passes_json, last_active_step" +
-                ") VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
-        
+                "final_selected_passes_json, last_active_step, validation_results_json, ki_gate_bypassed" +
+                ") VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+
         try (Connection conn = connect(); PreparedStatement p = conn.prepareStatement(sql)) {
             p.setString(1, expertName);
             p.setString(2, symbol);
@@ -799,6 +825,8 @@ public class DatabaseManager {
             p.setString(14, kiReportText);
             p.setString(15, finalSelectedPassesJson);
             p.setInt(16, lastActiveStep);
+            p.setString(17, validationResultsJson);
+            p.setInt(18, kiGateBypassed ? 1 : 0);
             p.executeUpdate();
             log.info("Saved workflow state to database.");
         } catch (SQLException e) {
@@ -826,7 +854,9 @@ public class DatabaseManager {
                     rs.getString("sensitivity_results_json"),
                     rs.getString("ki_report_text"),
                     rs.getString("final_selected_passes_json"),
-                    rs.getInt("last_active_step")
+                    rs.getInt("last_active_step"),
+                    rs.getString("validation_results_json"),
+                    rs.getInt("ki_gate_bypassed") != 0
                 };
             }
         } catch (SQLException e) {

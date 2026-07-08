@@ -252,10 +252,8 @@ public class OptimizationResultMoreTest {
         w.wRisk = 10;
         w.wEquityConsist = 10;
         w.wSampleSize = 10;
-        w.wSymmetry = 10;
-        w.wTailRisk = 10;
         w.wFwTrades = 10;
         w.wRecovery = 10;
-        assertEquals(100.0, w.total(), 0.001);
+        assertEquals(80.0, w.total(), 0.001);
     }
 }

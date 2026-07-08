@@ -2,8 +2,6 @@ package com.backtester.report;
 
 import com.backtester.database.DatabaseManager;
 import com.backtester.report.OptimizationResult.CombinedPass;
-import java.util.ArrayList;
-import java.util.List;
 import java.util.Locale;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -28,20 +26,8 @@ public class RobustnessScorecardGenerator {
         double years = calculateYears(fromDate, toDate);
         PillarScores s = computePillars(cp, years);
 
-        DatabaseManager db = DatabaseManager.getInstance();
-        OptimizationResult.ScoreWeights w = new OptimizationResult.ScoreWeights();
-        w.wBtProfit = Double.parseDouble(db.getSetting("opt.weight.btProfit", "15"));
-        w.wFwProfit = Double.parseDouble(db.getSetting("opt.weight.fwProfit", "15"));
-        w.wConsistency = Double.parseDouble(db.getSetting("opt.weight.consistency", "10"));
-        w.wRisk = Double.parseDouble(db.getSetting("opt.weight.risk", "10"));
-        w.wEquityConsist = Double.parseDouble(db.getSetting("opt.weight.equityConsist", "10"));
-        w.wSampleSize = Double.parseDouble(db.getSetting("opt.weight.sampleSize", "25"));
-        w.wSymmetry = Double.parseDouble(db.getSetting("opt.weight.symmetry", "5"));
-        w.wTailRisk = Double.parseDouble(db.getSetting("opt.weight.tailRisk", "5"));
-        w.wFwTrades = Double.parseDouble(db.getSetting("opt.weight.fwTrades", "30"));
-        w.wRecovery = Double.parseDouble(db.getSetting("opt.weight.recovery", "25"));
-        w.recoveryMin = Double.parseDouble(db.getSetting("opt.weight.recovery.min", "1.0"));
-        w.recoveryMax = Double.parseDouble(db.getSetting("opt.weight.recovery.max", "5.0"));
+        // Single source of truth for weights & defaults (see ScoreWeights.loadFromDatabase)
+        OptimizationResult.ScoreWeights w = OptimizationResult.ScoreWeights.loadFromDatabase();
 
         double overallScore = s.calculateWeighted(w);
 
@@ -88,15 +74,14 @@ public class RobustnessScorecardGenerator {
         );
         pillarsJson.append(",\n");
 
-        // 5. Equity consistency
-        double startBalance = 10000.0;
-        List<Double> curve = generateSyntheticEquityCurve(startBalance, cp.getBtProfit(), cp.getBtTrades(), cp.getBtPf(), cp.getPassNumber());
-        double stability = calculateR2(curve);
-        double sqn = calculateSqn(cp.getBtProfit(), cp.getBtTrades(), cp.getBtPf());
-        addPillarJson(pillarsJson, "Equity-Konsistenz", "equity_consistency", w.wEquityConsist, s.equityConsist,
-            new String[]{"Stability (R²)", "SQN"},
-            new String[]{String.format(Locale.US, "%.2f", stability), String.format(Locale.US, "%.2f", sqn)},
-            new String[]{"'stability'", "'sqn'"}
+        // 5. Sharpe Ratio (echte MT5-Kennzahl — ersetzt die frühere synthetische
+        //    "Equity-Konsistenz" aus R²/SQN einer zufällig generierten Kurve)
+        String btSharpeStr = String.format(Locale.US, "%.2f", cp.getBtSharpe());
+        String fwSharpeStr = cp.getForwardPass() != null ? String.format(Locale.US, "%.2f", cp.getFwSharpe()) : "n/a";
+        addPillarJson(pillarsJson, "Sharpe Ratio", "equity_consistency", w.wEquityConsist, s.equityConsist,
+            new String[]{"BT-Sharpe", "FW-Sharpe"},
+            new String[]{btSharpeStr, fwSharpeStr},
+            new String[]{"'btSharpe'", "'fwSharpe'"}
         );
         pillarsJson.append(",\n");
 
@@ -108,29 +93,7 @@ public class RobustnessScorecardGenerator {
         );
         pillarsJson.append(",\n");
 
-        // 7. Symmetry
-        addPillarJson(pillarsJson, "Symmetrie", "symmetry", w.wSymmetry, s.symmetry,
-            new String[]{"Symmetrie", "L/S Split"},
-            new String[]{"0.80", "50/50"},
-            new String[]{"'symField'", "'lsSplit'"}
-        );
-        pillarsJson.append(",\n");
-
-        // 8. Tail risk
-        double grossLoss = cp.getBtProfit() / Math.max(cp.getBtPf() - 1.0, 0.01);
-        int losses = Math.max(1, (int) Math.round(cp.getBtTrades() * 0.45));
-        double avgLoss = grossLoss / losses;
-        double maxLoss = avgLoss * 2.8;
-        double mlAlRatio = Math.abs(maxLoss / avgLoss);
-        double mlNpRatio = Math.abs(maxLoss) / Math.max(Math.abs(cp.getBtProfit()), 0.01);
-        addPillarJson(pillarsJson, "Tail-Risk", "tail_risk", w.wTailRisk, s.tailRisk,
-            new String[]{"MaxLoss/AvgLoss", "MaxLoss/NetProfit"},
-            new String[]{String.format(Locale.US, "%.1f", mlAlRatio), String.format(Locale.US, "%.1f%%", mlNpRatio * 100)},
-            new String[]{"'mlAl'", "'mlNp'"}
-        );
-        pillarsJson.append(",\n");
-
-        // 9. FW Trades
+        // 7. FW Trades
         String fwTradesStr = cp.getForwardPass() != null ? String.valueOf(cp.getFwTrades()) : "n/a";
         addPillarJson(pillarsJson, "FW Trade Count", "fw_trades", w.wFwTrades, s.fwTrades,
             new String[]{"FW-Trades"},
@@ -139,7 +102,7 @@ public class RobustnessScorecardGenerator {
         );
         pillarsJson.append(",\n");
 
-        // 10. Recovery
+        // 8. Recovery
         String fwRecStr = cp.getForwardPass() != null ? String.format(Locale.US, "%.2f", cp.getFwRecovery()) : "n/a";
         addPillarJson(pillarsJson, "Erholungsfaktor", "recovery", w.wRecovery, s.recovery,
             new String[]{"BT-Rec", "FW-Rec"},
@@ -694,16 +657,16 @@ public class RobustnessScorecardGenerator {
                 "        <button class=\"modal-close\" @click=\"showExplainModal = false\">&times;</button>\n" +
                 "      </div>\n" +
                 "      <div class=\"modal-body\">\n" +
-                "        <p>Der <strong>Robustness Score (0–100)</strong> ist Teil des <strong>Unified Scores</strong>, der Performance und Robustheit in einer einzigen Bewertung vereint. Er basiert auf 10 Säulen und hilft dabei, überoptimierte Strategien (Curve-Fitting) zu identifizieren.</p>\n" +
+                "        <p>Der <strong>Robustness Score (0–100)</strong> ist Teil des <strong>Unified Scores</strong>, der Performance und Robustheit in einer einzigen Bewertung vereint. Er basiert auf 8 Säulen — ausschließlich aus echten MetaTrader-Messwerten — und hilft dabei, überoptimierte Strategien (Curve-Fitting) zu identifizieren.</p>\n" +
                 "        \n" +
                 "        <div style=\"background: rgba(0, 229, 255, 0.08); border-left: 4px solid var(--primary); padding: 12px; margin-bottom: 15px; border-radius: 4px;\">\n" +
 "          <strong style=\"color: var(--primary);\">📊 Die drei Scores im Überblick:</strong><br>\n" +
-                "          <strong>1. Unified Score:</strong> Bewertet Performance (Profit, Drawdown, PF) UND Robustheit (R²-Stabilität, SQN, Symmetrie, Tail-Risk) in einem gewichteten Score. Hier konfigurierbar.<br>\n" +
+                "          <strong>1. Unified Score:</strong> Bewertet Performance (Profit, Drawdown, PF) UND Robustheit (Konsistenz, Sharpe, Stichprobe, Recovery) in einem gewichteten Score. Hier konfigurierbar.<br>\n" +
                 "          <strong>2. Sensitiv Score:</strong> Misst die Parameter-Stabilität beim Rütteln — wie stark schwanken die Ergebnisse, wenn Parameter leicht verändert werden? (Berechnet über CV-Werte der Sensitivitätsanalyse)<br>\n" +
                 "          <strong>3. KI Score:</strong> KI-Analyse, die den Unified Score, den Sensitiv Score und die Kennlinienverläufe zusammen bewertet. Im finalen Portfolio (Schritt 6) wird dieser Score gewichtet mit dem Unified Score zum Gesamtwert verrechnet (Standard: 60% Performance / 40% KI-Stabilität, konfigurierbar in den KI-Einstellungen).\n" +
                 "        </div>\n" +
                 "        \n" +
-                "        <div class=\"section-title\">Die 10 Säulen des Unified Score</div>\n" +
+                "        <div class=\"section-title\">Die 8 Säulen des Unified Score</div>\n" +
                 "        \n" +
                 "        <div class=\"pillar-desc\">\n" +
                 "          <div class=\"pillar-desc-header\" style=\"color: var(--primary);\">1. BT-Profitabilität</div>\n" +
@@ -726,52 +689,47 @@ public class RobustnessScorecardGenerator {
                 "        </div>\n" +
                 "\n" +
                 "        <div class=\"pillar-desc\">\n" +
-                "          <div class=\"pillar-desc-header\" style=\"color: var(--primary);\">5. Equity-Konsistenz</div>\n" +
-                "          <p>Linearität der Equity-Kurve (Stability R²) und System Quality Number (SQN). Eine gleichmäßige Kurve deutet auf systematische Gewinne hin.</p>\n" +
+                "          <div class=\"pillar-desc-header\" style=\"color: var(--primary);\">5. Sharpe Ratio</div>\n" +
+                "          <p>Die von MetaTrader pro Pass gemessene Sharpe Ratio (Backtest und Forward gemittelt). Bewertet die Gleichmäßigkeit der Erträge relativ zu ihrer Schwankung — eine echte Messgröße, kein Schätzwert.</p>\n" +
                 "        </div>\n" +
                 "\n" +
                 "        <div class=\"pillar-desc\">\n" +
                 "          <div class=\"pillar-desc-header\" style=\"color: var(--primary);\">6. Stichprobengröße</div>\n" +
-                "          <p>Mindestens 100 Trades und ausreichende historische Testjahre. Weniger als 100 Trades deckeln diese Säule auf max. 30 Punkte.</p>\n" +
+                "          <p>Mindestens 100 Trades und ausreichende historische Testjahre (real aus dem Testzeitraum berechnet). Weniger als 100 Trades deckeln diese Säule auf max. 30 Punkte.</p>\n" +
                 "        </div>\n" +
                 "\n" +
                 "        <div class=\"pillar-desc\">\n" +
-                "          <div class=\"pillar-desc-header\" style=\"color: var(--primary);\">7. Symmetrie</div>\n" +
-                "          <p>Ausgewogenheit zwischen Long- und Short-Ergebnissen. Schützt vor einseitiger Marktabhängigkeit.</p>\n" +
-                "        </div>\n" +
-                "\n" +
-                "        <div class=\"pillar-desc\">\n" +
-                "          <div class=\"pillar-desc-header\" style=\"color: var(--primary);\">8. Tail-Risk</div>\n" +
-                "          <p>Verhältnis des maximalen Verlusts zum durchschnittlichen Verlust und zum Nettogewinn. Schützt vor extremen Ausreißer-Verlusten.</p>\n" +
-                "        </div>\n" +
-                "\n" +
-                "        <div class=\"pillar-desc\">\n" +
-                "          <div class=\"pillar-desc-header\" style=\"color: var(--primary);\">9. FW Trade Count</div>\n" +
+                "          <div class=\"pillar-desc-header\" style=\"color: var(--primary);\">7. FW Trade Count</div>\n" +
                 "          <p>Anzahl der Trades in der Forward-Phase zur Absicherung der statistischen Signifikanz.</p>\n" +
                 "        </div>\n" +
                 "\n" +
                 "        <div class=\"pillar-desc\">\n" +
-                "          <div class=\"pillar-desc-header\" style=\"color: var(--primary);\">10. Erholungsfaktor</div>\n" +
+                "          <div class=\"pillar-desc-header\" style=\"color: var(--primary);\">8. Erholungsfaktor</div>\n" +
                 "          <p>Fähigkeit der Strategie, sich schnell aus Verlustphasen zu erholen (gemessen im Backtest und Forward-Test).</p>\n" +
+                "        </div>\n" +
+                "\n" +
+                "        <div class=\"pillar-desc\" style=\"border-left-color: var(--ok);\">\n" +
+                "          <div class=\"pillar-desc-header\" style=\"color: var(--ok);\">Entfernte Säulen (Transparenz-Hinweis)</div>\n" +
+                "          <p>Die früheren Säulen <i>Equity-Konsistenz (R²/SQN)</i>, <i>Symmetrie</i> und <i>Tail-Risk</i> wurden entfernt: Sie basierten nicht auf Messdaten, sondern auf einer synthetisch generierten Equity-Kurve bzw. fest angenommenen Werten und haben dem Score damit Schein-Information hinzugefügt.</p>\n" +
                 "        </div>\n" +
                 "\n" +
                 "        <div class=\"section-title\">Interpretations-Beispiele</div>\n" +
                 "        \n" +
                 "        <div class=\"pillar-desc\" style=\"border-left-color: var(--good); background: rgba(0, 230, 118, 0.05);\">\n" +
                 "          <strong style=\"color: var(--good);\">Beispiel A: Robuster Gewinner (Score: 85 - Klasse A)</strong>\n" +
-                "          <p style=\"margin: 4px 0 0 0;\">350 Trades über 5 Jahre, gleichmäßige Equity-Kurve (Stability = 0.88), Calmar = 2.4, Symmetrie = 0.90, MaxLoss ist nur 2.1-mal so groß wie der durchschnittliche Verlust. Diese Strategie zeigt eine hervorragende, breit abgestützte Stabilität über verschiedene Marktphasen hinweg.</p>\n" +
+                "          <p style=\"margin: 4px 0 0 0;\">350 Trades über 5 Jahre, Sharpe 1.4 im Backtest und 1.2 im Forward, Calmar = 2.4, Forward-Profit proportional zum Backtest. Diese Strategie zeigt eine hervorragende, breit abgestützte Stabilität über verschiedene Marktphasen hinweg.</p>\n" +
                 "        </div>\n" +
                 "\n" +
                 "        <div class=\"pillar-desc\" style=\"border-left-color: var(--bad); background: rgba(255, 82, 82, 0.05);\">\n" +
                 "          <strong style=\"color: var(--bad);\">Beispiel B: Curve-Fitted Illusion (Score: 35 - Klasse D/E)</strong>\n" +
-                "          <p style=\"margin: 4px 0 0 0;\">35 Trades über 2 Jahre. Ein einziger Riesen-Gewinn-Trade rettet die Performance, während die Equity ansonsten fällt (Stability = 0.35). Der maximale Verlust ist 9-mal so hoch wie der mittlere Verlust. Extrem hohes Risiko, dass diese Strategie im Live-Trading scheitert.</p>\n" +
+                "          <p style=\"margin: 4px 0 0 0;\">35 Trades über 2 Jahre, Sharpe nahe 0, Forward-Profit bricht gegenüber dem Backtest massiv ein. Ein einziger Riesen-Gewinn-Trade rettet die Performance. Extrem hohes Risiko, dass diese Strategie im Live-Trading scheitert.</p>\n" +
                 "        </div>\n" +
                 "\n" +
                 "        <div class=\"section-title\">Worauf man achten muss</div>\n" +
                 "        <ol style=\"padding-left: 20px; margin: 8px 0; line-height: 1.6;\">\n" +
                 "          <li><strong>Keine Live-Garantie:</strong> Ein hoher Score ist ein sehr guter Filter, aber kein Versprechen. Nutze <i>immer</i> Out-of-Sample-Validierung (Forward-Test).</li>\n" +
                 "          <li><strong>Die Stichprobe ist König:</strong> Achte darauf, dass deine Strategie genügend Trades macht. Wenige Glückstrades verfälschen alle anderen Metriken.</li>\n" +
-                "          <li><strong>Verlust-Begrenzung:</strong> Überprüfe das Tail-Risk. Strategien mit großem maximalem Verlust bei kleinem Durchschnittsgewinn neigen dazu, plötzlich das Konto zu ruinieren.</li>\n" +
+                "          <li><strong>Validierung auf unberührten Daten:</strong> Der Forward-Test wird bereits für die Auswahl benutzt. Nutze Schritt 7 (Validierung), um die finalen Strategien auf einem Zeitfenster zu prüfen, das weder Optimierung noch Auswahl je gesehen hat.</li>\n" +
                 "        </ol>\n" +
                 "      </div>\n" +
                 "      <div class=\"modal-footer\">\n" +
@@ -795,7 +753,7 @@ public class RobustnessScorecardGenerator {
                 "const TOOLTIPS = {\n" +
                 "  total:\n" +
                 "    'Unified Score (0–100)\\n' +\n" +
-                "    'Vereint Performance (Profit, PF, DD) und Robustheit (R²-Stabilität, SQN, Symmetrie, Tail-Risk) in einem gewichteten Score mit 10 Säulen.\\n' +\n" +
+                "    'Vereint Performance (Profit, PF, DD) und Robustheit (Konsistenz, Sharpe, Stichprobe, Recovery) in einem gewichteten Score mit 8 Säulen aus echten Messdaten.\\n' +\n" +
                 "    'Noten: 85+ A · 70+ B · 55+ C · 40+ D · darunter F.',\n" +
                 "  sensitiv:\n" +
                 "    'Sensitiv Score (0–100)\\n' +\n" +
@@ -829,21 +787,13 @@ public class RobustnessScorecardGenerator {
                 "    'Bewertet das Verhältnis von Gewinn zu Drawdown und den Calmar-Ratio.\\n' +\n" +
                 "    'Eingangsdaten: Return/Drawdown, Calmar-Ratio.',\n" +
                 "  equity_consistency:\n" +
-                "    'Säule Equity-Konsistenz\\n' +\n" +
-                "    'Bewertet die Gleichmäßigkeit der Equity-Kurve.\\n' +\n" +
-                "    'Eingangsdaten: R²-Stabilität, SQN (System Quality Number).',\n" +
+                "    'Säule Sharpe Ratio\\n' +\n" +
+                "    'Bewertet die von MetaTrader gemessene Sharpe Ratio (BT und FW gemittelt).\\n' +\n" +
+                "    'Eingangsdaten: BT-Sharpe, FW-Sharpe.',\n" +
                 "  sample_size:\n" +
                 "    'Säule Stichprobengröße\\n' +\n" +
                 "    'Bewertet die Anzahl der Trades und die Dauer des Tests in Jahren.\\n' +\n" +
                 "    'Eingangsdaten: Trades, Testjahre.',\n" +
-                "  symmetry:\n" +
-                "    'Säule Symmetrie\\n' +\n" +
-                "    'Bewertet die Ausgewogenheit der Gewinne zwischen Long und Short.\\n' +\n" +
-                "    'Eingangsdaten: Symmetrie-Wert, L/S-Split.',\n" +
-                "  tail_risk:\n" +
-                "    'Säule Tail-Risk\\n' +\n" +
-                "    'Misst das Risiko von Ausreißer-Verlusten (schwarze Schwäne).\\n' +\n" +
-                "    'Eingangsdaten: MaxLoss/AvgLoss, MaxLoss/NetProfit.',\n" +
                 "  fw_trades:\n" +
                 "    'Säule FW Trade Count\\n' +\n" +
                 "    'Bewertet die Anzahl der ausgeführten Trades in der Forward-Phase.\\n' +\n" +
@@ -876,29 +826,18 @@ public class RobustnessScorecardGenerator {
                 "    'Calmar-Ratio = Annualisierter Ertrag ÷ max. Drawdown.\\n' +\n" +
                 "    'Schwach: < 1 · OK: 1–2 · Gut: 2+.\\n' +\n" +
                 "    'Beispiel: 2.5 bedeutet, der jährliche Ertrag ist 2.5x so hoch wie der maximale Drawdown.',\n" +
-                "  stability:\n" +
-                "    'Stability = R-Quadrat der Equity-Kurve (0 = holprig, 1 = perfekte Gerade).\\n' +\n" +
-                "    'Schwach: < 0.6 · OK: 0.6–0.8 · Gut: 0.8+.',\n" +
-                "  sqn:\n" +
-                "    'SQN (System Quality Number) bewertet Erwartungswert und Tradezahl.\\n' +\n" +
-                "    '< 1.6 armselig · 2.0-2.5 durchschnittlich · 2.5-3.5 gut · 3.5+ exzellent.',\n" +
+                "  btSharpe:\n" +
+                "    'Sharpe Ratio im Backtest, von MetaTrader gemessen.\\n' +\n" +
+                "    'Schwach: < 0.5 · OK: 0.5–2.0 · Gut: 2.0+.',\n" +
+                "  fwSharpe:\n" +
+                "    'Sharpe Ratio im Forward-Test (Out-of-Sample), von MetaTrader gemessen.\\n' +\n" +
+                "    'Konsistenz mit dem BT-Wert ist wichtiger als die absolute Höhe.',\n" +
                 "  trades:\n" +
                 "    'Anzahl der Trades im Backtest.\\n' +\n" +
                 "    '< 100 unglaubwürdig · 300+ solide · 1000+ statistisch signifikant.',\n" +
                 "  years:\n" +
                 "    'Laufzeit des Backtests in Kalenderjahren.\\n' +\n" +
                 "    '< 1 Jahr schwach · 3+ Jahre deckt Zyklen ab · 7+ Jahre sehr robust.',\n" +
-                "  symField:\n" +
-                "    'Symmetrie-Wert = Ausgeglichenheit von Long und Short.\\n' +\n" +
-                "    '0 = rein einseitig · 0.5 = moderat ausgeglichen · 1.0 = perfekt symmetrisch.',\n" +
-                "  lsSplit:\n" +
-                "    'Verhältnis von Long- zu Short-Gewinnen (idealerweise 50/50).',\n" +
-                "  mlAl:\n" +
-                "    'Maximaler Verlust ÷ Durchschnittsverlust.\\n' +\n" +
-                "    'Gut: <= 2x · OK: 2-5x · Kritisch: 5-10x · Gefährlich: > 10x.',\n" +
-                "  mlNp:\n" +
-                "    'Maximaler Verlust ÷ Nettogewinn (Anteil, den ein einziger Pech-Trade vernichten kann).\\n' +\n" +
-                "    'Gut: < 5% · OK: 5-25% · Kritisch: > 25% · Gefährlich: > 50%.',\n" +
                 "  fwTrades:\n" +
                 "    'Anzahl der ausgeführten Trades in der Forward-Phase (Out-of-Sample).\\n' +\n" +
                 "    'Wichtig für die statistische Relevanz des Forward-Tests.',\n" +
@@ -1001,115 +940,6 @@ public class RobustnessScorecardGenerator {
                 "</html>";
     }
 
-    private static List<Double> generateSyntheticEquityCurve(double startBalance, double profit, int trades, double pf, int passNumber) {
-        List<Double> curve = new ArrayList<>();
-        curve.add(startBalance);
-        if (trades <= 0) return curve;
-
-        double grossProfit;
-        double grossLoss;
-        double effectivePf = pf;
-        if (effectivePf <= 1.0) effectivePf = 1.05;
-
-        grossLoss = profit / (effectivePf - 1.0);
-        grossProfit = profit * effectivePf / (effectivePf - 1.0);
-
-        double winRate = 0.55;
-        int wins = (int) Math.round(trades * winRate);
-        if (wins < 1 && profit > 0) wins = 1;
-        int losses = trades - wins;
-        if (losses < 1 && profit < 0) losses = 1;
-        if (wins + losses != trades) {
-            losses = trades - wins;
-        }
-
-        double avgWin = wins > 0 ? grossProfit / wins : 0;
-        double avgLoss = losses > 0 ? grossLoss / losses : 0;
-
-        List<Double> tradeOutputs = new ArrayList<>();
-        for (int i = 0; i < wins; i++) tradeOutputs.add(avgWin);
-        for (int i = 0; i < losses; i++) tradeOutputs.add(-avgLoss);
-
-        java.util.Random rand = new java.util.Random(passNumber * 1337L);
-        java.util.Collections.shuffle(tradeOutputs, rand);
-
-        double current = startBalance;
-        for (double trade : tradeOutputs) {
-            double noise = (rand.nextDouble() - 0.5) * 0.1 * (avgWin + avgLoss);
-            current += trade + noise;
-            curve.add(current);
-        }
-
-        double targetEnd = startBalance + profit;
-        double currentEnd = curve.get(curve.size() - 1);
-        double difference = targetEnd - currentEnd;
-
-        if (curve.size() > 1 && Math.abs(difference) > 1e-5) {
-            double stepDiff = difference / (curve.size() - 1);
-            double cumulative = 0;
-            for (int i = 1; i < curve.size(); i++) {
-                cumulative += stepDiff;
-                curve.set(i, curve.get(i) + cumulative);
-            }
-        }
-
-        return curve;
-    }
-
-    private static double calculateR2(List<Double> y) {
-        int n = y.size();
-        if (n < 2) return 0.0;
-        double sumX = 0, sumY = 0, sumXX = 0, sumYY = 0, sumXY = 0;
-        for (int i = 0; i < n; i++) {
-            double x = i;
-            double val = y.get(i);
-            sumX += x;
-            sumY += val;
-            sumXX += x * x;
-            sumYY += val * val;
-            sumXY += x * val;
-        }
-        double num = n * sumXY - sumX * sumY;
-        double den = (n * sumXX - sumX * sumX) * (n * sumYY - sumY * sumY);
-        if (den <= 0) return 0.0;
-        double r = num / Math.sqrt(den);
-        return Math.max(0.0, Math.min(1.0, r * r));
-    }
-
-    private static double calculateSqn(double profit, int trades, double pf) {
-        if (trades <= 0) return 0.0;
-        double effectivePf = pf;
-        if (effectivePf <= 1.0) effectivePf = 1.05;
-
-        double grossLoss = profit / (effectivePf - 1.0);
-        double grossProfit = profit * effectivePf / (effectivePf - 1.0);
-
-        double winRate = 0.55;
-        int wins = (int) Math.round(trades * winRate);
-        if (wins < 1 && profit > 0) wins = 1;
-        int losses = trades - wins;
-        if (losses < 1 && profit < 0) losses = 1;
-        if (wins + losses != trades) {
-            losses = trades - wins;
-        }
-
-        double avgWin = wins > 0 ? grossProfit / wins : 0;
-        double avgLoss = losses > 0 ? grossLoss / losses : 0;
-
-        double mean = profit / trades;
-        double sumSqDiff = 0.0;
-        for (int i = 0; i < wins; i++) {
-            sumSqDiff += Math.pow(avgWin - mean, 2);
-        }
-        for (int i = 0; i < losses; i++) {
-            sumSqDiff += Math.pow(-avgLoss - mean, 2);
-        }
-        double variance = sumSqDiff / trades;
-        double stdDev = Math.sqrt(variance);
-        if (stdDev <= 0) return 0.0;
-        return (mean / stdDev) * Math.sqrt(trades);
-    }
-
     private static Double normJava(double x, double[][] points) {
         if (x <= points[0][0]) return points[0][1];
         if (x >= points[points.length - 1][0]) return points[points.length - 1][1];
@@ -1138,22 +968,9 @@ public class RobustnessScorecardGenerator {
         return count == 0 ? null : sum / count;
     }
 
-    private static double netProfitRatio(double maxLoss, double netProfit) {
-        if (netProfit <= 0) return 0.0;
-        return Math.abs(maxLoss) / netProfit;
-    }
-
     private static double calculateYears(String fromDate, String toDate) {
-        double years = 3.0;
-        if (fromDate != null && toDate != null && !fromDate.isEmpty() && !toDate.isEmpty()) {
-            try {
-                java.time.LocalDate start = java.time.LocalDate.parse(fromDate);
-                java.time.LocalDate end = java.time.LocalDate.parse(toDate);
-                long days = java.time.temporal.ChronoUnit.DAYS.between(start, end);
-                years = Math.max(0.1, days / 365.25);
-            } catch (Exception ignored) {}
-        }
-        return years;
+        // Shared with the ranking score so both use identical year math
+        return OptimizationResult.yearsBetween(fromDate, toDate);
     }
 
     private static void addPillarJson(StringBuilder sb, String name, String key, double weight, double score, String[] labels, String[] displays, String[] tips) {
@@ -1172,6 +989,11 @@ public class RobustnessScorecardGenerator {
             "    }");
     }
 
+    /**
+     * Per-pillar scores (0–100). Only pillars backed by real report data —
+     * the former synthetic pillars "Symmetrie" and "Tail-Risk" were removed,
+     * and "equityConsist" is now the real MT5 Sharpe ratio (see ScoreWeights).
+     */
     public static class PillarScores {
         public double btProfit;
         public double fwProfit;
@@ -1179,8 +1001,6 @@ public class RobustnessScorecardGenerator {
         public double risk;
         public double equityConsist;
         public double sampleSize;
-        public double symmetry;
-        public double tailRisk;
         public double fwTrades;
         public double recovery;
 
@@ -1193,13 +1013,16 @@ public class RobustnessScorecardGenerator {
                   + w.wRisk          * risk
                   + w.wEquityConsist * equityConsist
                   + w.wSampleSize    * sampleSize
-                  + w.wSymmetry      * symmetry
-                  + w.wTailRisk      * tailRisk
                   + w.wFwTrades      * fwTrades
                   + w.wRecovery      * recovery) / total;
         }
     }
 
+    /**
+     * Computes the 8 pillar scores for a single pass. Uses the same
+     * normalisation curves as {@code OptimizationResult.computeScore} so the
+     * scorecard display and the Step-3 ranking cannot diverge.
+     */
     public static PillarScores computePillars(CombinedPass cp, double years) {
         PillarScores s = new PillarScores();
 
@@ -1209,17 +1032,7 @@ public class RobustnessScorecardGenerator {
         if (Double.isNaN(pf) || pf <= 1.0) pf = 1.05;
         double rdd = cp.getBtRecovery();
         if (Double.isNaN(rdd) || rdd <= 0) rdd = 0.1;
-
-        double startBalance = 10000.0;
-        List<Double> curve = generateSyntheticEquityCurve(startBalance, profit, trades, pf, cp.getPassNumber());
-        double stability = calculateR2(curve);
-        double sqn = calculateSqn(profit, trades, pf);
-
-        double grossLoss = profit / (pf - 1.0);
-        int losses = (int) Math.round(trades * 0.45);
-        if (losses < 1) losses = 1;
-        double avgLoss = grossLoss / losses;
-        double maxLoss = avgLoss * 2.8;
+        if (years <= 0) years = 3.0;
 
         // 1. BT Profitability
         double deposit = cp.getBacktestPass().getBalance() - profit;
@@ -1244,10 +1057,16 @@ public class RobustnessScorecardGenerator {
         double nCalmar = normJava(calmar, new double[][]{{0, 0}, {1.0, 50}, {3.0, 100}});
         s.risk = avgValidJava(nRdd, nCalmar);
 
-        // 5. Equity-Konsistenz
-        double nStab = normJava(stability, new double[][]{{0, 0}, {0.9, 100}});
-        double nSqn = normJava(sqn, new double[][]{{1.0, 0}, {2.5, 50}, {5.0, 100}});
-        s.equityConsist = avgValidJava(nStab, nSqn);
+        // 5. Sharpe Ratio (real MT5 metric; same PWL as the ranking score)
+        double btSharpe = Double.isNaN(cp.getBtSharpe()) ? 0.0 : cp.getBtSharpe();
+        double nBtSharpe = normJava(btSharpe, OptimizationResult.SHARPE_PWL);
+        if (cp.getForwardPass() != null) {
+            double fwSharpe = Double.isNaN(cp.getFwSharpe()) ? 0.0 : cp.getFwSharpe();
+            double nFwSharpe = normJava(fwSharpe, OptimizationResult.SHARPE_PWL);
+            s.equityConsist = avgValidJava(nBtSharpe, nFwSharpe);
+        } else {
+            s.equityConsist = nBtSharpe;
+        }
 
         // 6. Stichprobengröße
         double nTrades = normJava(trades, new double[][]{{100, 0}, {300, 50}, {1000, 100}});
@@ -1257,21 +1076,12 @@ public class RobustnessScorecardGenerator {
             s.sampleSize = Math.min(s.sampleSize, 30.0);
         }
 
-        // 7. Symmetrie
-        double symmetryVal = 0.80;
-        s.symmetry = normJava(symmetryVal, new double[][]{{0, 0}, {0.5, 50}, {1.0, 100}});
+        // 7. FW Trade Count (same PWL as the ranking score)
+        s.fwTrades = cp.getForwardPass() != null
+                ? normJava(cp.getFwTrades(), new double[][]{{100, 0}, {300, 50}, {1000, 100}})
+                : 0.0;
 
-        // 8. Tail-Risk
-        double mlAlRatio = Math.abs(maxLoss / avgLoss);
-        double mlNpRatio = Math.abs(maxLoss) / Math.max(Math.abs(profit), 0.01);
-        double nMlAl = normJava(mlAlRatio, new double[][]{{2.0, 100}, {5.0, 50}, {10.0, 0}});
-        double nMlNp = normJava(mlNpRatio, new double[][]{{0.05, 100}, {0.25, 50}, {0.5, 0}});
-        s.tailRisk = avgValidJava(nMlAl, nMlNp);
-
-        // 9. FW Trade Count
-        s.fwTrades = cp.getForwardPass() != null ? Math.max(0.0, Math.min(1.0, (cp.getFwTrades() - 5.0) / 25.0)) * 100.0 : 0.0;
-
-        // 10. Erholungsfaktor
+        // 8. Erholungsfaktor
         DatabaseManager db = DatabaseManager.getInstance();
         double recMin = Double.parseDouble(db.getSetting("opt.weight.recovery.min", "1.0"));
         double recMax = Double.parseDouble(db.getSetting("opt.weight.recovery.max", "5.0"));
@@ -1290,20 +1100,8 @@ public class RobustnessScorecardGenerator {
         double years = calculateYears(fromDate, toDate);
         PillarScores s = computePillars(cp, years);
 
-        DatabaseManager db = DatabaseManager.getInstance();
-        OptimizationResult.ScoreWeights w = new OptimizationResult.ScoreWeights();
-        w.wBtProfit = Double.parseDouble(db.getSetting("opt.weight.btProfit", "10"));
-        w.wFwProfit = Double.parseDouble(db.getSetting("opt.weight.fwProfit", "15"));
-        w.wConsistency = Double.parseDouble(db.getSetting("opt.weight.consistency", "15"));
-        w.wRisk = Double.parseDouble(db.getSetting("opt.weight.risk", "15"));
-        w.wEquityConsist = Double.parseDouble(db.getSetting("opt.weight.equityConsist", "10"));
-        w.wSampleSize = Double.parseDouble(db.getSetting("opt.weight.sampleSize", "10"));
-        w.wSymmetry = Double.parseDouble(db.getSetting("opt.weight.symmetry", "5"));
-        w.wTailRisk = Double.parseDouble(db.getSetting("opt.weight.tailRisk", "10"));
-        w.wFwTrades = Double.parseDouble(db.getSetting("opt.weight.fwTrades", "5"));
-        w.wRecovery = Double.parseDouble(db.getSetting("opt.weight.recovery", "5"));
-        w.recoveryMin = Double.parseDouble(db.getSetting("opt.weight.recovery.min", "1.0"));
-        w.recoveryMax = Double.parseDouble(db.getSetting("opt.weight.recovery.max", "5.0"));
+        // Single source of truth for weights & defaults (see ScoreWeights.loadFromDatabase)
+        OptimizationResult.ScoreWeights w = OptimizationResult.ScoreWeights.loadFromDatabase();
 
         return s.calculateWeighted(w);
     }
