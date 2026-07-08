@@ -22,7 +22,7 @@
 
 Testing a single EA on a single symbol with a single timeframe in MT5 requires: opening the strategy tester, configuring 10+ fields, clicking "Start", waiting, inspecting results. Now multiply that by 5 EAs × 10 symbols × 3 timeframes = **150 manual test runs**. This application runs all 150 automatically in sequence while you sleep.
 
-But it goes far beyond simple batch testing — it includes a full **Strategy Optimizer**, a unique **Robustness Scanner** for parameter sensitivity analysis, a **Database-backed Configuration Manager**, persistent **Run History**, and beautiful **offline reporting** with interactive charts.
+But it goes far beyond simple batch testing — it includes a full **Strategy Optimizer**, a unique **Robustness Scanner** for parameter sensitivity analysis, a **7-step Anti-Curvefitting Workflow** with true out-of-sample validation, a **Database-backed Configuration Manager**, persistent **Run History**, and beautiful **offline reporting** with interactive charts.
 
 ---
 
@@ -34,26 +34,51 @@ But it goes far beyond simple batch testing — it includes a full **Strategy Op
 | **🔁 Multi-Backtester** | Sequential batch execution of EA × Symbol × Timeframe combinations |
 | **🔬 Strategy Optimizer** | Genetic & Complete algorithm optimization with forward testing support |
 | **📉 Robustness Scanner** | Parameter sensitivity sweep with time-shifted validation & plateau detection |
+| **🛡 Anti-Curvefitting Validation** | Step-7 out-of-sample backtests on never-seen data after optimization/selection |
+| **📊 8-Pillar Unified Score** | Ranking based only on real MT5 metrics such as profit, drawdown, trades, recovery and Sharpe |
 | **📚 Run History** | Persistent SQLite-backed history browser across all run types |
 | **⬇ Dukascopy Data** | Direct tick-data downloads from Dukascopy for independent offline testing |
 | **⚙ EA Config Manager** | Full `.set` file lifecycle with DB-backed parameter snapshot storage |
-| **🔄 Workflow Automator** | Guided 6-step strategy optimization and stress-test pipeline with AI scoring and interactive report bridging |
+| **🔄 Workflow Automator** | Guided 7-step strategy optimization, stress-test, AI scoring and validation pipeline |
 
 ---
 
 ## 🔄 Workflow Automator
 
-A fully automated, guided pipeline that orchestrates the entire lifecycle of a strategy from raw optimization to portfolio selection.
+A fully automated, guided pipeline that orchestrates the entire lifecycle of a strategy from raw optimization to final out-of-sample validation.
 
-- **Guided 6-Step Pipeline**: Steers you through:
+- **Guided 7-Step Pipeline**: Steers you through:
   1. **Config**: Select Expert Advisor, symbol, period, dates, and parameters to optimize.
   2. **MT5 Optimization**: Run MT5 optimization using configurable modes (Complete or Genetic).
   3. **Diversity Filter**: Choose the top 5 diverse strategy profiles automatically.
   4. **Stresstest (CV Analysis)**: Run time-shifted sensitivity checks to assess parameter vulnerability.
   5. **AI Evaluation**: Feed equity and robustness curves to a local LLM to get a parsed Stability Score.
   6. **Portfolio Selection**: Stage and select the final 3-5 best-performing, stable strategies.
+  7. **Out-of-Sample Validation**: Re-test the final portfolio on a never-seen date window after the optimization range.
+- **Anti-Curvefitting Guardrail**: The forward window is useful, but it is already consumed during ranking and selection. Step 7 creates a cleaner estimate by validating only the final candidates on untouched data.
+- **Validation-Aware Export**: Failed, errored, or no-trade validation results are blocked from the "best strategies" export. Fragile KI-gate bypasses are visibly marked.
 - **Unified Strategy Details Popup (Mega-Report)**: A beautiful scrollable modal that combines backtest/forward metric cards, a connected interactive equity chart, parameter variation coefficient (CV %) breakdown tables, and a safety verdict box.
 - **WebView JS Click Bridge**: Click on any strategy pass directly in the rendered HTML AI Report to instantly pop up its Mega-Report details.
+
+![Workflow Dashboard](images/backtester_ui3.png)
+
+![Best Strategy Portfolio](images/backtester_best_strategies.png)
+
+---
+
+## 🛡 Anti-Curvefitting & True OOS Validation
+
+The workflow now separates three different quality gates instead of treating one forward test as a final truth:
+
+- **Forward metrics** help rank optimization passes, but they are part of the selection process and therefore no longer fully untouched.
+- **Sensitivity/CV analysis** checks whether small parameter changes destroy the strategy.
+- **Step-7 validation** runs a fresh backtest on a later date window that was not used for optimization or selection.
+
+This keeps the final export honest: only strategies that explicitly pass validation are allowed into the curated "best strategies" folder after validation exists.
+
+For the reasoning behind this design, see [Docs/ANTI_CURVEFITTING.md](Docs/ANTI_CURVEFITTING.md).
+
+![Advanced Strategy Evaluator](images/backtester_advanced_evaluator.png)
 
 ---
 
@@ -67,6 +92,8 @@ The core feature that started it all — **eliminate manual work**.
 - **Aggregated HTML Report**: Compiles all batch results into a single `multi_report.html` with Base64-embedded equity charts for easy sharing.
 
 ![Multi-Backtester UI](images/multi-backtester-config.png)
+
+![Multi-Backtester Results](images/multi-backtester-results.png)
 
 ---
 
@@ -84,6 +111,27 @@ Full integration with MT5's built-in optimization engine, controlled entirely th
 - **Apply Best Parameters**: One click to write the best result's parameters back to the EA's active config
 
 ![MT5 Optimizer Results](images/backtester_optimizer.png)
+
+![Optimizer Score Weighting](images/backtester_score_weighting.png)
+
+---
+
+## 📊 Unified 8-Pillar Score
+
+The ranking model was simplified from 10 pillars to 8 pillars and now uses only real metrics reported by MetaTrader:
+
+- Backtest and forward profitability
+- Forward/backtest consistency
+- Risk ratio via recovery and annualized drawdown context
+- Real MT5 Sharpe ratio instead of synthetic equity-curve estimates
+- Sample size and forward trade count
+- Recovery factor across backtest and forward phases
+
+The older synthetic pillars (fixed long/short symmetry, estimated tail-risk and random-equity R²/SQN) were removed because they looked precise while adding assumptions rather than evidence.
+
+![Consistency Ratio](images/backtester_consistency_ratio.png)
+
+![Strategy Detail Analysis](images/backtester_strategy_detail_analysis.png)
 
 ---
 
