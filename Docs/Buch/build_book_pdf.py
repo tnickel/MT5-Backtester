@@ -35,7 +35,7 @@ OUT_DIR = Path(__file__).resolve().parent
 ASSET_DIR = OUT_DIR / "generated_assets"
 MD_PATH = OUT_DIR / "Mastering_the_Backtester.md"
 PDF_PATH = OUT_DIR / "Mastering_the_Backtester.pdf"
-VERSION = "1.0"
+VERSION = "1.1"
 BUILD_DATE = date.today().strftime("%d.%m.%Y")
 
 
@@ -169,6 +169,129 @@ PARAMETERS = [
     ("recoveryMin/recoveryMax", "score", "Skalierungsbereich fuer Recovery-Faktor-Bewertung.", "1.0 / 5.0"),
     ("validationFromDate", "validation", "Start des echten Step-7-OOS-Fensters; leer bedeutet toDate + 1 Tag.", "null"),
     ("validationToDate", "validation", "Ende des Step-7-OOS-Fensters; leer bedeutet aktuelles Datum.", "null"),
+]
+
+
+TAB_REFERENCE = [
+    ("Backtest", "Einzelner MT4/MT5-Test", "EA, Symbol, Zeitraum, Konto, Tickmodell und Parameter setzen; danach Report, Historie und HTML-Verzeichnis oeffnen.", "Fuer schnelle Plausibilitaet und finale Nachtests einzelner Parameter-Sets."),
+    ("Multi-Backtester", "Batch ueber Maerkte und Timeframes", "Ein EA wird mit globalen Konto- und Datumsannahmen ueber mehrere Symbol/Perioden-Kombinationen getestet.", "Fuer Markt-Screening: Wo funktioniert die Strategie, wo nicht?"),
+    ("Optimizer", "MT5-Optimierung und Analyse", "Parameter-Suchraeume, Forward-Modus, Combined Analysis, Filter, Score-Gewichtung, Advanced Evaluator und Sensitivitaet.", "Fuer systematische Parametersuche mit Anti-Curvefitting-Gates."),
+    ("Robustness", "Robustheitsscans", "Parameter- und Zeitverschiebungen fuer einzelne Konfigurationen pruefen.", "Fuer Stresstests ausserhalb des grossen Workflows."),
+    ("Workflow Automator", "Gefuehrte Pipeline", "Setup, Optimierung, Diversity, Sensitivitaet, KI, Portfolio und OOS-Validierung werden als Zustand gefuehrt.", "Fuer ernsthafte Strategieauswahl mit nachvollziehbaren Gates."),
+    ("Controlling", "Nachtest und Strategiepflege", "Gespeicherte Strategien, Reviews, Nachtests und Exporte kontrollieren.", "Fuer laufende Qualitaetssicherung nach dem ersten Export."),
+    ("Database", "Historie", "Backtests, Optimierungen und gespeicherte Ergebnisse anzeigen, oeffnen oder bereinigen.", "Fuer Nachvollziehbarkeit und Aufraeumen alter Runs."),
+    ("Dukascopy Data", "Marktdatenversorgung", "BI5-Tickdaten laden, scannen, in CSV/M1 konvertieren und als MT5 Custom Symbol importieren.", "Fuer bessere Datenkontrolle jenseits der Broker-Historie."),
+    ("Settings", "Globale Pfade und Defaults", "MT4/MT5-Pfade, portable Mode, Report-/Datenpfade, Deposit, Waehrung, Hebel, Tickmodell und Zeitzone.", "Vor jedem produktiven Lauf pruefen."),
+    ("Log", "Live-Protokoll", "Status, Fehler und laufende Prozessmeldungen ansehen.", "Wenn MT5 haengt, kein Report erscheint oder ein Batch unklar stoppt."),
+    ("Manual", "In-App-Hilfe", "Kurze Bedienhilfe innerhalb der Anwendung.", "Fuer schnelle Erinnerung; dieses Buch ist die ausfuehrliche Referenz."),
+]
+
+
+BACKTESTER_FIELDS = [
+    ("Expert Advisor", "Pfad oder relativer Name des EAs. Browse oeffnet die Dateiauswahl.", "Ohne EA startet kein Test. Nach EA-Auswahl werden Parameterprofile geladen oder vorbereitet."),
+    ("Symbol", "Markt aus der festen Liste: AUDCAD bis XTIUSD.", "Symbol muss in MT5 vorhanden sein. Bei Custom Symbols zuerst Datenimport pruefen."),
+    ("Period", "Zeiteinheit M1, M5, M15, M30, H1, H4, D1, W1 oder MN1.", "Niedrige Timeframes brauchen mehr Datenqualitaet und Laufzeit."),
+    ("Dates / To", "Historisches Testfenster.", "Nicht zu kurz waehlen; fuer finale Checks ein Fenster nutzen, das nicht zur Optimierung diente."),
+    ("Deposit", "Startkapital fuer MT5-Kennzahlen.", "Konstant halten, wenn Ergebnisse verglichen werden."),
+    ("Currency", "Kontowaehrung: USD, EUR oder GBP in JavaFX-BacktestView.", "Muss zu Broker- und Reportannahmen passen."),
+    ("Leverage", "Hebel als Text, z.B. 1:100.", "Realistische Werte verwenden; Margin-Situationen nicht schoenrechnen."),
+    ("Tick Model", "Every tick, 1 minute OHLC, Open price only, Math calculations oder Every tick (real ticks).", "Fuer schnelle Vorpruefung OHLC; fuer ernsthafte Validierung realistischeres Modell verwenden."),
+    ("Manual Mode / Keep MT4/5 Open", "Verhindert automatisches Schliessen von MT nach dem Lauf.", "Gut zur Diagnose. Fuer Batchlaeufe besser automatisch schliessen lassen."),
+    ("Start Backtest", "Startet MT4/MT5 ohne Visualisierung und speichert Ergebnis in der Datenbank.", "Standard fuer reproduzierbare Einzeltests."),
+    ("Visual Mode", "Startet den visuellen Tester und laesst Beobachtung im Terminal zu.", "Nur zur Diagnose und Strategie-Verstaendnis, nicht fuer Massenlaeufe."),
+    ("Cancel", "Bricht einen laufenden Test ab.", "Danach Log und Reportordner pruefen; ein abgebrochener Lauf kann unvollstaendige Dateien hinterlassen."),
+    ("History & Results", "Tabelle mit Expert, Symbol, Period, Profit, Trades, Win Rate, Drawdown.", "Doppelklick/Buttons nutzen, um Report zu oeffnen; nicht nur Profit betrachten."),
+    ("Open HTML Report", "Oeffnet den erzeugten HTML/Report-Dialog.", "Erste Sichtpruefung der Equity-Kurve, Statistik und Tradezahl."),
+    ("Open Directory", "Oeffnet das Reportverzeichnis.", "Wichtig, um SET, HTM/XML und Exportartefakte zusammenzuhalten."),
+]
+
+
+MULTI_BACKTESTER_FIELDS = [
+    ("Expert Advisor", "Ein EA fuer alle Batch-Kombinationen.", "Parameter muessen fuer alle gewaehlten Maerkte plausibel sein."),
+    ("Dates / To", "Globales Zeitfenster fuer alle Runs.", "Nur gleiche Zeitfenster machen Symbol- und Timeframe-Vergleiche fair."),
+    ("Deposit, Currency, Lev", "Globale Kontoannahmen.", "Nicht zwischen Runs aendern, wenn die Tabelle vergleichbar bleiben soll."),
+    ("Tick Model", "Globales Tester-Modell fuer den Batch.", "Je mehr Kombinationen, desto staerker wirkt die Laufzeit des Modells."),
+    ("Presets", "Preset waehlen, Neu, Speichern, Aendern oder Loeschen.", "Speichert EA, Symbole, Timeframes und Parameter-Snapshot fuer wiederholbare Batchs."),
+    ("Symbols", "Checkbox-Liste aus BacktestConfig.SYMBOLS plus Add Custom.", "Custom nur verwenden, wenn MT5 das Symbol kennt oder importiert hat."),
+    ("Timeframes", "M1, M5, M15, M30, H1, H4, D1, W1, MN1.", "Nicht blind alle Timeframes testen; sonst steigt Multiple-Testing-Bias."),
+    ("Start Batch", "Erzeugt eine Warteschlange aller markierten Symbol/Timeframe-Kombinationen.", "Vorher Anzahl Jobs im Kopf ueberschlagen; Batchs koennen lange laufen."),
+    ("Cancel", "Stoppt den laufenden Batch.", "Nach Abbruch koennen Teilresultate vorhanden sein."),
+    ("Batch History", "Liste gespeicherter Batchlaeufe.", "Erlaubt spaeteres Oeffnen oder Loeschen kompletter Batchs."),
+    ("Open Multi-Report Node", "Oeffnet den aggregierten Multi-Report.", "Gut fuer Ueberblick: welche Kombinationen waren OK?"),
+    ("Results Table", "Robot, Symbol, Period, Trades, Win Rate, Drawdown, Recovery Factor, Profit, Status.", "Nach Profit, Drawdown oder Status sortieren, aber schwache Tradezahlen aussortieren."),
+    ("Show Single Report", "Oeffnet den Einzelreport des markierten Runs.", "Die Equity-Kurve pruefen, bevor ein Run als guter Markt interpretiert wird."),
+    ("Delete Batch / Delete Selected Runs", "Bereinigt Historie oder einzelne Runs.", "Erst loeschen, wenn Report und Entscheidung nicht mehr benoetigt werden."),
+]
+
+
+OPTIMIZER_FIELDS = [
+    ("Expert Advisor", "EA fuer die Optimierung.", "Parameterliste wird aus SET/EA-Kontext geladen."),
+    ("Symbol", "Zu optimierender Markt.", "Nicht mehrere Maerkte in einem Optimizer-Lauf mischen; dafuer Multi-Backtester oder Workflow nutzen."),
+    ("Period", "M1, M5, M15, M30, H1, H4 oder D1.", "Der Suchraum sollte zum Timeframe passen."),
+    ("Date Range", "Optimierungsfenster, im UI mit Monatsanzeige.", "So waehlen, dass spaeter ein unberuehrtes Step-7-Fenster uebrig bleibt."),
+    ("Deposit / Currency / Leverage", "Kontoannahmen fuer den Strategy Tester.", "Vergleichbarkeit nur bei konstanten Werten."),
+    ("Tick Model", "MT5-Modell fuer die Optimierung.", "Schnelleres Modell fuer breite Suche, genaueres Modell fuer engere Pruefungen."),
+    ("Opt. Mode", "Slow Complete Algorithm oder Fast Genetic Algorithm.", "Genetic fuer grosse Raeume, Complete fuer kleine kritische Raeume."),
+    ("Opt. Criterion", "Balance, Profit Factor, Expected Payoff, Drawdown, Recovery, Sharpe, Custom OnTester oder Complex Criterion.", "Recovery/Sharpe sind oft robuster als reiner Gewinn."),
+    ("Forward Test", "Off, 1/2 period, 1/3 period, 1/4 period oder Custom date.", "Fuer Anti-Curvefitting praktisch immer aktivieren."),
+    ("Forward Date", "Nur bei Custom date relevant.", "Datum bewusst setzen; es trennt Backtest- und Forward-Teil."),
+    ("Opt", "Checkbox in der Parameter-Tabelle.", "Nur Parameter optimieren, die fachlich Sinn ergeben."),
+    ("Value", "Fester Wert, wenn Opt nicht aktiv ist.", "Baseline fuer nicht optimierte Parameter."),
+    ("Start / Step / Stop", "Suchraum eines optimierten Parameters.", "Kleine Steps und breite Raeume erzeugen sehr viele Kombinationen."),
+    ("AutoConfig", "Erzeugt sinnvolle Suchraeume aus Parameterwerten.", "Startpunkt, aber fachlich pruefen."),
+    ("Load .set / Save .set", "Parameter aus MetaTrader-SET laden oder sichern.", "SET-Dateien sind die reproduzierbare Wahrheit fuer EA-Inputs."),
+    ("Start Optimization", "Startet Optimierung und schliesst MT5 danach.", "Standard fuer reproduzierbare Optimierung."),
+    ("Start (Keep MT5 Open)", "Startet Optimierung und laesst Terminal offen.", "Nur fuer Diagnose oder manuelle Nachpruefung."),
+    ("Apply Best Parameters", "Uebernimmt Parameter des markierten Passes.", "Vor dem Uebernehmen prüfen, ob Forward und Robustheit stimmen."),
+    ("Open XML", "Oeffnet den MT5-Optimierungsreport.", "Nuetzlich zur Fehlersuche beim Parser oder bei fehlenden Forward-Daten."),
+]
+
+
+FILTER_SETTINGS = [
+    ("Filter aktiv", "Schaltet die Combined-Analysis-Filter an.", "Nach Apply im Filterdialog automatisch aktiv."),
+    ("Nur Passes mit Forward-Ergebnis", "Blendet CombinedPasses ohne Forward aus.", "Fuer robuste Auswahl fast immer aktiv lassen."),
+    ("Sortierung", "Sortiert nach kombiniertem Score oder anderen Metriken.", "Sortierung ist keine Qualitaetsgarantie; Filter vorher sauber setzen."),
+    ("Suchfeld", "Sucht in Combined-/Selected-Tabellen.", "Hilft bei Passnummern und Parametern."),
+    ("BT Profit >=", "Mindestgewinn im Backtest.", "Default im Code 0.01; Reset im Dialog kann 0.0 setzen."),
+    ("FW Profit >=", "Mindestgewinn im Forward.", "Verhindert Forward-Verlierer im Kandidatenpool."),
+    ("Min BT Trades >=", "Mindestanzahl Backtest-Trades.", "Code-Default 100; kleine Stichproben sind gefaehrlich."),
+    ("Min FW Trades >=", "Mindestanzahl Forward-Trades.", "Code-Default 15; bei wenigen Trades nur schwache Evidenz."),
+    ("Max BT Drawdown% <=", "Obergrenze fuer Backtest-Drawdown.", "Drawdown in Relation zu Profit und Recovery betrachten."),
+    ("Max FW Drawdown% <=", "Obergrenze fuer Forward-Drawdown.", "Forward-Drawdown ist fuer Live-Risiko besonders wichtig."),
+    ("BT Exp. Payoff >=", "Mindestdurchschnitt pro Trade im Backtest.", "Hilft gegen Strategien, die nur durch viele Kleinsttrades scheinbar gut sind."),
+    ("FW Exp. Payoff >=", "Mindestdurchschnitt pro Trade im Forward.", "Forward-Payoff sollte nicht dramatisch einbrechen."),
+    ("BT Sharpe Ratio >=", "Mindest-Sharpe im Backtest.", "Risikoadjustierte Stabilitaet statt nur absolutem Profit."),
+    ("FW Sharpe Ratio >=", "Mindest-Sharpe im Forward.", "Guter Indikator fuer glatteres OOS-Verhalten."),
+    ("BT Recovery Factor >=", "Mindest-Recovery im Backtest.", "Profit im Verhaeltnis zum maximalen Rueckschlag."),
+    ("FW Recovery Factor >=", "Mindest-Recovery im Forward.", "Einer der wichtigsten Praxisfilter fuer Kandidaten."),
+    ("Score min", "Separater Dialog mit Low 30, Med 50, High 70.", "Je strenger, desto weniger aber bessere Kandidaten."),
+    ("Consistency min", "Separater Dialog mit Low 0.4, Med 0.6, High 0.8.", "Misst Forward/Backtest-Verhaeltnis; Schutz vor Forward-Einbruch."),
+]
+
+
+SCORE_WEIGHT_FIELDS = [
+    ("BT Profit", "Gewicht fuer historischen Backtest-Gewinn.", "Nicht zu hoch setzen, sonst gewinnt Vergangenheit gegen Robustheit."),
+    ("FW Profit", "Gewicht fuer Forward-Gewinn.", "Sollte meist mindestens so wichtig sein wie BT Profit."),
+    ("Konsistenz FW/BT", "Gewicht fuer das Verhaeltnis Forward zu Backtest.", "Hohe Werte belohnen Strategien, die nach dem Split nicht kollabieren."),
+    ("Risk / Drawdown-Strafe", "Bestrafung hoher Drawdowns.", "Hohe Gewichtung macht Ranking konservativer."),
+    ("Equity Consistency / Sharpe", "Stabilitaet der Ergebnisentwicklung.", "Hilft gegen einzelne Glueckstreffer."),
+    ("Sample Size", "Gewicht fuer Testdauer und Stichprobe.", "Schuetzt vor extrem duennen Ergebnissen."),
+    ("FW Trade Count", "Gewicht fuer Forward-Tradezahl.", "Im Screenshot sehr hoch; gut gegen Scheinsieger mit wenigen Trades."),
+    ("Recovery Factor", "Gewicht fuer Gewinn/Drawdown-Verhaeltnis.", "Praktischer Stabilitaetsindikator."),
+    ("Recovery Min/Max", "Skalierungsbereich fuer Recovery-Bewertung.", "Default 1.0 bis 5.0 in der Dialoglogik."),
+    ("Presets", "Low/Zahm, Med/Ausgewogen, High/Streng, Grid/High-Trade.", "Schnelle Arbeitsprofile fuer verschiedene Suchphasen."),
+]
+
+
+WORKFLOW_PHASES = [
+    ("0 Vorbereitung", "Settings, Daten, EA und Zeitfenster pruefen.", "SettingsView, DukascopyView, AppConfig", "MT5-Pfad, portable Mode, Datenqualitaet, Reportpfade und ein spaeteres OOS-Fenster muessen stimmen.", "Ohne saubere Vorbereitung erzeugen die sieben UI-Schritte nur schoen aussehende, aber schwache Evidenz."),
+    ("1 Strategie-Auswahl", "EA, Symbol(e), Periode, Preset, Datum, Konto, Hebel, Modell und Parameter-Suchraum setzen.", "WorkflowConfigDialogs.showStep1Config", "Tabelle Opt/Wert/Start/Schritt/Stopp fachlich klein halten.", "Nur Parameter optimieren, deren Bedeutung verstanden wird."),
+    ("2 Optimizer-Konfiguration", "Algorithmus, Optimierungsziel, Forward-Test und optional Forward-Datum setzen.", "showStep2Config, OptimizationRunner", "Forward aktivieren; Genetic fuer breite Suche, Complete fuer kleine Raeume.", "Forward ist Auswahlmaterial, nicht finale Wahrheit."),
+    ("3 Filter und Diversitaet", "Profit-, Trade-, Drawdown- und Diversity-Schwellen anwenden.", "showStep3Config, WorkflowEngine.runStep3", "minBtTrades, minFwTrades, max DD, Param-Differenz, Trades-Differenz und Zielanzahl setzen.", "Nicht fuenf fast identische Paesse als Portfolio akzeptieren."),
+    ("4 Sensitivitaet", "Parameter-Sweeps fuer selektierte Kandidaten ausfuehren.", "showStep4Config, SensitivityRunner", "BT CV worst, FW CV worst und Kurvenform lesen.", "Plateaus sind besser als Peaks; hohe CV-Werte sind Warnsignale."),
+    ("5 KI-Bewertung", "OpenRouter-Key, Modell, Prompt sowie Performance/Stability-Gewichtung setzen.", "showStep5Config, LlmAnalysisService", "KI analysiert Sensitivitaetskurven und Performance-Kontext.", "KI ist Analyst, nicht Freigabebehoerde."),
+    ("6 Finales Portfolio", "3-5 beste Strategien, Export- und Best-Verzeichnis auswaehlen.", "showStep6Portfolio, exportPortfolio", "Gesamtscore aus Performance und KI-Stabilitaet lesen; KI-Gate beachten.", "Export ist noch keine Live-Freigabe."),
+    ("7 OOS-Validierung", "Validierung von/bis auf unberuehrtem spaeterem Fenster setzen.", "showStep7ValidationConfig, ValidationResult", "Fenster darf Optimierungszeitraum nicht ueberlappen.", "Nur PASSED-Kandidaten gehoeren nach vorhandener Validierung in den Best-Ordner."),
 ]
 
 
@@ -444,8 +567,9 @@ def make_diagrams() -> dict[str, Path]:
 
     img = PILImage.new("RGB", (1400, 760), "#ffffff")
     d = ImageDraw.Draw(img)
-    d.text((50, 34), "7-Schritt Anti-Curvefitting Workflow", font=title_f, fill="#0f172a")
+    d.text((50, 34), "8-Phasen Anti-Curvefitting Workflow", font=title_f, fill="#0f172a")
     steps = [
+        "0 Vorbereitung\nSettings, Daten, OOS-Fenster",
         "1 Setup\nEA, Symbol, Zeitraum, Parameter",
         "2 Optimierung\nComplete/Genetic mit Forward",
         "3 Diversity\nFilter + robuste Kandidaten",
@@ -454,18 +578,18 @@ def make_diagrams() -> dict[str, Path]:
         "6 Portfolio\nGewichtete Auswahl + Export",
         "7 Validierung\nUnberuehrtes OOS-Fenster",
     ]
-    x = 50
+    x = 35
     y = 190
     for i, text in enumerate(steps):
-        xy = (x, y, x + 175, y + 190)
-        rounded_box(d, xy, ["#dbeafe", "#dcfce7", "#fef3c7", "#ede9fe", "#cffafe", "#fee2e2", "#e0f2fe"][i])
+        xy = (x, y, x + 150, y + 190)
+        rounded_box(d, xy, ["#e0f2fe", "#dbeafe", "#dcfce7", "#fef3c7", "#ede9fe", "#cffafe", "#fee2e2", "#e0f2fe"][i])
         head, body = text.split("\n", 1)
-        d.text((x + 18, y + 20), head, font=label_f, fill="#0f172a")
-        draw_wrapped(d, (x + 18, y + 64), body, 140, body_f)
+        d.text((x + 14, y + 20), head, font=label_f, fill="#0f172a")
+        draw_wrapped(d, (x + 14, y + 64), body, 120, body_f)
         if i < len(steps) - 1:
-            arrow(d, (x + 175, y + 95), (x + 210, y + 95), fill="#475569")
-        x += 190
-    d.text((70, 490), "Fachlicher Kern: Der Forward-Test ist ein Auswahlkriterium. Erst Schritt 7 liefert die echte, nachgelagerte Out-of-Sample-Schaetzung.", font=label_f, fill="#991b1b")
+            arrow(d, (x + 150, y + 95), (x + 168, y + 95), fill="#475569")
+        x += 165
+    d.text((70, 490), "Die UI benennt Schritte 1-7. Dieses Buch stellt Phase 0 davor, weil Daten, Pfade und OOS-Planung ueber die Aussagekraft entscheiden.", font=label_f, fill="#991b1b")
     save("workflow", img)
 
     img = PILImage.new("RGB", (1300, 720), "#f8fafc")
@@ -587,11 +711,259 @@ def repeated_lesson(theme: str, project_link: str) -> list[str]:
     ]
 
 
+def manual_chapters() -> list[Section]:
+    return [
+        Section(
+            "Bedienungsanleitung 1: Orientierung im Programm",
+            [
+                p("""
+                Die Anwendung ist kein einzelner Backtest-Knopf, sondern eine Arbeitsumgebung fuer
+                Strategieentwicklung. Die Registerkarten bilden einen typischen Lebenszyklus ab:
+                Zuerst werden globale Pfade und Daten vorbereitet, dann werden Einzeltests und
+                Batchtests genutzt, danach folgt die Optimierung mit Forward-Analyse, Sensitivitaet,
+                KI-Bewertung, Portfolio-Auswahl und spaeteres Controlling. Wer diese Reihenfolge
+                versteht, vermeidet viele typische Fehlinterpretationen.
+                """),
+                p("""
+                Im Alltag beginnt man selten direkt im Workflow. Ein neuer EA wird oft zuerst im
+                Backtest-Tab geprueft: laeuft er ueberhaupt, schreibt MT5 einen Report, stimmen
+                Symbol und Zeitraum? Danach kann der Multi-Backtester zeigen, auf welchen Maerkten
+                und Timeframes die Strategie grundsaetzlich reagiert. Erst wenn diese Vorarbeit
+                sinnvoll aussieht, lohnt sich die Optimierung. Genau diese Trennung macht die
+                Ergebnisse belastbarer.
+                """),
+                p("""
+                Die Registerkarte Optimizer ist die tiefste Einzelsicht. Dort liegen Suchraum,
+                Forward-Modus, Combined Analysis, Filtersettings, Score-Gewichtung, Advanced
+                Evaluator, Selected-Tab und Sensitivitaetsanalyse. Der Workflow Automator fasst
+                diese Funktionen in eine gefuehrte Pipeline zusammen. Controlling und Database
+                sind danach die Orte fuer Rueckblick, Nachtests und Pflege der erzeugten Strategien.
+                """),
+                p("""
+                Professionelle Nutzung bedeutet: Nicht jedes gute Zwischenergebnis wird sofort als
+                Strategie akzeptiert. Ein Einzeltest beantwortet nur, ob ein Parameter-Set in einem
+                Zeitraum funktioniert hat. Ein Multi-Backtest beantwortet, ob eine Idee ueber Maerkte
+                streut. Eine Optimierung beantwortet, welche Parameterkombinationen in einem
+                Suchraum auffallen. Erst der Workflow verbindet diese Antworten zu einem belastbaren
+                Entscheidungsprozess.
+                """),
+            ],
+            bullets=[
+                "Vor jedem Lauf: Settings, MT5-Pfad, portable Mode, Reportordner und Datenqualitaet pruefen.",
+                "Bei neuen EAs zuerst einen kleinen Einzeltest starten, bevor Batch oder Optimierung laufen.",
+                "Forward- und OOS-Fenster schon vor der Optimierung planen.",
+                "Reports nicht nur nach Profit lesen: Tradezahl, Drawdown, Recovery, Sharpe und Equity-Form zaehlen.",
+            ],
+        ),
+        Section(
+            "Bedienungsanleitung 2: Backtester - Einzeltests richtig ausfuehren",
+            [
+                p("""
+                Der Backtest-Tab ist die Werkbank fuer einzelne MT4/MT5-Laeufe. Er dient drei
+                Zwecken: technische Funktionspruefung eines EAs, schnelle Plausibilitaet eines
+                Parameter-Sets und finaler Nachtest einer bereits ausgewaehlten Strategie. Die Maske
+                besteht aus Backtest Configuration oben und Backtest History & Results unten.
+                """),
+                p("""
+                Expert Advisor waehlt den EA. Symbol und Period bestimmen Markt und Timeframe.
+                Dates und To setzen das historische Fenster. Deposit, Currency und Leverage geben
+                die Kontoannahmen vor. Tick Model bestimmt, wie genau MT5 historische Bewegungen
+                simuliert. Der Start Backtest-Button startet den normalen, reproduzierbaren Lauf;
+                Visual Mode ist fuer Diagnose gedacht; Manual Mode haelt MT4/MT5 offen.
+                """),
+                p("""
+                Die Ergebnistabelle zeigt Expert, Symbol, Period, Profit, Trades, Win Rate und
+                Drawdown. Ein gruener Profit allein reicht nicht. Zwei Trades mit 100 Prozent Win
+                Rate sind statistisch nahezu wertlos; 300 Trades mit moderatem Profit und
+                kontrolliertem Drawdown sind aussagekraeftiger. Open HTML Report oeffnet den
+                Detailreport, Open Directory fuehrt zu den erzeugten Dateien.
+                """),
+                p("""
+                Best Practice: Einzeltests nicht als Optimierungsersatz verwenden. Wer manuell so
+                lange Werte aendert, bis ein Backtest schoen aussieht, betreibt ebenfalls Curve
+                Fitting. Der Einzeltest ist stark, wenn er eine konkrete Hypothese prueft: Laeuft
+                der EA auf XAUUSD H1? Bleibt ein aus dem Workflow exportiertes SET im spaeteren
+                Zeitraum plausibel? Sind die Reportdateien vollstaendig?
+                """),
+                p("""
+                Wenn ein Lauf kein Ergebnis erzeugt, ist der Log-Tab der naechste Ort. Typische
+                Ursachen sind falscher Terminalpfad, nicht vorhandenes Symbol, EA-Kompilierungsfehler,
+                blockierte MT5-Instanz, fehlendes Datenfenster oder ein Report, den MT5 anders
+                ablegt als erwartet. Manual Mode hilft bei Diagnose, sollte aber bei Batch- und
+                Workflow-Laeufen nicht dauerhaft aktiv bleiben.
+                """),
+            ],
+        ),
+        Section(
+            "Bedienungsanleitung 3: Multi-Backtester - Maerkte und Timeframes vergleichen",
+            [
+                p("""
+                Der Multi-Backtester automatisiert viele Einzeltests mit denselben globalen
+                Annahmen. Er beantwortet nicht die Frage nach den besten Parametern, sondern die
+                Vorfrage: Wo zeigt diese Strategie ueberhaupt Verhalten, das eine tiefere Analyse
+                rechtfertigt? Dadurch spart man viel Zeit und vermeidet Optimierungen auf Maerkten,
+                die schon im Basistest unplausibel sind.
+                """),
+                p("""
+                Oben stehen Expert Advisor, Datum, Deposit, Currency, Leverage, Tick Model und
+                Presets. Darunter befinden sich zwei Auswahllisten: Symbols und Timeframes. Jedes
+                markierte Symbol wird mit jedem markierten Timeframe kombiniert. Drei Symbole und
+                drei Timeframes erzeugen also neun Jobs. Start Batch arbeitet diese Warteschlange
+                sequentiell ab und schreibt die Resultate in die Batch-Historie.
+                """),
+                p("""
+                Presets sind hier besonders wichtig. Ein Preset speichert EA, Symbolauswahl,
+                Timeframes und den Parameter-Snapshot. Neu erstellt ein Preset, Speichern
+                ueberschreibt das gewaählte Preset mit den aktuellen Einstellungen, Aendern passt
+                Namen und Inhalt an, Loeschen entfernt es. Damit lassen sich wiederkehrende
+                Markt-Screenings reproduzieren.
+                """),
+                p("""
+                Nach dem Lauf zeigt die Results Table Robot, Symbol, Period, Trades, Win Rate,
+                Drawdown, Recovery Factor, Profit und Status. Open Multi-Report Node oeffnet den
+                aggregierten Summary-Report. Show Single Report oeffnet den Report des markierten
+                Einzelruns. Genau hier sollte man die grobe Auswertung machen: Gibt es Cluster nach
+                Timeframe? Sind Gewinner nur einzelne Ausreisser? Haben profitable Runs genug
+                Trades?
+                """),
+                p("""
+                Best Practice: Den Multi-Backtester nicht als Lotterie verwenden. Wer alle Symbole
+                und alle Timeframes testet und danach nur den besten Run nimmt, hat einen massiven
+                Auswahlbias erzeugt. Besser ist eine explorative Phase mit Notizen: Welche
+                Marktgruppen verhalten sich konsistent? Wo ist die Tradezahl ausreichend? Welche
+                Kombinationen verdienen eine saubere Optimierung mit Forward-Split?
+                """),
+            ],
+        ),
+        Section(
+            "Bedienungsanleitung 4: Optimizer, Filtersettings und Score-Gewichtung",
+            [
+                p("""
+                Der Optimizer ist das Zentrum fuer Parametersuche. Links werden EA, Symbol, Period,
+                Date Range, Kontoannahmen, Tick Model, Opt. Mode, Opt. Criterion und Forward Test
+                gesetzt. Rechts liegt die EA Parameters & Optimization Ranges Tabelle. Jede Zeile
+                kann fix bleiben oder ueber Opt, Start, Step und Stop in den Suchraum aufgenommen
+                werden.
+                """),
+                p("""
+                Der wichtigste Bediengrundsatz lautet: Suchraeume muessen fachlich klein und
+                begruendet sein. Ein breiter Suchraum mit vielen Parametern produziert schnell
+                tausende Paesse. Darin findet man fast immer ein historisch schoenes Ergebnis. Das
+                ist keine Staerke des EAs, sondern eine Nebenwirkung vieler Vergleiche. AutoConfig
+                kann helfen, ersetzt aber nicht die fachliche Entscheidung, welche Parameter
+                ueberhaupt optimiert werden duerfen.
+                """),
+                p("""
+                Combined Analysis verbindet Backtest- und Forward-Resultate. Die Tabelle zeigt
+                Score, Konsistenz, Robustness Scorecard, KI-Spalte, RI, Pass sowie Backtest- und
+                Forward-Kennzahlen. Die Filtersettings entscheiden, welche Paesse ueberhaupt in die
+                Auswahl gelangen. Filter aktiv und Nur Passes mit Forward-Ergebnis sind die beiden
+                wichtigsten Schalter fuer eine ernsthafte Auswertung.
+                """),
+                p("""
+                Score-Gewichtung bestimmt nicht, ob ein Pass wahr oder falsch ist, sondern welche
+                Eigenschaften im Ranking mehr Gewicht erhalten. Ein aggressives Profil kann Profit
+                betonen; ein konservatives Profil betont Forward-Trades, Drawdown-Strafe, Recovery
+                und Konsistenz. Die Presets Low/Zahm, Med/Ausgewogen, High/Streng und
+                Grid/High-Trade sind Arbeitsprofile, keine Naturgesetze.
+                """),
+                p("""
+                Advanced Evaluator und Konsistenzdialog helfen bei der Interpretation. Konsistenz
+                ist das Verhaeltnis von Forward Profit zu Backtest Profit, begrenzt und normalisiert
+                fuer die Bewertung. Eine Konsistenz um 0.8 ist oft viel gesuender als ein riesiger
+                Backtest-Gewinn mit Forward-Einbruch. Der Evaluator sortiert Kandidaten nicht nur
+                nach Profit, sondern nach statistischer Breite, Risiko und Robustheit.
+                """),
+            ],
+        ),
+        Section(
+            "Bedienungsanleitung 5: Der 8-Phasen-Workflow in der Praxis",
+            [
+                p("""
+                Der Workflow Automator ist die professionelle Hauptstrecke des Projekts. Im Code
+                sind sieben UI-Schritte implementiert. Dieses Buch dokumentiert sie als acht
+                Arbeitsphasen, weil vor Schritt 1 eine unverzichtbare Phase 0 liegt: Vorbereitung
+                von Settings, Daten, EA, Symbolen und OOS-Planung. Ohne diese Vorbereitung sind die
+                folgenden Schritte formal korrekt, aber fachlich schwach.
+                """),
+                p("""
+                Phase 1 speichert Strategie-Auswahl und Suchraeume. Phase 2 startet die MT5-
+                Optimierung mit Algorithmus, Ziel und Forward-Modus. Phase 3 filtert und erzwingt
+                Diversity. Phase 4 misst Sensitivitaet. Phase 5 laesst die KI Kurvenform und
+                Stabilitaet bewerten. Phase 6 baut das finale Portfolio und exportiert. Phase 7
+                fuehrt die echte Out-of-Sample-Validierung auf einem spaeteren, unberuehrten Fenster
+                aus.
+                """),
+                p("""
+                Der Workflow speichert Zustand und Zwischenergebnisse in SQLite. Das ist wichtig:
+                Ein Workflow ist nicht nur eine Reihe von Buttons, sondern eine reproduzierbare
+                Entscheidungskette. Wenn spaeter eine Strategie in den Best-Ordner wandert, sollte
+                nachvollziehbar sein, welche Parameter, Filter, CV-Werte, KI-Einschaetzung und
+                Validierung dazu gefuehrt haben.
+                """),
+                p("""
+                Die haeufigste Fehlbedienung ist, den Forward-Test als finale Wahrheit zu behandeln.
+                Im Workflow wird Forward bereits fuer Auswahl, Filter und Ranking genutzt. Dadurch
+                ist dieses Fenster verbraucht. Die Step-7-Validierung ist deshalb kein optionales
+                Extra, sondern der entscheidende Realitaetscheck nach der Auswahl. Sie muss zeitlich
+                nach dem Optimierungsfenster liegen und darf sich nicht ueberlappen.
+                """),
+                p("""
+                Best Practice fuer den Workflow: Nur wenige Parameter optimieren, Forward immer
+                aktivieren, Mindesttrades ernst nehmen, Diversity erzwingen, Sensitivitaetskurven
+                visuell pruefen, KI-Urteil als Analyse lesen und Step 7 nie ueberspringen. Eine
+                Strategie, die im Backtest gut ist, im Forward ordentlich bleibt, im Sweep stabile
+                Plateaus zeigt und in Step 7 besteht, ist deutlich glaubwuerdiger als ein reiner
+                Optimierungssieger.
+                """),
+            ],
+        ),
+        Section(
+            "Bedienungsanleitung 6: Robustness, Controlling, Daten, Settings und Reports",
+            [
+                p("""
+                Robustness ist die freie Stresstest-Werkbank neben dem gefuehrten Workflow. Sie
+                erlaubt, einen EA mit Symbol, Period, Modell, Datum, Konto, Metrik, Shifts und
+                Shift-Tagen zu pruefen. AutoConfig, Load .set, Save Config und Generate Defaults
+                helfen beim Aufbau der Parameterbasis. Remove Failed bereinigt gescheiterte Runs.
+                """),
+                p("""
+                Controlling ist die Sicht fuer spaetere Entscheidungen. Hier werden kombinierte
+                Strategien, KI-Scores, Forward- und Backtest-Kennzahlen, Reviews und Nachtests
+                zusammengefuehrt. Die Strategie-Detailanalyse zeigt Konsistenz, Score-Erklaerung,
+                Backtest- und Forward-Metriken, Equity-Kurve und Parameter. Sie ist der Ort, an dem
+                man eine Strategie vor dem Live-Einsatz wirklich liest.
+                """),
+                p("""
+                Dukascopy Data ist die Datenpipeline. BI5-Dateien werden stundenweise geladen,
+                dekodiert, zu CSV/M1 aggregiert und anschliessend per MT5-Importskript als Custom
+                Symbol verfuegbar gemacht. Dieser Bereich ist wichtig, wenn Brokerdaten unvollstaendig
+                sind oder wenn ein Test mit kontrollierter externer Historie laufen soll.
+                """),
+                p("""
+                Settings ist die technische Basis: MT5 Terminal Path, MT4 Terminal Path, Portable
+                Mode, Output Directory, Data Directory, Default Deposit, Currency, Leverage,
+                Default Model und Broker Timezone Offset. Viele scheinbare Backtestfehler sind
+                eigentlich Settings-Fehler. Wenn keine Reports erscheinen, sollte man hier beginnen.
+                """),
+                p("""
+                Reports sind Belege. Ein professioneller Workflow haelt SET-Datei, HTML/XML-Report,
+                PDF-Report, Scorecard und Validierung zusammen. Der Best-Ordner ist kein Sammelplatz
+                fuer alles, was gut aussah, sondern fuer Kandidaten, die die vorhandenen Gates
+                bestanden haben. Sobald Step-7-Ergebnisse existieren, gehoeren nur PASSED-
+                Kandidaten dorthin.
+                """),
+            ],
+        ),
+    ]
+
+
 def build_chapters(snapshot: dict[str, object]) -> list[Section]:
     packages = snapshot["packages"]
     java_lines = snapshot["main_java_lines"]
     test_lines = snapshot["test_java_lines"]
     return [
+        *manual_chapters(),
         Section(
             "Vorwort: Warum dieses Buch existiert",
             [
@@ -1032,8 +1404,61 @@ def styles():
     return s
 
 
+def typographic_german(text: str) -> str:
+    replacements = [
+        ("Fuer", "Für"), ("fuer", "für"),
+        ("fue", "fü"), ("Fue", "Fü"),
+        ("ueber", "über"), ("Ueber", "Über"),
+        ("oeff", "öff"), ("Oeff", "Öff"),
+        ("waehl", "wähl"), ("Waehl", "Wähl"),
+        ("gewaehl", "gewähl"), ("Gewaehlt", "Gewählt"),
+        ("laeuft", "läuft"), ("Laeuft", "Läuft"),
+        ("haelt", "hält"), ("Haelt", "Hält"),
+        ("haeng", "häng"), ("Haeng", "Häng"),
+        ("spaet", "spät"), ("Spaet", "Spät"),
+        ("waehrend", "während"), ("Waehrend", "Während"),
+        ("koenn", "könn"), ("Koenn", "Könn"),
+        ("moech", "möch"), ("Moech", "Möch"),
+        ("zusaetz", "zusätz"), ("Zusaetz", "Zusätz"),
+        ("erhoeht", "erhöht"), ("Erhoeht", "Erhöht"),
+        ("gruen", "grün"), ("Gruen", "Grün"),
+        ("gross", "groß"), ("Gross", "Groß"),
+        ("schliesst", "schließt"), ("Schliesst", "Schließt"),
+        ("abschliess", "abschließ"), ("Abschliess", "Abschließ"),
+        ("ausfuehr", "ausführ"), ("Ausfuehr", "Ausführ"),
+        ("Einfuehr", "Einführ"), ("einfuehr", "einführ"),
+        ("Erklaer", "Erklär"), ("erklaer", "erklär"),
+        ("Gedaechtnis", "Gedächtnis"),
+        ("Qualitaet", "Qualität"), ("qualitaet", "qualität"),
+        ("primaere", "primäre"), ("Primaere", "Primäre"),
+        ("Haeufig", "Häufig"), ("haeufig", "häufig"),
+        ("Aender", "Änder"), ("aender", "änder"),
+        ("Maerk", "Märk"), ("maerk", "märk"),
+        ("Raeum", "Räum"), ("raeum", "räum"),
+        ("Paesse", "Pässe"), ("paesse", "pässe"),
+        ("duerf", "dürf"), ("Duerf", "Dürf"),
+        ("muess", "müss"), ("Muess", "Müss"),
+        ("Rueck", "Rück"), ("rueck", "rück"),
+        ("aehn", "ähn"), ("Aehn", "Ähn"),
+        ("Verstaend", "Verständ"), ("verstaend", "verständ"),
+        ("vollstaend", "vollständ"), ("Vollstaend", "Vollständ"),
+        ("staerk", "stärk"), ("Staerk", "Stärk"),
+        ("Saeul", "Säul"), ("saeul", "säul"),
+        ("beruehr", "berühr"), ("Beruehr", "Berühr"),
+        ("pruef", "prüf"), ("Pruef", "Prüf"),
+        ("glaubwuerd", "glaubwürd"), ("Glaubwuerd", "Glaubwürd"),
+        ("genueg", "genüg"), ("Genueg", "Genüg"),
+        ("schoen", "schön"), ("Schoen", "Schön"),
+    ]
+    polished = text
+    for src, dst in replacements:
+        polished = polished.replace(src, dst)
+    return polished
+
+
 def para(text: str, style):
-    safe = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    polished = typographic_german(text)
+    safe = polished.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
     return Paragraph(safe, style)
 
 
@@ -1071,6 +1496,61 @@ def footer(canvas, doc):
     canvas.restoreState()
 
 
+def manual_images_for(title: str) -> list[tuple[str, str]]:
+    if title.startswith("Bedienungsanleitung 1"):
+        return [
+            ("images/backtester_platform.png", "Gesamtbild der Plattformidee: Backtesting, Optimierung, Batch Running und Performance Analytics als zusammenhaengender Arbeitsplatz."),
+        ]
+    if title.startswith("Bedienungsanleitung 2"):
+        return [
+            ("images/backtester_ui1.png", "Backtest-Hauptmaske: oben Einzeltest-Konfiguration, unten Historie und Ergebnisaktionen."),
+            ("images/backtester_ui3.png", "Einzelreport-Dialog mit Kennzahlen, Equity-Kurve, Detailstatistik und Report-Aktionen."),
+        ]
+    if title.startswith("Bedienungsanleitung 3"):
+        return [
+            ("images/backtester_ui2.png", "Multi-Backtest-Summary-Report: Vergleich mehrerer Symbol/Timeframe-Runs mit Detailbereichen."),
+            ("images/multi-backtester-results.png", "Einzelreport aus einem Multi-Backtest-Run mit Equity-Kurve und Kennzahlen."),
+            ("images/multi-backtester-config.png", "MT5-Reportausschnitt mit Kontostand-Kurve; im Projektbildbestand irrefuehrend als Multi-Konfiguration benannt."),
+        ]
+    if title.startswith("Bedienungsanleitung 4"):
+        return [
+            ("images/backtester_optimizer.png", "Optimizer-Arbeitsbereich mit Suchraum, Combined Analysis, Filtern, Score-Gewichtung und Ergebnisliste."),
+            ("images/backtester_score_weighting.png", "Score-Gewichtungsdialog mit Presets und relativen Gewichten."),
+            ("images/backtester_consistency_ratio.png", "Konsistenz-Hilfedialog: Bedeutung und Bewertung des Forward/Backtest-Verhaeltnisses."),
+            ("images/backtester_advanced_evaluator.png", "Advanced Strategy Evaluator mit Qualitaetskriterien, Verteilung und Kandidatenklassifikation."),
+        ]
+    if title.startswith("Bedienungsanleitung 5"):
+        return [
+            ("images/backtester_sensitivity.png", "Sensitivitaetsdetails: CV-Werte und Kurvenformen zeigen, ob Parameter ein Plateau oder eine Klippe bilden."),
+            ("images/backtester_ki_analysis.png", "KI-Analyse im Sensitivity-Tab: OpenRouter verarbeitet Performance- und Stabilitaetsdaten."),
+            ("images/backtester_ki_evaluation_table.png", "KI-Bewertungstabelle mit Pass, Status, Score, CV worst, Fragile und Fazit."),
+        ]
+    if title.startswith("Bedienungsanleitung 6"):
+        return [
+            ("images/backtester_best_strategies.png", "Best-Strategies-Tabelle: kombinierter Score, KI-Wert, Backtest- und Forward-Kennzahlen."),
+            ("images/backtester_strategy_detail_analysis.png", "Strategie-Detailanalyse mit Konsistenz, Score-Erklaerung, Kennzahlen, Equity-Kurve und Parametern."),
+        ]
+    return []
+
+
+def manual_tables_for(title: str):
+    if title.startswith("Bedienungsanleitung 1"):
+        return [("Menuepunkte und Arbeitsbereiche", ["Bereich", "Zweck", "Bedienung", "Wann nutzen"], TAB_REFERENCE, [3.0 * cm, 3.2 * cm, 6.0 * cm, 3.8 * cm])]
+    if title.startswith("Bedienungsanleitung 2"):
+        return [("Backtester: alle Einstellungen und Aktionen", ["Feld / Aktion", "Funktion", "Best Practice"], BACKTESTER_FIELDS, [4.0 * cm, 6.5 * cm, 5.5 * cm])]
+    if title.startswith("Bedienungsanleitung 3"):
+        return [("Multi-Backtester: alle Einstellungen und Aktionen", ["Feld / Aktion", "Funktion", "Best Practice"], MULTI_BACKTESTER_FIELDS, [4.0 * cm, 6.5 * cm, 5.5 * cm])]
+    if title.startswith("Bedienungsanleitung 4"):
+        return [
+            ("Optimizer: Grundfelder und Parameter-Suchraum", ["Feld / Aktion", "Funktion", "Best Practice"], OPTIMIZER_FIELDS, [4.0 * cm, 6.5 * cm, 5.5 * cm]),
+            ("Combined Analysis: Filtersettings", ["Filter", "Funktion", "Best Practice"], FILTER_SETTINGS, [4.0 * cm, 6.5 * cm, 5.5 * cm]),
+            ("Score-Gewichtung", ["Gewicht", "Bedeutung", "Best Practice"], SCORE_WEIGHT_FIELDS, [4.0 * cm, 6.5 * cm, 5.5 * cm]),
+        ]
+    if title.startswith("Bedienungsanleitung 5"):
+        return [("8-Phasen-Workflow: Schritt fuer Schritt", ["Phase", "Ziel", "Code-Ort", "Parameter / Ergebnis", "Best Practice"], WORKFLOW_PHASES, [2.5 * cm, 3.2 * cm, 3.5 * cm, 4.3 * cm, 2.5 * cm])]
+    return []
+
+
 def write_markdown(snapshot: dict[str, object], diagrams: dict[str, Path], chapters: list[Section]) -> None:
     lines: list[str] = []
     lines.append("# Mastering the Backtester")
@@ -1098,6 +1578,17 @@ def write_markdown(snapshot: dict[str, object], diagrams: dict[str, Path], chapt
         if sec.bullets:
             for b in sec.bullets:
                 lines.append(f"- {b}")
+            lines.append("")
+        for rel, cap in manual_images_for(sec.title):
+            lines.append(f"![{cap}]({rel})")
+            lines.append("")
+        for table_title, headers, rows, _widths in manual_tables_for(sec.title):
+            lines.append(f"### {table_title}")
+            lines.append("")
+            lines.append("| " + " | ".join(headers) + " |")
+            lines.append("|" + "|".join("---" for _ in headers) + "|")
+            for row in rows:
+                lines.append("| " + " | ".join(str(x).replace("|", "\\|") for x in row) + " |")
             lines.append("")
     lines.append("## Anhang A: Parameter-Referenz")
     lines.append("")
@@ -1175,16 +1666,21 @@ def write_markdown(snapshot: dict[str, object], diagrams: dict[str, Path], chapt
 
 def image_plan() -> list[tuple[str, str]]:
     return [
-        ("images/backtester_platform.png", "Abbildung: Gesamtplattform des Backtesters."),
-        ("images/backtester_optimizer.png", "Abbildung: Optimizer-Arbeitsbereich."),
-        ("images/backtester_score_weighting.png", "Abbildung: Score-Gewichtung und Ranking."),
-        ("images/backtester_sensitivity.png", "Abbildung: Sensitivitaetsanalyse und Robustheitskurven."),
-        ("images/backtester_ki_analysis.png", "Abbildung: KI-Analyse der Strategie-Stabilitaet."),
-        ("images/backtester_ki_evaluation_table.png", "Abbildung: KI-Bewertungstabelle."),
-        ("images/backtester_best_strategies.png", "Abbildung: Auswahl und Export bester Strategien."),
-        ("images/multi-backtester-config.png", "Abbildung: Multi-Backtester-Konfiguration."),
-        ("images/multi-backtester-results.png", "Abbildung: Multi-Backtester-Ergebnisse."),
-        ("images/backtester_strategy_detail_analysis.png", "Abbildung: Strategie-Detailanalyse."),
+        ("images/backtester_platform.png", "Abbildung: Plattformmotiv fuer Backtesting, Optimierung, Batch Running und Analytics."),
+        ("images/backtester_ui1.png", "Abbildung: Backtest-Tab mit Einzeltest-Konfiguration und Ergebnis-Historie."),
+        ("images/backtester_optimizer.png", "Abbildung: Optimizer-Arbeitsbereich mit Parameter-Suchraum und Combined Analysis."),
+        ("images/backtester_score_weighting.png", "Abbildung: Score-Gewichtung und Ranking-Presets."),
+        ("images/backtester_consistency_ratio.png", "Abbildung: Konsistenzdialog fuer das Forward/Backtest-Verhaeltnis."),
+        ("images/backtester_advanced_evaluator.png", "Abbildung: Advanced Strategy Evaluator fuer statistische Breite und Risiko."),
+        ("images/backtester_sensitivity.png", "Abbildung: Sensitivitaetsdetails mit CV-Werten und Robustheitskurven."),
+        ("images/backtester_ki_analysis.png", "Abbildung: KI-Analyse der Strategie-Stabilitaet im Sensitivity-Tab."),
+        ("images/backtester_ki_evaluation_table.png", "Abbildung: KI-Bewertungstabelle mit Score, CV worst und Fazit."),
+        ("images/backtester_best_strategies.png", "Abbildung: Auswahl bester Strategien mit Backtest- und Forward-Kennzahlen."),
+        ("images/backtester_ui2.png", "Abbildung: Multi-Backtest-Summary-Report."),
+        ("images/multi-backtester-results.png", "Abbildung: Einzelreport eines Multi-Backtest-Runs."),
+        ("images/multi-backtester-config.png", "Abbildung: MT5-Reportausschnitt mit Equity-/Kontostand-Kurve; Dateiname im Bestand ist irrefuehrend."),
+        ("images/backtester_strategy_detail_analysis.png", "Abbildung: Strategie-Detailanalyse im Controlling-Kontext."),
+        ("images/backtester_ui3.png", "Abbildung: Einzelreport-Dialog mit Kennzahlen, Equity-Kurve und Detailstatistik."),
     ]
 
 
@@ -1235,6 +1731,7 @@ def build_pdf(snapshot: dict[str, object], diagrams: dict[str, Path], chapters: 
         ("oos_gate", "Step 7 als echte nachgelagerte Out-of-Sample-Validierung."),
     ]
     diagram_by_chapter = {
+        "Bedienungsanleitung 5": ("workflow", "Acht Arbeitsphasen: Vorbereitung plus die sieben UI-Schritte des Workflow Automators."),
         "Kapitel 2": diagram_order[0],
         "Kapitel 3": diagram_order[1],
         "Kapitel 5": diagram_order[3],
@@ -1265,8 +1762,19 @@ def build_pdf(snapshot: dict[str, object], diagrams: dict[str, Path], chapters: 
         if sec.bullets:
             items = [ListItem(para(b, st["BookBullet"])) for b in sec.bullets]
             story.append(ListFlowable(items, bulletType="bullet", leftIndent=16))
+        for rel, cap in manual_images_for(sec.title):
+            img_path = ROOT / rel
+            if img_path.exists():
+                story.append(KeepTogether([
+                    scaled_image(img_path, 15.8 * cm, 8.4 * cm),
+                    para(cap, st["Caption"]),
+                ]))
+        for table_title, headers, rows, widths in manual_tables_for(sec.title):
+            story.append(Spacer(1, 0.25 * cm))
+            story.append(para(table_title, st["Section"]))
+            story.append(make_table([headers] + list(rows), widths, st))
         story.append(Spacer(1, 0.3 * cm))
-        if sec.title.startswith("Kapitel"):
+        if sec.title.startswith(("Bedienungsanleitung", "Kapitel")):
             story.append(PageBreak())
 
     story.append(PageBreak())
@@ -1352,7 +1860,7 @@ def build_pdf(snapshot: dict[str, object], diagrams: dict[str, Path], chapters: 
     story.append(para("Die Galerie zeigt zuerst die fuer dieses Buch erzeugten Erklaergrafiken und danach die wichtigsten vorhandenen Projektbilder. Sie lockert das Buch auf und dient zugleich als visueller Index der Architektur und Benutzeroberflaeche.", st["Body"]))
     generated_gallery = [
         ("architecture", "Grafikindex: Architekturuebersicht des Backtester-Projekts."),
-        ("workflow", "Grafikindex: 7-Schritt Anti-Curvefitting Workflow."),
+        ("workflow", "Grafikindex: 8-Phasen Anti-Curvefitting Workflow."),
         ("mt5_process", "Grafikindex: MT5-Prozessablauf."),
         ("database", "Grafikindex: Persistenzmodell der Anwendung."),
         ("scorecard", "Grafikindex: Scorecard-Modell."),
