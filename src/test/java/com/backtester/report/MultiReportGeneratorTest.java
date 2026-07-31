@@ -104,6 +104,7 @@ public class MultiReportGeneratorTest {
         // Verify new cards for Portfolio Max Drawdown and Portfolio Recovery Factor
         assertTrue(htmlContent.contains("Portfolio Max Drawdown"));
         assertTrue(htmlContent.contains("Portfolio Recovery Factor"));
+        assertTrue(htmlContent.contains("Simulation Model"));
 
         // Verify sections and charts
         assertTrue(htmlContent.contains("Portfolio Summary Analysis"));

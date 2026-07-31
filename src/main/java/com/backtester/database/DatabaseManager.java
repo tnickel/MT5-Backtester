@@ -275,20 +275,67 @@ public class DatabaseManager {
                 log.warn("Could not migrate EA_CONFIGS (might not exist or already migrated)", e);
             }
 
-            // Migrate settings to optimized defaults if they are still at old defaults
+            // Apply legacy defaults and the trade-first profile exactly once.
+            // The version marker protects later user customizations that happen
+            // to equal one of the historic default values.
             try {
-                stmt.execute("UPDATE APP_SETTINGS SET value = '15' WHERE key = 'opt.weight.btProfit' AND value = '10'");
-                stmt.execute("UPDATE APP_SETTINGS SET value = '10' WHERE key = 'opt.weight.consistency' AND value = '15'");
-                stmt.execute("UPDATE APP_SETTINGS SET value = '10' WHERE key = 'opt.weight.risk' AND value = '15'");
-                stmt.execute("UPDATE APP_SETTINGS SET value = '25' WHERE key = 'opt.weight.sampleSize' AND value = '10'");
-                stmt.execute("UPDATE APP_SETTINGS SET value = '5' WHERE key = 'opt.weight.tailRisk' AND value = '10'");
-                stmt.execute("UPDATE APP_SETTINGS SET value = '30' WHERE key = 'opt.weight.fwTrades' AND value = '5'");
-                stmt.execute("UPDATE APP_SETTINGS SET value = '25' WHERE key = 'opt.weight.recovery' AND value = '5'");
-                stmt.execute("UPDATE APP_SETTINGS SET value = '0.01' WHERE key = 'opt.filter.minBtProfit' AND value = '0.0'");
-                stmt.execute("UPDATE APP_SETTINGS SET value = '0.01' WHERE key = 'opt.filter.minFwProfit' AND value = '0.0'");
-                stmt.execute("UPDATE APP_SETTINGS SET value = '100' WHERE key = 'opt.filter.minBtTrades' AND value = '1'");
-                stmt.execute("UPDATE APP_SETTINGS SET value = '15' WHERE key = 'opt.filter.minFwTrades' AND value = '0'");
-                log.info("Migrated old default settings to new optimized defaults in APP_SETTINGS.");
+                int selectionProfileVersion = 0;
+                try (ResultSet selectionProfile = stmt.executeQuery(
+                        "SELECT value FROM APP_SETTINGS WHERE key = 'workflow.selection.profile.version'")) {
+                    if (selectionProfile.next()) {
+                        try {
+                            selectionProfileVersion = Integer.parseInt(selectionProfile.getString(1));
+                        } catch (NumberFormatException ignored) {
+                            selectionProfileVersion = 0;
+                        }
+                    }
+                }
+                boolean migrateTradeRecoveryProfile = selectionProfileVersion < 1;
+                if (migrateTradeRecoveryProfile) {
+                    stmt.execute("UPDATE APP_SETTINGS SET value = '10' WHERE key = 'opt.weight.consistency' AND value = '15'");
+                    stmt.execute("UPDATE APP_SETTINGS SET value = '10' WHERE key = 'opt.weight.risk' AND value = '15'");
+                    stmt.execute("UPDATE APP_SETTINGS SET value = '25' WHERE key = 'opt.weight.sampleSize' AND value = '10'");
+                    stmt.execute("UPDATE APP_SETTINGS SET value = '5' WHERE key = 'opt.weight.tailRisk' AND value = '10'");
+                    stmt.execute("UPDATE APP_SETTINGS SET value = '30' WHERE key = 'opt.weight.fwTrades' AND value = '5'");
+                    stmt.execute("UPDATE APP_SETTINGS SET value = '25' WHERE key = 'opt.weight.recovery' AND value = '5'");
+                    stmt.execute("UPDATE APP_SETTINGS SET value = '0.01' WHERE key = 'opt.filter.minBtProfit' AND value = '0.0'");
+                    stmt.execute("UPDATE APP_SETTINGS SET value = '0.01' WHERE key = 'opt.filter.minFwProfit' AND value = '0.0'");
+                    stmt.execute("UPDATE APP_SETTINGS SET value = '100' WHERE key = 'opt.filter.minBtTrades' AND value = '1'");
+                    stmt.execute("UPDATE APP_SETTINGS SET value = '50' WHERE key = 'opt.filter.minFwTrades' AND value = '0'");
+                    stmt.execute("UPDATE APP_SETTINGS SET value = '1.0' WHERE key = 'opt.filter.minBtRecovery' AND value = '0.0'");
+                    stmt.execute("UPDATE APP_SETTINGS SET value = '1.0' WHERE key = 'opt.filter.minFwRecovery' AND value = '0.0'");
+
+                    String[][] profile = {
+                        {"opt.weight.btProfit", "7"},
+                        {"opt.weight.fwProfit", "7"},
+                        {"opt.weight.consistency", "6"},
+                        {"opt.weight.risk", "3"},
+                        {"opt.weight.equityConsist", "3"},
+                        {"opt.weight.sampleSize", "23"},
+                        {"opt.weight.fwTrades", "30"},
+                        {"opt.weight.recovery", "21"},
+                        {"opt.weight.recovery.min", "1.0"},
+                        {"opt.weight.recovery.max", "5.0"},
+                        {"opt.filter.minBtProfit", "0.01"},
+                        {"opt.filter.minFwProfit", "0.01"},
+                        {"opt.filter.minBtTrades", "100"},
+                        {"opt.filter.minFwTrades", "50"},
+                        {"opt.filter.minBtRecovery", "1.0"},
+                        {"opt.filter.minFwRecovery", "1.0"},
+                        {"workflow.selection.profile.version", "1"}
+                    };
+                    for (String[] setting : profile) {
+                        try (PreparedStatement upsert = conn.prepareStatement(
+                                "INSERT INTO APP_SETTINGS(key, value) VALUES(?, ?) " +
+                                "ON CONFLICT(key) DO UPDATE SET value = excluded.value")) {
+                            upsert.setString(1, setting[0]);
+                            upsert.setString(2, setting[1]);
+                            upsert.executeUpdate();
+                        }
+                    }
+                    log.info("Applied trade-first workflow selection profile (version 1).");
+                    log.info("Migrated old default settings in APP_SETTINGS.");
+                }
             } catch (Exception e) {
                 log.warn("Could not migrate app settings defaults", e);
             }
@@ -915,11 +962,14 @@ public class DatabaseManager {
     }
 
     public void deleteEaParameterSettings(String expertName) {
-        String sql = "DELETE FROM EA_PARAMETER_SETTINGS WHERE expert_name = ?";
+        if (expertName == null || expertName.trim().isEmpty()) return;
+        String baseName = com.backtester.config.EaParameterManager.extractEaBaseName(expertName);
+        String sql = "DELETE FROM EA_PARAMETER_SETTINGS WHERE expert_name = ? OR expert_name LIKE ?";
         try (Connection conn = connect(); PreparedStatement pstmt = conn.prepareStatement(sql)) {
             pstmt.setString(1, expertName);
-            pstmt.executeUpdate();
-            log.info("Deleted EA parameter settings for {}", expertName);
+            pstmt.setString(2, "%" + baseName + "%");
+            int count = pstmt.executeUpdate();
+            log.info("Deleted EA parameter settings for {} ({} records deleted)", expertName, count);
         } catch (SQLException e) {
             log.error("Failed to delete EA parameter settings for: " + expertName, e);
         }

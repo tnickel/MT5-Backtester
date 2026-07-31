@@ -18,8 +18,13 @@ public class ValidationResult {
     /** Verdict constants. */
     public static final String PASSED = "PASSED";
     public static final String FAILED = "FAILED";
+    public static final String INSUFFICIENT_EVIDENCE = "INSUFFICIENT_EVIDENCE";
     public static final String NO_TRADES = "NO_TRADES";
     public static final String ERROR = "ERROR";
+
+    /** Transparent minimum requirements for the untouched validation window. */
+    public static final int MIN_VALIDATION_TRADES = 10;
+    public static final double MIN_RECOVERY_FACTOR = 1.0;
 
     private int passNumber;
     private String validationFrom = "";
@@ -43,31 +48,48 @@ public class ValidationResult {
         this.passNumber = passNumber;
     }
 
-    /** Below this trade count a PASSED verdict is flagged as weak evidence. */
-    public static final int WEAK_EVIDENCE_TRADES = 10;
-
     /**
-     * Applies the verdict rules. Deliberately simple and transparent:
-     * <ul>
-     *   <li>{@link #NO_TRADES} — the EA never traded in the window (no evidence either way)</li>
-     *   <li>{@link #PASSED}  — net profit &gt; 0 on never-seen data</li>
-     *   <li>{@link #FAILED}  — net loss on never-seen data</li>
-     * </ul>
-     * A PASSED verdict with fewer than {@link #WEAK_EVIDENCE_TRADES} trades
-     * is still PASSED, but the message flags it as weak evidence.
-     * (A profit factor condition would be redundant: PF &lt; 1 implies a net
-     * loss and is therefore already FAILED.)
+     * Applies the default verdict rules. A strategy only passes when it is
+     * profitable, has enough trades and recovers at least as much as its
+     * maximum drawdown.
      */
     public void computeVerdict() {
+        computeVerdict(MIN_VALIDATION_TRADES, MIN_RECOVERY_FACTOR);
+    }
+
+    /**
+     * Applies explicit verdict thresholds. Deliberately simple and transparent:
+     * <ul>
+     *   <li>{@link #NO_TRADES} - the EA never traded in the window</li>
+     *   <li>{@link #FAILED} - no positive finite profit or insufficient recovery</li>
+     *   <li>{@link #INSUFFICIENT_EVIDENCE} - profitable, but too few trades</li>
+     *   <li>{@link #PASSED} - all three requirements are met</li>
+     * </ul>
+     */
+    public void computeVerdict(int minimumTrades, double minimumRecoveryFactor) {
+        int requiredTrades = Math.max(1, minimumTrades);
+        double requiredRecovery = Double.isFinite(minimumRecoveryFactor)
+                ? Math.max(0.0, minimumRecoveryFactor)
+                : MIN_RECOVERY_FACTOR;
+        message = "";
+
         if (trades <= 0) {
             verdict = NO_TRADES;
-        } else if (profit > 0) {
-            verdict = PASSED;
-            if (trades < WEAK_EVIDENCE_TRADES) {
-                message = "Nur " + trades + " Trades im Validierungsfenster — schwache Evidenz.";
-            }
-        } else {
+            message = "Keine Trades im Validierungsfenster.";
+        } else if (!Double.isFinite(profit) || profit <= 0.0) {
             verdict = FAILED;
+            message = "Validierungsprofit ist nicht positiv.";
+        } else if (trades < requiredTrades) {
+            verdict = INSUFFICIENT_EVIDENCE;
+            message = "Nur " + trades + " von mindestens " + requiredTrades
+                    + " erforderlichen Trades - unzureichende Evidenz.";
+        } else if (Double.isNaN(recoveryFactor) || recoveryFactor < requiredRecovery) {
+            verdict = FAILED;
+            message = String.format(java.util.Locale.US,
+                    "Recovery Factor %.2f liegt unter dem Minimum %.2f.",
+                    recoveryFactor, requiredRecovery);
+        } else {
+            verdict = PASSED;
         }
     }
 
@@ -114,8 +136,8 @@ public class ValidationResult {
     /** One-line summary for reports and logs. */
     public String toSummaryLine() {
         return String.format(java.util.Locale.US,
-                "Pass %d [%s]: Profit=%.2f | Trades=%d | PF=%.2f | DD=%.2f%% | (BT=%.2f, FW=%.2f) %s",
-                passNumber, verdict, profit, trades, profitFactor, drawdownPercent,
+                "Pass %d [%s]: Profit=%.2f | Trades=%d | PF=%.2f | RF=%.2f | DD=%.2f%% | (BT=%.2f, FW=%.2f) %s",
+                passNumber, verdict, profit, trades, profitFactor, recoveryFactor, drawdownPercent,
                 btProfit, fwProfit, message == null ? "" : message);
     }
 }

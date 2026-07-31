@@ -84,6 +84,7 @@ public class IniGenerator {
                 writer.write("Period=" + config.getPeriod() + "\r\n");
                 writer.write("Model=" + config.getModel() + "\r\n");
                 writer.write("ExecutionMode=" + config.getExecutionMode() + "\r\n");
+                writer.write("UseDate=1\r\n");
                 writer.write("FromDate=" + config.getFromDate().format(MT5_DATE_FORMAT) + "\r\n");
                 writer.write("ToDate=" + config.getToDate().format(MT5_DATE_FORMAT) + "\r\n");
                 writer.write("Deposit=" + config.getDeposit() + "\r\n");
@@ -166,6 +167,7 @@ public class IniGenerator {
                 writer.write("Period=" + config.getPeriod() + "\r\n");
                 writer.write("Model=" + config.getModel() + "\r\n");
                 writer.write("ExecutionMode=" + config.getExecutionMode() + "\r\n");
+                writer.write("UseDate=1\r\n");
                 writer.write("FromDate=" + config.getFromDate().format(MT5_DATE_FORMAT) + "\r\n");
                 writer.write("ToDate=" + config.getToDate().format(MT5_DATE_FORMAT) + "\r\n");
                 writer.write("Deposit=" + config.getDeposit() + "\r\n");

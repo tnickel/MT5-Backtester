@@ -146,6 +146,7 @@ public class WorkflowDiversityTest {
         p1.setPassNumber(1);
         p1.setTotalTrades(150);
         p1.setProfit(1000);
+        p1.setRecoveryFactor(3.0);
         p1.setDrawdownPercent(10.0);
         p1.setParameter("tp", "50");
         p1.setParameter("sl", "100");
@@ -156,6 +157,7 @@ public class WorkflowDiversityTest {
         p2.setPassNumber(2);
         p2.setTotalTrades(152);
         p2.setProfit(950);
+        p2.setRecoveryFactor(2.8);
         p2.setDrawdownPercent(11.0);
         p2.setParameter("tp", "51"); // only 2% difference
         p2.setParameter("sl", "100");
@@ -166,6 +168,7 @@ public class WorkflowDiversityTest {
         p3.setPassNumber(3);
         p3.setTotalTrades(120);
         p3.setProfit(800);
+        p3.setRecoveryFactor(2.2);
         p3.setDrawdownPercent(15.0);
         p3.setParameter("tp", "70"); // 40% difference
         p3.setParameter("sl", "130"); // 30% difference
@@ -176,6 +179,7 @@ public class WorkflowDiversityTest {
         p4.setPassNumber(4);
         p4.setTotalTrades(100);
         p4.setProfit(50); // < 100 min profit
+        p4.setRecoveryFactor(2.0);
         p4.setDrawdownPercent(5.0);
         p4.setParameter("tp", "80");
         p4.setParameter("sl", "160");
@@ -186,6 +190,7 @@ public class WorkflowDiversityTest {
         p5.setPassNumber(5);
         p5.setTotalTrades(200);
         p5.setProfit(700);
+        p5.setRecoveryFactor(2.5);
         p5.setDrawdownPercent(12.0);
         p5.setParameter("tp", "30");
         p5.setParameter("sl", "60");
@@ -198,6 +203,50 @@ public class WorkflowDiversityTest {
         assertEquals(1, diverse.get(0).getPassNumber());
         assertEquals(3, diverse.get(1).getPassNumber());
         assertEquals(5, diverse.get(2).getPassNumber());
+    }
+
+    @Test
+    public void testFilterRequiresPositiveProfitTradesAndRecoveryInBothPeriods() {
+        WorkflowEngine engine = new WorkflowEngine(null);
+        engine.setForwardMode(1);
+        engine.setMinBtProfit(0.01);
+        engine.setMinFwProfit(0.01);
+        engine.setMinBtTrades(100);
+        engine.setMinFwTrades(50);
+        engine.setMinBtRecovery(1.0);
+        engine.setMinFwRecovery(1.0);
+        engine.setMaxStrategiesToSelect(10);
+
+        Pass validBt = createSelectionPass(1, 500, 200, 2.5);
+        Pass validFw = createSelectionPass(1, 250, 100, 2.0);
+        Pass lossBt = createSelectionPass(2, -1, 300, 4.0);
+        Pass lossFw = createSelectionPass(2, 200, 150, 3.0);
+        Pass fewTradesBt = createSelectionPass(3, 500, 99, 3.0);
+        Pass fewTradesFw = createSelectionPass(3, 300, 80, 2.5);
+        Pass weakRecoveryBt = createSelectionPass(4, 500, 300, 0.9);
+        Pass weakRecoveryFw = createSelectionPass(4, 300, 150, 1.5);
+
+        List<CombinedPass> passes = new ArrayList<>();
+        passes.add(new CombinedPass(validBt, validFw, 80.0, 1.0, ""));
+        passes.add(new CombinedPass(lossBt, lossFw, 99.0, 1.0, ""));
+        passes.add(new CombinedPass(fewTradesBt, fewTradesFw, 98.0, 1.0, ""));
+        passes.add(new CombinedPass(weakRecoveryBt, weakRecoveryFw, 97.0, 1.0, ""));
+
+        List<CombinedPass> selected = engine.filterDiversePasses(passes);
+
+        assertEquals(1, selected.size());
+        assertEquals(1, selected.get(0).getPassNumber());
+    }
+
+    private static Pass createSelectionPass(int passNumber, double profit, int trades, double recovery) {
+        Pass pass = new Pass();
+        pass.setPassNumber(passNumber);
+        pass.setProfit(profit);
+        pass.setTotalTrades(trades);
+        pass.setRecoveryFactor(recovery);
+        pass.setDrawdownPercent(10.0);
+        pass.setParameter("entry", String.valueOf(passNumber));
+        return pass;
     }
 
     @Test

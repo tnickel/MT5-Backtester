@@ -49,16 +49,42 @@ public class DukascopyDownloader {
         PRICE_POINT_MAP.put("AUDNZD", 100000);
         PRICE_POINT_MAP.put("AUDCHF", 100000);
         PRICE_POINT_MAP.put("CADCHF", 100000);
+        PRICE_POINT_MAP.put("EURAUD", 100000);
+        PRICE_POINT_MAP.put("EURNZD", 100000);
+        PRICE_POINT_MAP.put("GBPAUD", 100000);
+        PRICE_POINT_MAP.put("GBPCAD", 100000);
+        PRICE_POINT_MAP.put("GBPCHF", 100000);
+        PRICE_POINT_MAP.put("GBPNZD", 100000);
+        PRICE_POINT_MAP.put("NZDCAD", 100000);
+        PRICE_POINT_MAP.put("NZDCHF", 100000);
+        PRICE_POINT_MAP.put("NZDSGD", 100000);
+        PRICE_POINT_MAP.put("USDSGD", 100000);
         // 3-digit JPY pairs
         PRICE_POINT_MAP.put("EURJPY", 1000);
         PRICE_POINT_MAP.put("GBPJPY", 1000);
         PRICE_POINT_MAP.put("USDJPY", 1000);
         PRICE_POINT_MAP.put("NZDJPY", 1000);
         PRICE_POINT_MAP.put("CADJPY", 1000);
+        PRICE_POINT_MAP.put("AUDJPY", 1000);
+        PRICE_POINT_MAP.put("CHFJPY", 1000);
         // Metals & Commodities
         PRICE_POINT_MAP.put("XAUUSD", 1000);
         PRICE_POINT_MAP.put("XAGUSD", 100000);
         PRICE_POINT_MAP.put("XTIUSD", 1000);
+        PRICE_POINT_MAP.put("XBRUSD", 1000);
+        // Indices (2-digit points multiplier 100)
+        PRICE_POINT_MAP.put("DE40", 100);
+        PRICE_POINT_MAP.put("FRANCE40", 100);
+        PRICE_POINT_MAP.put("SPAIN35", 100);
+        PRICE_POINT_MAP.put("US30", 100);
+        PRICE_POINT_MAP.put("US500", 100);
+        PRICE_POINT_MAP.put("USTEC", 100);
+        PRICE_POINT_MAP.put("UK100", 100);
+        PRICE_POINT_MAP.put("JP225", 100);
+        PRICE_POINT_MAP.put("HK50", 100);
+        PRICE_POINT_MAP.put("CHINA50", 100);
+        PRICE_POINT_MAP.put("EU50", 100);
+        PRICE_POINT_MAP.put("AUS200", 100);
     }
 
     public DukascopyDownloader(Path dataDirectory) {

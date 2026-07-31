@@ -148,7 +148,7 @@ public class OptimizationRunner {
             tailer.start();
 
             logMessage("Starting " + platform.getName() + " optimization...");
-            currentProcess = VirtualDesktopHelper.startOnDesktop2(terminalPath, mt5Args, mt5Dir);
+            currentProcess = VirtualDesktopHelper.startTerminal(terminalPath, mt5Args, mt5Dir);
             if (currentProcess != null) {
                 Mt5ProcessGuard.registerProcess(currentProcess);
             } else {

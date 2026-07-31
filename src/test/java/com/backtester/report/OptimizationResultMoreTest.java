@@ -219,9 +219,9 @@ public class OptimizationResultMoreTest {
     public void testScoreWeightsDefaults() {
         OptimizationResult.ScoreWeights w = OptimizationResult.ScoreWeights.defaults();
         assertNotNull(w);
-        assertEquals(15.0, w.wBtProfit, 0.001);
-        assertEquals(15.0, w.wFwProfit, 0.001);
-        assertEquals(10.0, w.wConsistency, 0.001);
+        assertEquals(7.0, w.wBtProfit, 0.001);
+        assertEquals(7.0, w.wFwProfit, 0.001);
+        assertEquals(6.0, w.wConsistency, 0.001);
     }
 
     @Test

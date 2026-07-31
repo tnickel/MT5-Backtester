@@ -145,11 +145,7 @@ public class BacktestRunner {
             tailer = new Mt5LogTailer(mt5Dir, platform, this::logMessage);
             tailer.start();
 
-            if (btConfig.isUseVirtualDesktop()) {
-                currentProcess = VirtualDesktopHelper.startOnDesktop2(terminalPath, mt5Args, mt5Dir);
-            } else {
-                currentProcess = VirtualDesktopHelper.startNormally(terminalPath, mt5Args, mt5Dir);
-            }
+            currentProcess = VirtualDesktopHelper.startTerminal(terminalPath, mt5Args, mt5Dir, btConfig.isUseVirtualDesktop());
             if (currentProcess != null) {
                 Mt5ProcessGuard.registerProcess(currentProcess);
             } else {
@@ -242,6 +238,9 @@ public class BacktestRunner {
             result.setPeriod(btConfig.getPeriod());
             result.setExpert(btConfig.getExpert());
             result.setOutputDirectory(outputDir.toString());
+            if (btConfig.getModel() >= 0 && btConfig.getModel() < BacktestConfig.MODEL_NAMES.length) {
+                result.setTickModel(BacktestConfig.MODEL_NAMES[btConfig.getModel()]);
+            }
 
             if (reportFound) {
                 result = reportParser.parse(reportInOutput);
@@ -249,6 +248,9 @@ public class BacktestRunner {
                 result.setPeriod(btConfig.getPeriod());
                 result.setExpert(btConfig.getExpert());
                 result.setOutputDirectory(outputDir.toString());
+                if (btConfig.getModel() >= 0 && btConfig.getModel() < BacktestConfig.MODEL_NAMES.length) {
+                    result.setTickModel(BacktestConfig.MODEL_NAMES[btConfig.getModel()]);
+                }
                 result.setSuccess(true);
                 logMessage("Backtest completed successfully!");
                 logMessage("Results: Profit=" + result.getTotalProfit() +
@@ -298,6 +300,11 @@ public class BacktestRunner {
             log.error("Backtest execution failed", e);
             return null;
         } finally {
+            if (cancelled || Thread.currentThread().isInterrupted()) {
+                if (currentProcess != null && currentProcess.isAlive()) {
+                    currentProcess.destroyForcibly();
+                }
+            }
             if (currentProcess != null) {
                 Mt5ProcessGuard.unregisterProcess(currentProcess);
             }

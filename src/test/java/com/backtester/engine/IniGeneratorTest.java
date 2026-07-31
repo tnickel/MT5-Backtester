@@ -39,6 +39,7 @@ public class IniGeneratorTest {
         assertTrue(lines.contains("Expert=MyEA.ex5"));
         assertTrue(lines.contains("Symbol=GBPUSD"));
         assertTrue(lines.contains("Period=M15"));
+        assertTrue(lines.contains("UseDate=1"));
         assertTrue(lines.contains("FromDate=2023.01.01"));
         assertTrue(lines.contains("ToDate=2023.01.31"));
         assertTrue(lines.contains("Report=report_path.xml"));

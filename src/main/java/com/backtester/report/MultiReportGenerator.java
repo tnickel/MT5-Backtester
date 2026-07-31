@@ -57,6 +57,18 @@ public class MultiReportGenerator {
             dateRangeStr = config.getFromDate().format(dtf) + " to " + config.getToDate().format(dtf);
         }
 
+        String modelName = "1 minute OHLC";
+        if (config != null && config.getModel() >= 0 && config.getModel() < com.backtester.engine.BacktestConfig.MODEL_NAMES.length) {
+            modelName = com.backtester.engine.BacktestConfig.MODEL_NAMES[config.getModel()];
+        } else if (results != null && !results.isEmpty()) {
+            for (BacktestResult r : results) {
+                if (r.getTickModel() != null && !r.getTickModel().isEmpty()) {
+                    modelName = r.getTickModel();
+                    break;
+                }
+            }
+        }
+
         // Gather all trades chronologically
         List<Trade> allTrades = new ArrayList<>();
         for (BacktestResult r : results) {
@@ -253,7 +265,7 @@ public class MultiReportGenerator {
 
             writer.write("<button class='export-btn no-print' onclick='window.print()'>📄 Export to PDF</button>\n");
             writer.write("<h1>Multi-Backtest Summary Report</h1>\n");
-            writer.write("<p class='gen-time'>Generated: " + LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")) + "</p>\n");
+            writer.write("<p class='gen-time'>Generated: " + LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")) + " &nbsp;|&nbsp; <strong>Simulation Model: " + modelName + "</strong></p>\n");
 
             // Sum overview cards
             writer.write("<div class='summary-cards'>\n");
@@ -270,6 +282,10 @@ public class MultiReportGenerator {
             writer.write("  <div class='summary-card'>\n");
             writer.write("    <div class='summary-label'>Backtest Period</div>\n");
             writer.write("    <div class='summary-value' style='font-size: 1.1em; line-height: 1.5;'>" + dateRangeStr + "</div>\n");
+            writer.write("  </div>\n");
+            writer.write("  <div class='summary-card' style='border-left-color: #a855f7;'>\n");
+            writer.write("    <div class='summary-label'>Simulation Model</div>\n");
+            writer.write("    <div class='summary-value' style='font-size: 1.1em; color: #c084fc; line-height: 1.5;'>" + modelName + "</div>\n");
             writer.write("  </div>\n");
             writer.write("  <div class='summary-card' style='border-left-color: #fa5252;'>\n");
             writer.write("    <div class='summary-label'>Portfolio Max Drawdown</div>\n");

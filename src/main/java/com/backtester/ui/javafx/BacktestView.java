@@ -72,12 +72,12 @@ public class BacktestView {
         HBox topBox = new HBox(15);
         VBox configBox = createConfigBox();
         VBox paramBox = createParamBox();
-        
+
         HBox.setHgrow(configBox, Priority.ALWAYS);
         HBox.setHgrow(paramBox, Priority.ALWAYS);
         topBox.getChildren().addAll(configBox, paramBox);
         topBox.setMinHeight(0);
-        
+
         // Bottom Split: Results
         VBox resultsBox = createResultsBox();
 
@@ -85,7 +85,7 @@ public class BacktestView {
         splitPane.setDividerPositions(0.45);
 
         root.setCenter(splitPane);
-        
+
         loadPreferences();
         loadResultsFromDb();
 
@@ -105,7 +105,7 @@ public class BacktestView {
 
         Label title = new Label("Backtest Configuration");
         title.getStyleClass().add("sci-fi-panel-title");
-        
+
         String overview = "Der Backtest-Tab ermöglicht es, einen Expert Advisor (EA) für ein einzelnes Symbol und eine spezifische Periode über einen bestimmten Zeitraum in der Vergangenheit zu testen. Hierdurch kann die grundlegende Funktionalität und Performance der Strategie überprüft werden.";
         String details = "Funktionen im Detail:\n\n" +
                          "- Expert Advisor: Wähle den zu testenden EA (.ex5) aus dem MT5-Verzeichnis aus.\n" +
@@ -115,7 +115,7 @@ public class BacktestView {
                          "- Tick Model: Wähle die Genauigkeit der Kursdaten (z.B. 'Every tick' für höchste Genauigkeit oder 'Open prices only' für sehr schnelle Tests).\n" +
                          "- Visual Mode: Wenn aktiviert, wird der MT5 Strategy Tester im visuellen Modus gestartet, sodass man den Trades auf dem Chart zusehen kann.\n\n" +
                          "Ergebnisse:\nNach Abschluss des Tests erscheinen die wichtigsten Kennzahlen (Profit, Drawdown, Win Rate) in der unteren Tabelle. Mit einem Doppelklick oder den Buttons unten kann der detaillierte HTML-Report aufgerufen werden.";
-                         
+
         javafx.scene.layout.Region infoSpacer = new javafx.scene.layout.Region();
         javafx.scene.layout.HBox.setHgrow(infoSpacer, javafx.scene.layout.Priority.ALWAYS);
         javafx.scene.layout.HBox titleBox = new javafx.scene.layout.HBox(15, title, infoSpacer, DocHelper.createInfoButton("Backtest", overview, details));
@@ -167,11 +167,11 @@ public class BacktestView {
         currencyCombo = new ComboBox<>(FXCollections.observableArrayList("USD", "EUR", "GBP"));
         currencyCombo.getStyleClass().add("combo-box");
         currencyCombo.setValue(config.getDefaultCurrency());
-        
+
         leverageField = new TextField(config.getDefaultLeverage());
         leverageField.getStyleClass().add("text-input");
         leverageField.setPrefWidth(80);
-        
+
         HBox accountBox = new HBox(10, currencyCombo, new Label("Leverage:"), leverageField);
         accountBox.setAlignment(Pos.CENTER_LEFT);
         grid.add(accountBox, 2, 3, 2, 1);
@@ -216,46 +216,46 @@ public class BacktestView {
     private VBox createResultsBox() {
         VBox box = new VBox(10);
         box.getStyleClass().add("sci-fi-panel");
-        
+
         Label title = new Label("Backtest History & Results");
         title.getStyleClass().add("sci-fi-panel-title");
 
         resultsTable = new TableView<>();
         resultsTable.setStyle("-fx-background-color: transparent;");
-        
+
         TableColumn<BacktestResult, String> eaCol = new TableColumn<>("Expert");
         eaCol.setCellValueFactory(new PropertyValueFactory<>("expert"));
         eaCol.setPrefWidth(150);
-        
+
         TableColumn<BacktestResult, String> symCol = new TableColumn<>("Symbol");
         symCol.setCellValueFactory(new PropertyValueFactory<>("symbol"));
-        
+
         TableColumn<BacktestResult, String> perCol = new TableColumn<>("Period");
         perCol.setCellValueFactory(new PropertyValueFactory<>("period"));
-        
+
         TableColumn<BacktestResult, String> profCol = new TableColumn<>("Profit");
         profCol.setCellValueFactory(cellData -> new SimpleStringProperty(String.format("%.2f", cellData.getValue().getTotalProfit())));
-        
+
         TableColumn<BacktestResult, Integer> tradesCol = new TableColumn<>("Trades");
         tradesCol.setCellValueFactory(new PropertyValueFactory<>("totalTrades"));
-        
+
         TableColumn<BacktestResult, String> winCol = new TableColumn<>("Win Rate");
         winCol.setCellValueFactory(cellData -> new SimpleStringProperty(String.format("%.2f%%", cellData.getValue().getWinRate())));
-        
+
         TableColumn<BacktestResult, String> ddCol = new TableColumn<>("Drawdown");
         ddCol.setCellValueFactory(cellData -> new SimpleStringProperty(String.format("%.2f%%", cellData.getValue().getMaxDrawdown())));
-        
+
         resultsTable.getColumns().addAll(eaCol, symCol, perCol, profCol, tradesCol, winCol, ddCol);
-        
+
         resultsTable.setOnMouseClicked(e -> {
             if (e.getClickCount() == 2) showSelectedReport();
         });
-        
+
         VBox.setVgrow(resultsTable, Priority.ALWAYS);
 
         HBox btnBox = new HBox(10);
         btnBox.setAlignment(Pos.CENTER_LEFT);
-        
+
         Button deleteBtn = new Button("🗑 Delete Selected");
         deleteBtn.getStyleClass().addAll("button", "button-cancel");
         deleteBtn.setOnAction(e -> deleteSelectedRuns());
@@ -266,11 +266,11 @@ public class BacktestView {
 
         Region spacer = new Region();
         HBox.setHgrow(spacer, Priority.ALWAYS);
-        
+
         Button openHtmlBtn = new Button("Open HTML Report");
         openHtmlBtn.getStyleClass().add("button");
         openHtmlBtn.setOnAction(e -> showSelectedReport());
-        
+
         Button openXmlBtn = new Button("Open Directory");
         openXmlBtn.getStyleClass().add("button");
         openXmlBtn.setOnAction(e -> openDirectory());
@@ -285,7 +285,7 @@ public class BacktestView {
         FileChooser chooser = new FileChooser();
         chooser.setTitle("Select Expert Advisor");
         chooser.getExtensionFilters().add(new FileChooser.ExtensionFilter("MetaTrader EA", "*.ex5", "*.ex4"));
-        
+
         String currentExpert = expertField.getText().trim();
         java.nio.file.Path expertsDir = null;
         if (config.isMt4(currentExpert)) {
@@ -302,7 +302,7 @@ public class BacktestView {
                 chooser.setInitialDirectory(otherDir.toFile());
             }
         }
-        
+
         File selected = chooser.showOpenDialog(expertField.getScene().getWindow());
         if (selected != null) {
             String pathStr = selected.getAbsolutePath().toLowerCase();
@@ -441,7 +441,7 @@ public class BacktestView {
         cancelBtn.setDisable(true);
         progress.setProgress(0);
     }
-    
+
     private void showSelectedReport() {
         BacktestResult res = resultsTable.getSelectionModel().getSelectedItem();
         if (res != null) openReport(res.getOutputDirectory());
@@ -456,7 +456,7 @@ public class BacktestView {
             logView.log("ERROR", "Could not open report: " + e.getMessage());
         }
     }
-    
+
     private void openDirectory() {
         BacktestResult res = resultsTable.getSelectionModel().getSelectedItem();
         if (res == null) return;
@@ -476,13 +476,13 @@ public class BacktestView {
             expertField.setText(exp);
             loadParameters();
         }
-        
+
         String sym = config.get("backtest.symbol", "EURUSD");
         symbolCombo.setValue(sym);
-        
+
         String per = config.get("backtest.period", "H1");
         periodCombo.setValue(per);
-        
+
         String mod = config.get("backtest.model", "Every tick");
         try {
             int idx = Integer.parseInt(mod);
@@ -562,10 +562,10 @@ public class BacktestView {
     private void loadParameters() {
         String expert = expertField.getText().trim();
         if (expert.isEmpty()) return;
-        
+
         String symbol = symbolCombo.getValue() != null ? symbolCombo.getValue() : "EURUSD";
         String period = periodCombo.getValue() != null ? periodCombo.getValue() : "H1";
-        
+
         // Try DB first
         String dbParamsJson = com.backtester.database.DatabaseManager.getInstance().getEaParameterSettings(expert, symbol, period);
         if (dbParamsJson != null && !dbParamsJson.isEmpty()) {
@@ -582,7 +582,7 @@ public class BacktestView {
                 logView.log("WARN", "Failed to parse parameters from DB: " + e.getMessage());
             }
         }
-        
+
         // Fallback to files
         java.util.List<com.backtester.config.EaParameter> params = eaParamManager.getEffectiveParameters(expert);
         if (params != null) {
@@ -619,7 +619,7 @@ public class BacktestView {
                 }
             }
         });
-        
+
         TableColumn<com.backtester.config.EaParameter, Boolean> optCol = new TableColumn<>("Opt");
         optCol.setCellValueFactory(cellData -> {
             com.backtester.config.EaParameter param = cellData.getValue();
@@ -633,7 +633,7 @@ public class BacktestView {
         });
         optCol.setCellFactory(javafx.scene.control.cell.CheckBoxTableCell.forTableColumn(optCol));
         optCol.setPrefWidth(40);
-        
+
         TableColumn<com.backtester.config.EaParameter, String> nameCol = new TableColumn<>("Variable");
         nameCol.setCellValueFactory(cellData -> {
             com.backtester.config.EaParameter param = cellData.getValue();
@@ -664,7 +664,7 @@ public class BacktestView {
             }
         });
         nameCol.setPrefWidth(200);
-        
+
         TableColumn<com.backtester.config.EaParameter, String> valCol = new TableColumn<>("Value");
         valCol.setCellValueFactory(new PropertyValueFactory<>("value"));
         valCol.setCellFactory(EnumAwareParamCell.forTableColumn());
@@ -673,7 +673,7 @@ public class BacktestView {
             e.getRowValue().setValue(e.getNewValue());
         });
         valCol.setPrefWidth(100);
-        
+
         TableColumn<com.backtester.config.EaParameter, String> startCol = new TableColumn<>("Start");
         startCol.setCellValueFactory(new PropertyValueFactory<>("optimizeStart"));
         startCol.setCellFactory(EnumAwareParamCell.forTableColumn());
@@ -681,7 +681,7 @@ public class BacktestView {
             System.out.println("[DEBUG] startCol.onEditCommit: param=" + e.getRowValue().getName() + ", old=" + e.getOldValue() + ", new=" + e.getNewValue());
             e.getRowValue().setOptimizeStart(e.getNewValue());
         });
-        
+
         TableColumn<com.backtester.config.EaParameter, String> stepCol = new TableColumn<>("Step");
         stepCol.setCellValueFactory(new PropertyValueFactory<>("optimizeStep"));
         stepCol.setCellFactory(EnumAwareParamCell.forTableColumn());
@@ -689,7 +689,7 @@ public class BacktestView {
             System.out.println("[DEBUG] stepCol.onEditCommit: param=" + e.getRowValue().getName() + ", old=" + e.getOldValue() + ", new=" + e.getNewValue());
             e.getRowValue().setOptimizeStep(e.getNewValue());
         });
-        
+
         TableColumn<com.backtester.config.EaParameter, String> stopCol = new TableColumn<>("Stop");
         stopCol.setCellValueFactory(new PropertyValueFactory<>("optimizeEnd"));
         stopCol.setCellFactory(EnumAwareParamCell.forTableColumn());
@@ -697,78 +697,65 @@ public class BacktestView {
             System.out.println("[DEBUG] stopCol.onEditCommit: param=" + e.getRowValue().getName() + ", old=" + e.getOldValue() + ", new=" + e.getNewValue());
             e.getRowValue().setOptimizeEnd(e.getNewValue());
         });
-        
+
         paramTable.getColumns().addAll(optCol, nameCol, valCol, startCol, stepCol, stopCol);
-        
+
         Label placeholder = new Label("No parameters loaded.\nLoad an Expert Advisor or a .set file.");
         placeholder.setStyle("-fx-text-fill: #7e889a;");
         paramTable.setPlaceholder(placeholder);
-        
+
         VBox.setVgrow(paramTable, Priority.ALWAYS);
 
         HBox btnBox = new HBox(10);
         btnBox.setAlignment(Pos.CENTER_RIGHT);
         Button genConfigBtn = new Button("Gen Config");
         genConfigBtn.setOnAction(e -> generateDefaultConfig());
-        
+
         Button autoConfigBtn = new Button("AutoConfig");
         autoConfigBtn.setOnAction(e -> autoConfigParameters());
-        
+
+        Button refreshBtn = new Button("🔄 Refresh");
+        refreshBtn.setTooltip(new javafx.scene.control.Tooltip("Clear DB cache and reload parameters directly from disk defaults"));
+        refreshBtn.setOnAction(e -> resetDefaults());
+
         Button loadBtn = new Button("Load .set");
         loadBtn.setOnAction(e -> loadFromFile());
-        
+
         Button saveBtn = new Button("Save .set");
         saveBtn.setOnAction(e -> saveToFile());
-        
-        btnBox.getChildren().addAll(genConfigBtn, autoConfigBtn, loadBtn, saveBtn);
+
+        btnBox.getChildren().addAll(genConfigBtn, autoConfigBtn, refreshBtn, loadBtn, saveBtn);
 
         box.getChildren().addAll(title, paramTable, btnBox);
         return box;
     }
 
+    private void resetDefaults() {
+        String expert = expertField.getText().trim();
+        if (expert.isEmpty()) {
+            logView.log("WARN", "Please select an Expert Advisor first.");
+            return;
+        }
+        com.backtester.database.DatabaseManager.getInstance().deleteEaParameterSettings(expert);
+        java.util.List<com.backtester.config.EaParameter> params = eaParamManager.getEffectiveParameters(expert);
+        if (params != null) {
+            paramTable.getItems().setAll(params);
+            logView.log("INFO", "Reset and reloaded " + params.size() + " parameters from disk defaults for " + EaParameterManager.extractEaBaseName(expert));
+        } else {
+            paramTable.getItems().clear();
+            logView.log("WARN", "No default parameters found for " + EaParameterManager.extractEaBaseName(expert));
+        }
+    }
+
 
 
     private void autoConfigParameters() {
-        if (paramTable.getItems().isEmpty()) {
-            logView.log("WARN", "No parameters loaded. Please select an EA first.");
-            return;
-        }
-
-        int activated = 0;
-        int skipped = 0;
-
-        for (com.backtester.config.EaParameter param : paramTable.getItems()) {
-            String name = param.getName();
-            String value = param.getValue();
-
-            if (isExcludedParameterName(name) || !isNumericValue(value)) {
-                param.setOptimizeEnabled(false);
-                skipped++;
-                continue;
-            }
-
-            double[] range = calculateOptRange(name, value);
-            if (range == null) {
-                param.setOptimizeEnabled(false);
-                skipped++;
-                continue;
-            }
-
-            double steps = (range[2] - range[0]) / range[1];
-            if (steps < 5) {
-                param.setOptimizeEnabled(false);
-                skipped++;
-                continue;
-            }
-
-            param.setOptimizeEnabled(true);
-            param.setOptimizeStart(formatNumber(range[0]));
-            param.setOptimizeStep(formatNumber(range[1]));
-            param.setOptimizeEnd(formatNumber(range[2]));
-            activated++;
-        }
-        paramTable.refresh();
-        logView.log("INFO", "AutoConfig applied: " + activated + " enabled, " + skipped + " skipped.");
+        AutoConfigDialogHelper.showAutoConfigDialog(
+            paramTable,
+            logView,
+            root.getScene() != null ? root.getScene().getWindow() : null,
+            this::saveParametersOnDemand
+        );
     }
 
     private void generateDefaultConfig() {
@@ -802,70 +789,6 @@ public class BacktestView {
         });
 
         new Thread(task).start();
-    }
-
-    private boolean isExcludedParameterName(String name) {
-        String lower = name.toLowerCase();
-        return lower.contains("magic") || lower.contains("slippage") || lower.contains("comment") || lower.contains("color");
-    }
-
-    private boolean isNumericValue(String value) {
-        if (value == null || value.isEmpty() || value.contains(":") || value.contains(",")) return false;
-        try { Double.parseDouble(value); return true; } catch (NumberFormatException e) { return false; }
-    }
-
-    private double[] calculateOptRange(String name, String currentValue) {
-        double current;
-        try { current = Double.parseDouble(currentValue); } catch (NumberFormatException e) { return null; }
-        
-        double start = 1;
-        double end = current;
-        double step = 1;
-        
-        String lower = name.toLowerCase();
-        if (lower.contains("lot") || lower.contains("volume")) {
-            start = 0.01;
-            end = Math.max(current, 0.1);
-            step = 0.01;
-        } else if (lower.contains("dist") || lower.contains("step") || lower.contains("tp") || lower.contains("sl")) {
-            start = 10;
-            end = Math.max(current, 100);
-            step = 10;
-        } else if (lower.contains("period") || lower.contains("ma") || lower.contains("rsi")) {
-            start = 2;
-            end = Math.max(current, 50);
-            step = 1;
-        } else if (lower.contains("mult") || lower.contains("factor")) {
-            start = 1.0;
-            end = Math.max(current, 3.0);
-            step = 0.1;
-        } else {
-            if (current == 0) return null;
-            if (current < 1) {
-                start = 0.01;
-                end = current;
-                step = 0.01;
-            } else if (current <= 10) {
-                start = 1;
-                end = current;
-                step = 1;
-            } else if (current <= 100) {
-                start = 5;
-                end = current;
-                step = 5;
-            } else {
-                start = 10;
-                end = current;
-                step = 10;
-            }
-        }
-        
-        return new double[]{start, step, end};
-    }
-
-    private String formatNumber(double value) {
-        if (value == (long) value) return String.format(java.util.Locale.US, "%d", (long) value);
-        else return String.format(java.util.Locale.US, "%s", value);
     }
 
     private void loadFromFile() {

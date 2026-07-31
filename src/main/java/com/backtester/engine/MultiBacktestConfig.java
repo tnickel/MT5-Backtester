@@ -102,6 +102,7 @@ public class MultiBacktestConfig {
                     cfg.setDeposit(deposit);
                     cfg.setCurrency(currency);
                     cfg.setLeverage(leverage);
+                    cfg.setAutoKillMt5(true);
                     // Set EA-specific parameters if available
                     String setFile = expertParametersMap.get(exp);
                     if (setFile != null) {

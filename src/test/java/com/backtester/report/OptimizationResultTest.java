@@ -209,19 +209,54 @@ public class OptimizationResultTest {
 
         // Grid Preset Weights:
         OptimizationResult.ScoreWeights gridWeights = new OptimizationResult.ScoreWeights();
-        gridWeights.wBtProfit = 5.0;
-        gridWeights.wFwProfit = 5.0;
-        gridWeights.wConsistency = 15.0;
-        gridWeights.wRisk = 5.0;
-        gridWeights.wEquityConsist = 5.0;
-        gridWeights.wSampleSize = 35.0; // High weight on trades!
-        gridWeights.wFwTrades = 35.0;  // High weight on trades!
-        gridWeights.wRecovery = 40.0;  // High weight on recovery!
+        gridWeights.wBtProfit = 7.0;
+        gridWeights.wFwProfit = 7.0;
+        gridWeights.wConsistency = 6.0;
+        gridWeights.wRisk = 3.0;
+        gridWeights.wEquityConsist = 3.0;
+        gridWeights.wSampleSize = 23.0; // High weight on trades!
+        gridWeights.wFwTrades = 30.0;  // Highest direct weight: trades first
+        gridWeights.wRecovery = 21.0;  // Recovery remains the second priority
         gridWeights.recoveryMin = 1.0;
         gridWeights.recoveryMax = 5.0;
 
         List<OptimizationResult.CombinedPass> combined = result.buildCombinedPasses(true, gridWeights);
         assertEquals(1, combined.size());
         assertTrue("Unified score should be very high due to many trades and recovery", combined.get(0).getScore() > 65.0);
+    }
+
+    @Test
+    public void testDefaultProfilePrefersManyTradesOverRecoveryPeak() {
+        OptimizationResult manyTrades = new OptimizationResult();
+        OptimizationResult.Pass manyBt = createRankingPass(1, 1000.0, 1000, 2.0);
+        OptimizationResult.Pass manyFw = createRankingPass(1, 500.0, 1000, 2.0);
+        manyTrades.addPass(manyBt);
+        manyTrades.addForwardPass(manyFw);
+
+        OptimizationResult recoveryPeak = new OptimizationResult();
+        OptimizationResult.Pass peakBt = createRankingPass(2, 1000.0, 100, 5.0);
+        OptimizationResult.Pass peakFw = createRankingPass(2, 500.0, 100, 5.0);
+        recoveryPeak.addPass(peakBt);
+        recoveryPeak.addForwardPass(peakFw);
+
+        double manyTradesScore = manyTrades.buildCombinedPasses(true).get(0).getScore();
+        double recoveryPeakScore = recoveryPeak.buildCombinedPasses(true).get(0).getScore();
+
+        assertTrue("Trade-first defaults should prefer a broad sample over a recovery peak",
+                manyTradesScore > recoveryPeakScore);
+    }
+
+    private static OptimizationResult.Pass createRankingPass(int passNumber, double profit,
+                                                               int trades, double recovery) {
+        OptimizationResult.Pass pass = new OptimizationResult.Pass();
+        pass.setPassNumber(passNumber);
+        pass.setProfit(profit);
+        pass.setBalance(10000.0 + profit);
+        pass.setTotalTrades(trades);
+        pass.setProfitFactor(1.8);
+        pass.setRecoveryFactor(recovery);
+        pass.setSharpeRatio(1.0);
+        pass.setDrawdownPercent(10.0);
+        return pass;
     }
 }
