@@ -228,14 +228,14 @@ public class OptimizationResult {
      * elsewhere.
      */
     public static class ScoreWeights {
-        public double wBtProfit      = 15;  // BT Profitabilität (ROI + PF)
-        public double wFwProfit      = 15;  // FW Profitabilität (ROI + PF)
-        public double wConsistency   = 10;  // FW/BT Konsistenz (Profit-Verhältnis)
-        public double wRisk          = 10;  // Risiko-Verhältnis (Return/DD, Calmar)
-        public double wEquityConsist = 10;  // Sharpe Ratio (BT+FW, echte MT5-Kennzahl)
-        public double wSampleSize    = 25;  // Stichprobengröße (Trades, Jahre)
+        public double wBtProfit      = 7;   // BT Profitabilität (ROI + PF)
+        public double wFwProfit      = 7;   // FW Profitabilität (ROI + PF)
+        public double wConsistency   = 6;   // FW/BT Konsistenz (Profit-Verhältnis)
+        public double wRisk          = 3;   // Risiko-Verhältnis (Return/DD, Calmar)
+        public double wEquityConsist = 3;   // Sharpe Ratio (BT+FW, echte MT5-Kennzahl)
+        public double wSampleSize    = 23;  // Stichprobengröße (Trades, Jahre)
         public double wFwTrades      = 30;  // FW Trade Count
-        public double wRecovery      = 25;  // Erholungsfaktor (BT+FW Recovery)
+        public double wRecovery      = 21;  // Erholungsfaktor (BT+FW Recovery)
         public double recoveryMin    = 1.0; // Min threshold for recovery scaling
         public double recoveryMax    = 5.0; // Max threshold for recovery scaling
 
@@ -562,4 +562,3 @@ public class OptimizationResult {
         return (a + b) / 2.0;
     }
 }
-

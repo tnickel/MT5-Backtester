@@ -25,6 +25,8 @@ import java.util.function.Consumer;
  */
 public class WorkflowEngine {
     private static final Logger log = LoggerFactory.getLogger(WorkflowEngine.class);
+    private static final int SELECTION_PROFILE_VERSION = 1;
+    private static final double MIN_POSITIVE_PROFIT = 0.01;
 
     private final AppConfig config;
     private final EaParameterManager eaParamManager = new EaParameterManager();
@@ -49,10 +51,12 @@ public class WorkflowEngine {
     private OptimizationResult optResult;
 
     // Step 3 State (Diversity Filter)
-    private double minBtProfit = 0.01;
-    private double minFwProfit = 0.01;
+    private double minBtProfit = MIN_POSITIVE_PROFIT;
+    private double minFwProfit = MIN_POSITIVE_PROFIT;
     private int minBtTrades = 100;
-    private int minFwTrades = 15;
+    private int minFwTrades = 50;
+    private double minBtRecovery = 1.0;
+    private double minFwRecovery = 1.0;
     private double maxBtDd = 100.0;
     private double maxFwDd = 100.0;
     private double paramDiffPct = 0.10;
@@ -174,6 +178,7 @@ public class WorkflowEngine {
     }
 
     public static class StrategyConfig {
+        public int selectionProfileVersion;
         public String symbol;
         public String period;
         public String fromDate;
@@ -191,6 +196,8 @@ public class WorkflowEngine {
         public double minFwProfit;
         public int minBtTrades;
         public int minFwTrades;
+        public double minBtRecovery;
+        public double minFwRecovery;
         public double maxBtDd;
         public double maxFwDd;
         public double paramDiffPct;
@@ -250,6 +257,7 @@ public class WorkflowEngine {
         if (expertName == null || expertName.isEmpty()) return;
         try {
             StrategyConfig sc = new StrategyConfig();
+            sc.selectionProfileVersion = SELECTION_PROFILE_VERSION;
             sc.symbol = this.symbol;
             sc.period = this.period;
             sc.fromDate = this.fromDate != null ? this.fromDate.toString() : null;
@@ -267,6 +275,8 @@ public class WorkflowEngine {
             sc.minFwProfit = this.minFwProfit;
             sc.minBtTrades = this.minBtTrades;
             sc.minFwTrades = this.minFwTrades;
+            sc.minBtRecovery = this.minBtRecovery;
+            sc.minFwRecovery = this.minFwRecovery;
             sc.maxBtDd = this.maxBtDd;
             sc.maxFwDd = this.maxFwDd;
             sc.paramDiffPct = this.paramDiffPct;
@@ -315,10 +325,13 @@ public class WorkflowEngine {
             this.optimizationCriterion = sc.optimizationCriterion;
             this.forwardMode = sc.forwardMode;
             if (sc.forwardDate != null) this.forwardDate = LocalDate.parse(sc.forwardDate);
-            this.minBtProfit = sc.minBtProfit == 0.0 ? 0.01 : sc.minBtProfit;
-            this.minFwProfit = sc.minFwProfit == 0.0 ? 0.01 : sc.minFwProfit;
-            this.minBtTrades = sc.minBtTrades == 1 ? 100 : sc.minBtTrades;
-            this.minFwTrades = sc.minFwTrades == 0 ? 15 : sc.minFwTrades;
+            boolean migrateSelectionProfile = sc.selectionProfileVersion < SELECTION_PROFILE_VERSION;
+            this.minBtProfit = finiteAtLeast(sc.minBtProfit, MIN_POSITIVE_PROFIT);
+            this.minFwProfit = finiteAtLeast(sc.minFwProfit, MIN_POSITIVE_PROFIT);
+            this.minBtTrades = migrateSelectionProfile ? Math.max(100, sc.minBtTrades) : Math.max(1, sc.minBtTrades);
+            this.minFwTrades = migrateSelectionProfile ? Math.max(50, sc.minFwTrades) : Math.max(1, sc.minFwTrades);
+            this.minBtRecovery = finiteAtLeast(sc.minBtRecovery, migrateSelectionProfile ? 1.0 : 0.0);
+            this.minFwRecovery = finiteAtLeast(sc.minFwRecovery, migrateSelectionProfile ? 1.0 : 0.0);
             this.maxBtDd = sc.maxBtDd;
             this.maxFwDd = sc.maxFwDd;
             this.paramDiffPct = sc.paramDiffPct;
@@ -330,6 +343,10 @@ public class WorkflowEngine {
             this.openRouterPrompt = sc.openRouterPrompt != null ? sc.openRouterPrompt : LlmAnalysisService.DEFAULT_PROMPT;
             this.validationFromDate = sc.validationFromDate != null ? LocalDate.parse(sc.validationFromDate) : null;
             this.validationToDate = sc.validationToDate != null ? LocalDate.parse(sc.validationToDate) : null;
+
+            if (migrateSelectionProfile) {
+                saveStrategyConfig(expertName);
+            }
 
             log.info("Successfully loaded strategy configuration for: {}", expertName);
             return true;
@@ -770,7 +787,8 @@ public class WorkflowEngine {
 
         // Automatic export when step 6 executes
         try {
-            String expDir = config.getExportDirectory().toString();
+            Path targetDir = (config != null && config.getExportDirectory() != null) ? config.getExportDirectory() : AppConfig.getInstance().getExportDirectory();
+            String expDir = targetDir.toString();
             exportPortfolio(expDir);
         } catch (Exception ex) {
             log.error("Automatic step 6 portfolio export failed: " + ex.getMessage(), ex);
@@ -940,7 +958,7 @@ public class WorkflowEngine {
 
         long passed = results.stream().filter(ValidationResult::isPassed).count();
         if (logCallback != null) {
-            logCallback.accept(String.format("Validierung abgeschlossen: %d von %d Strategien auf unberührten Daten profitabel.",
+            logCallback.accept(String.format("Validierung abgeschlossen: %d von %d Strategien erfüllen Profit-, Trade- und Recovery-Kriterien.",
                     passed, results.size()));
         }
         return results;
@@ -1348,7 +1366,7 @@ public class WorkflowEngine {
     /**
      * True when no Step-7 validation has been run yet (pending), or when the
      * pass explicitly PASSED. Once validation results exist, every other state
-     * (FAILED, ERROR, NO_TRADES, or missing result) blocks the best-folder
+     * (FAILED, INSUFFICIENT_EVIDENCE, ERROR, NO_TRADES, or missing result) blocks the best-folder
      * export.
      */
     private boolean isValidationPassedOrPending(int passNum) {
@@ -1375,7 +1393,13 @@ public class WorkflowEngine {
         if (json == null || json.isEmpty()) return new ArrayList<>();
         java.lang.reflect.Type valType = new com.google.gson.reflect.TypeToken<List<ValidationResult>>(){}.getType();
         List<ValidationResult> loaded = gson.fromJson(json, valType);
-        return loaded != null ? loaded : new ArrayList<>();
+        if (loaded == null) return new ArrayList<>();
+        for (ValidationResult result : loaded) {
+            if (result != null && !ValidationResult.ERROR.equals(result.getVerdict())) {
+                result.computeVerdict();
+            }
+        }
+        return loaded;
     }
 
     // --- Helper Logic (Diversity Filter Algorithm) ---
@@ -1389,12 +1413,14 @@ public class WorkflowEngine {
         // 1. Filter out passes that do not meet minimum performance requirements
         List<CombinedPass> filtered = new ArrayList<>();
         for (CombinedPass cp : allPasses) {
-            if (cp.getBtProfit() < minBtProfit) continue;
+            if (!isPositiveFinite(cp.getBtProfit()) || cp.getBtProfit() < minBtProfit) continue;
             if (cp.getBtTrades() < minBtTrades) continue;
+            if (!meetsMinimum(cp.getBtRecovery(), minBtRecovery)) continue;
             if (cp.getBtDd() > maxBtDd) continue;
             if (forwardMode > 0) {
-                if (cp.getFwProfit() < minFwProfit) continue;
+                if (!isPositiveFinite(cp.getFwProfit()) || cp.getFwProfit() < minFwProfit) continue;
                 if (cp.getFwTrades() < minFwTrades) continue;
+                if (!meetsMinimum(cp.getFwRecovery(), minFwRecovery)) continue;
                 if (cp.getFwDd() > maxFwDd) continue;
             }
             filtered.add(cp);
@@ -1423,6 +1449,18 @@ public class WorkflowEngine {
         }
 
         return resultList;
+    }
+
+    private static boolean isPositiveFinite(double value) {
+        return Double.isFinite(value) && value > 0.0;
+    }
+
+    private static boolean meetsMinimum(double value, double minimum) {
+        return Double.isFinite(value) && value >= minimum;
+    }
+
+    private static double finiteAtLeast(double value, double minimum) {
+        return Double.isFinite(value) ? Math.max(minimum, value) : minimum;
     }
 
     /**
@@ -1595,16 +1633,22 @@ public class WorkflowEngine {
     public void setOptResult(OptimizationResult optResult) { this.optResult = optResult; }
 
     public double getMinBtProfit() { return minBtProfit; }
-    public void setMinBtProfit(double minBtProfit) { this.minBtProfit = minBtProfit; }
+    public void setMinBtProfit(double minBtProfit) { this.minBtProfit = finiteAtLeast(minBtProfit, MIN_POSITIVE_PROFIT); }
 
     public double getMinFwProfit() { return minFwProfit; }
-    public void setMinFwProfit(double minFwProfit) { this.minFwProfit = minFwProfit; }
+    public void setMinFwProfit(double minFwProfit) { this.minFwProfit = finiteAtLeast(minFwProfit, MIN_POSITIVE_PROFIT); }
 
     public int getMinBtTrades() { return minBtTrades; }
-    public void setMinBtTrades(int minBtTrades) { this.minBtTrades = minBtTrades; }
+    public void setMinBtTrades(int minBtTrades) { this.minBtTrades = Math.max(1, minBtTrades); }
 
     public int getMinFwTrades() { return minFwTrades; }
-    public void setMinFwTrades(int minFwTrades) { this.minFwTrades = minFwTrades; }
+    public void setMinFwTrades(int minFwTrades) { this.minFwTrades = Math.max(1, minFwTrades); }
+
+    public double getMinBtRecovery() { return minBtRecovery; }
+    public void setMinBtRecovery(double minBtRecovery) { this.minBtRecovery = finiteAtLeast(minBtRecovery, 0.0); }
+
+    public double getMinFwRecovery() { return minFwRecovery; }
+    public void setMinFwRecovery(double minFwRecovery) { this.minFwRecovery = finiteAtLeast(minFwRecovery, 0.0); }
 
     public double getMaxBtDd() { return maxBtDd; }
     public void setMaxBtDd(double maxBtDd) { this.maxBtDd = maxBtDd; }

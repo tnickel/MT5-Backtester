@@ -23,6 +23,153 @@ public class VirtualDesktopHelper {
     private static final Logger log = LoggerFactory.getLogger(VirtualDesktopHelper.class);
 
     /**
+     * Starts the terminal using the launch mode configured in AppConfig.
+     * Supports VIRTUAL_DESKTOP, NORMAL, and HEADLESS (/hide) modes.
+     */
+    public static Process startTerminal(String executable, List<String> args, Path workingDir, boolean allowVirtualDesktop) {
+        String launchMode = com.backtester.config.AppConfig.getInstance().get("mt5.launch.mode", "HEADLESS");
+
+        if ("HEADLESS".equalsIgnoreCase(launchMode)) {
+            log.info("Starting terminal in HEADLESS mode (with background window hider)...");
+            List<String> mutableArgs = new ArrayList<>(args);
+            if (!mutableArgs.contains("/hide")) {
+                mutableArgs.add("/hide");
+            }
+            Process p = startNormally(executable, mutableArgs, workingDir);
+            startHidingLoop(executable);
+            return p;
+        } else if ("NORMAL".equalsIgnoreCase(launchMode) || !allowVirtualDesktop) {
+            log.info("Starting terminal in NORMAL mode...");
+            return startNormally(executable, args, workingDir);
+        } else {
+            log.info("Starting terminal in VIRTUAL_DESKTOP mode...");
+            return startOnDesktop2(executable, args, workingDir);
+        }
+    }
+
+    /** Spawns a background thread that hides the window of the specified executable path as soon as it appears. */
+    public static void startHidingLoop(String executable) {
+        final String escapedExe = executable.replace("/", "\\");
+
+        Thread thread = new Thread(() -> {
+            log.info("Starting background window hiding loop for: {}", escapedExe);
+            String targetPath = escapedExe.replace("'", "''");
+            String psScript =
+                "Add-Type -TypeDefinition @\"\n" +
+                "using System;\n" +
+                "using System.Runtime.InteropServices;\n" +
+                "public class WindowHider {\n" +
+                "    [DllImport(\"user32.dll\")] private static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);\n" +
+                "    [DllImport(\"user32.dll\")] private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);\n" +
+                "    [DllImport(\"user32.dll\")] private static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);\n" +
+                "    private delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);\n" +
+                "    public static void HideWindowsForPid(uint targetPid) {\n" +
+                "        EnumWindows((hWnd, lParam) => {\n" +
+                "            uint pid;\n" +
+                "            GetWindowThreadProcessId(hWnd, out pid);\n" +
+                "            if (pid == targetPid) {\n" +
+                "                ShowWindow(hWnd, 0);\n" +
+                "            }\n" +
+                "            return true;\n" +
+                "        }, IntPtr.Zero);\n" +
+                "    }\n" +
+                "}\n" +
+                "\"@;\n" +
+                "$targetPath = '" + targetPath + "';\n" +
+                "for ($i = 0; $i -lt 600; $i++) {\n" + // 15 seconds total (600 * 25ms)
+                "    $procs = Get-Process -Name terminal64, terminal -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $targetPath };\n" +
+                "    foreach ($p in $procs) {\n" +
+                "        [WindowHider]::HideWindowsForPid($p.Id);\n" +
+                "    }\n" +
+                "    Start-Sleep -Milliseconds 25;\n" +
+                "}";
+
+            try {
+                String encodedScript = java.util.Base64.getEncoder().encodeToString(
+                    psScript.getBytes(java.nio.charset.StandardCharsets.UTF_16LE)
+                );
+                ProcessBuilder pb = new ProcessBuilder("powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-EncodedCommand", encodedScript);
+                pb.redirectOutput(ProcessBuilder.Redirect.DISCARD);
+                pb.redirectError(ProcessBuilder.Redirect.DISCARD);
+                Process p = pb.start();
+                p.waitFor(20, TimeUnit.SECONDS);
+            } catch (Exception e) {
+                log.error("Error in background window hider process", e);
+            }
+            log.info("Finished background window hiding loop for: {}", escapedExe);
+        }, "MT5-Window-Hider-" + System.currentTimeMillis());
+        thread.setDaemon(true);
+        thread.start();
+    }
+
+    /** Starts a process in the background and hides its main window immediately using Win32 API ShowWindow. */
+    public static Process startHidden(String executable, List<String> args, Path workingDir) {
+        String os = System.getProperty("os.name").toLowerCase();
+        if (!os.contains("win")) {
+            return startNormally(executable, args, workingDir);
+        }
+
+        try {
+            StringBuilder argString = new StringBuilder();
+            if (args != null && !args.isEmpty()) {
+                for (int i = 0; i < args.size(); i++) {
+                    if (i > 0) argString.append(" ");
+                    argString.append(args.get(i));
+                }
+            }
+
+            String psScript = buildHiddenPowerShellScript(executable, argString.toString());
+
+            ProcessBuilder pb = new ProcessBuilder(
+                "powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", psScript
+            );
+            pb.redirectErrorStream(true);
+            if (workingDir != null) {
+                pb.directory(workingDir.toFile());
+            }
+
+            log.info("Starting process hidden: {} {}", executable, argString);
+            Process psProcess = pb.start();
+
+            long targetPid = -1;
+            try (BufferedReader reader = new BufferedReader(new InputStreamReader(psProcess.getInputStream()))) {
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    line = line.trim();
+                    log.debug("[VD-PS-Hide] {}", line);
+                    if (line.startsWith("STARTED_PID:")) {
+                        try {
+                            targetPid = Long.parseLong(line.substring("STARTED_PID:".length()).trim());
+                        } catch (NumberFormatException ignored) {}
+                    }
+                }
+            }
+
+            psProcess.waitFor(30, TimeUnit.SECONDS);
+
+            if (targetPid > 0) {
+                log.info("Process started hidden with PID: {}", targetPid);
+                final long finalPid = targetPid;
+                return ProcessHandle.of(finalPid)
+                    .map(ph -> (Process) new PidProcess(ph))
+                    .orElse(null);
+            } else {
+                log.warn("Could not determine PID from PowerShell output, falling back to normal start");
+                return startNormally(executable, args, workingDir);
+            }
+
+        } catch (Exception e) {
+            log.error("Failed to start process hidden, falling back to normal start", e);
+            return startNormally(executable, args, workingDir);
+        }
+    }
+
+    /** Overload of startTerminal allowing virtual desktop by default. */
+    public static Process startTerminal(String executable, List<String> args, Path workingDir) {
+        return startTerminal(executable, args, workingDir, true);
+    }
+
+    /**
      * Starts a process and moves its window to Virtual Desktop 2.
      * This replaces the normal Java ProcessBuilder.start() flow.
      * The returned Process object is a wrapper that tracks the actual spawned process by PID.
@@ -125,6 +272,7 @@ public class VirtualDesktopHelper {
                     "Import-Module VirtualDesktop -WarningAction SilentlyContinue 3>$null; " +
                     "$count = Get-DesktopCount; " +
                     "if ($count -lt 2) { New-Desktop | Out-Null; } " +
+                    "$curD = Get-CurrentDesktop; " +
                     "$d2 = Get-Desktop 1; " +
                     "$hwnd = 0; " +
                     "for ($i = 0; $i -lt 40; $i++) { " +
@@ -141,7 +289,7 @@ public class VirtualDesktopHelper {
                     "  try { " +
                     "    Move-Window -Desktop $d2 -Hwnd $hwnd; " +
                     "    Write-Host 'MOVED'; " +
-                    "  } catch { Write-Host \"MOVE_ERROR: $_\"; } " +
+                    "  } catch { Write-Host 'MOVE_FAILED'; } " +
                     "} else { Write-Host 'NO_HWND'; }";
 
                 ProcessBuilder pb = new ProcessBuilder("powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", psScript);
@@ -166,9 +314,6 @@ public class VirtualDesktopHelper {
         String escapedExe = executable.replace("'", "''");
         String escapedArgs = arguments.replace("'", "''");
 
-        // KEY INSIGHT: When PowerShell is spawned by Java's ProcessBuilder, the
-        // Start-Process -PassThru object's .Refresh() / .MainWindowHandle is unreliable.
-        // Instead, we must use Get-Process -Id to look up the HWND, which works correctly.
         return "Import-Module VirtualDesktop -WarningAction SilentlyContinue 3>$null; " +
             "$count = Get-DesktopCount; " +
             "if ($count -lt 2) { New-Desktop | Out-Null; } " +
@@ -178,18 +323,49 @@ public class VirtualDesktopHelper {
                 : "$app = Start-Process -FilePath '" + escapedExe + "' -ArgumentList '" + escapedArgs + "' -PassThru; ") +
             "$spid = $app.Id; " +
             "Write-Host \"STARTED_PID:$spid\"; " +
+            "for ($i = 0; $i -lt 30; $i++) { " +
+            "  Start-Sleep -Milliseconds 150; " +
+            "  $p = Get-Process -Id $spid -ErrorAction SilentlyContinue; " +
+            "  if ($p) { " +
+            "    $p.Refresh(); " +
+            "    if ($p.MainWindowHandle -ne 0) { " +
+            "      try { Move-Window -Desktop $d2 -Hwnd $p.MainWindowHandle; } catch {} " +
+            "      break; " +
+            "    } " +
+            "  } " +
+            "} " +
+            "Write-Host 'MOVE_OK';";
+    }
+
+    private static String buildHiddenPowerShellScript(String executable, String arguments) {
+        String escapedExe = executable.replace("'", "''");
+        String escapedArgs = arguments.replace("'", "''");
+        if (!escapedArgs.contains("/hide")) {
+            escapedArgs = (escapedArgs + " /hide").trim();
+        }
+
+        return "$showWindow = Add-Type -MemberDefinition ' " +
+            "[DllImport(\"user32.dll\")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow); " +
+            "' -Name 'Win32ShowWindow' -Namespace 'Win32' -PassThru; " +
+            (escapedArgs.isEmpty()
+                ? "$app = Start-Process -FilePath '" + escapedExe + "' -WindowStyle Hidden -PassThru; "
+                : "$app = Start-Process -FilePath '" + escapedExe + "' -ArgumentList '" + escapedArgs + "' -WindowStyle Hidden -PassThru; ") +
+            "$spid = $app.Id; " +
+            "Write-Host \"STARTED_PID:$spid\"; " +
             "$hwnd = 0; " +
             "for ($i = 0; $i -lt 40; $i++) { " +
             "  Start-Sleep -Milliseconds 500; " +
             "  $p = Get-Process -Id $spid -ErrorAction SilentlyContinue; " +
-            "  if ($p) { $p.Refresh(); if ($p.MainWindowHandle -ne 0) { $hwnd = $p.MainWindowHandle; break; } } " +
+            "  if ($p) { " +
+            "    $p.Refresh(); " +
+            "    if ($p.MainWindowHandle -ne 0) { " +
+            "      $hwnd = $p.MainWindowHandle; " +
+            "      $showWindow::ShowWindow($hwnd, 0) | Out-Null; " +
+            "      break; " +
+            "    } " +
+            "  } " +
             "} " +
-            "if ($hwnd -ne 0) { " +
-            "  try { " +
-            "    Move-Window -Desktop $d2 -Hwnd $hwnd; " +
-            "    Write-Host 'MOVE_OK'; " +
-            "  } catch { Write-Host \"MOVE_ERROR: $_\"; } " +
-            "} else { Write-Host 'NO_HWND_FOUND'; }";
+            "if ($hwnd -ne 0) { Write-Host 'HIDE_OK'; } else { Write-Host 'NO_HWND_FOUND'; }";
     }
 
     public static Process startNormally(String executable, List<String> args, Path workingDir) {

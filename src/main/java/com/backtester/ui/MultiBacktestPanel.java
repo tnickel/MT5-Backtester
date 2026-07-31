@@ -260,7 +260,7 @@ public class MultiBacktestPanel extends JPanel {
         String savedSymbols = config.get("multi.symbols", "EURUSD");
         List<String> selSymbols = java.util.Arrays.asList(savedSymbols.split(","));
         
-        JPanel checkPanel = new JPanel(new GridLayout(0, 2, 5, 2));
+        JPanel checkPanel = new JPanel(new GridLayout(0, 4, 5, 2));
         for (String sym : BacktestConfig.SYMBOLS) {
             JCheckBox cb = new JCheckBox(sym);
             if (selSymbols.contains(sym)) cb.setSelected(true);
@@ -414,11 +414,14 @@ public class MultiBacktestPanel extends JPanel {
         detailPanel.add(new JScrollPane(resultsTable), BorderLayout.CENTER);
 
         JPanel detailBtnP = new JPanel(new FlowLayout(FlowLayout.RIGHT, 5, 0));
+        JButton exportPairsBtn = new JButton("📤 Export Successful Pairs");
+        exportPairsBtn.addActionListener(e -> exportSuccessfulPairsToCsv());
         JButton showSingleBtn = new JButton("📊 Show Single Report");
         showSingleBtn.addActionListener(e -> showSelectedSingleReport());
         JButton deleteRunBtn = new JButton("🗑 Delete Selected Runs");
         deleteRunBtn.addActionListener(e -> deleteSelectedRuns());
         
+        detailBtnP.add(exportPairsBtn);
         detailBtnP.add(showSingleBtn);
         detailBtnP.add(deleteRunBtn);
         detailPanel.add(detailBtnP, BorderLayout.SOUTH);
@@ -701,5 +704,46 @@ public class MultiBacktestPanel extends JPanel {
         };
 
         currentRunner.execute();
+    }
+
+    private void exportSuccessfulPairsToCsv() {
+        BatchRunModel selected = batchList.getSelectedValue();
+        if (selected == null || selected.results == null || selected.results.isEmpty()) {
+            JOptionPane.showMessageDialog(this, "Keine Ergebnisse in der aktuellen Batch-Auswahl zum Exportieren vorhanden.", "Export Warnung", JOptionPane.WARNING_MESSAGE);
+            return;
+        }
+
+        java.util.Set<String> successfulSymbols = new java.util.LinkedHashSet<>();
+        for (com.backtester.report.BacktestResult r : selected.results) {
+            if (r.isSuccess() && r.getTotalProfit() > 0 && r.getTotalTrades() > 10) {
+                if (r.getSymbol() != null && !r.getSymbol().trim().isEmpty()) {
+                    successfulSymbols.add(r.getSymbol().trim().toUpperCase());
+                }
+            }
+        }
+
+        if (successfulSymbols.isEmpty()) {
+            JOptionPane.showMessageDialog(this, "Keine erfolgreichen Währungspaare (Profit > 0 und Trades > 10) in den aktuellen Ergebnissen gefunden.", "Export Info", JOptionPane.INFORMATION_MESSAGE);
+            return;
+        }
+
+        JFileChooser fc = new JFileChooser();
+        fc.setDialogTitle("Erfolgreiche Währungspaare als CSV speichern");
+        fc.setSelectedFile(new java.io.File("successful_currency_pairs.csv"));
+        int res = fc.showSaveDialog(this);
+        if (res != JFileChooser.APPROVE_OPTION) return;
+
+        java.io.File file = fc.getSelectedFile();
+        try (java.io.PrintWriter writer = new java.io.PrintWriter(new java.io.FileWriter(file))) {
+            writer.println("Symbol");
+            for (String sym : successfulSymbols) {
+                writer.println(sym);
+            }
+            logPanel.log("INFO", "Erfolgreiche Währungspaare (" + successfulSymbols.size() + ") exportiert nach: " + file.getAbsolutePath());
+            JOptionPane.showMessageDialog(this, successfulSymbols.size() + " erfolgreiche Währungspaare wurden erfolgreich exportiert!", "Export Erfolgreich", JOptionPane.INFORMATION_MESSAGE);
+        } catch (Exception ex) {
+            logPanel.log("ERROR", "Fehler beim Exportieren: " + ex.getMessage());
+            JOptionPane.showMessageDialog(this, "Fehler beim Exportieren: " + ex.getMessage(), "Export Fehler", JOptionPane.ERROR_MESSAGE);
+        }
     }
 }

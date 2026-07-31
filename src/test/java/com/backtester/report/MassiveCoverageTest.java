@@ -643,21 +643,21 @@ public class MassiveCoverageTest {
         OptimizationResult.ScoreWeights w = OptimizationResult.ScoreWeights.defaults();
         double total = w.wBtProfit + w.wFwProfit + w.wConsistency + w.wRisk +
                        w.wEquityConsist + w.wSampleSize + w.wFwTrades + w.wRecovery;
-        assertEquals(140.0, total, 0.001);
+        assertEquals(100.0, total, 0.001);
         assertEquals(total, w.total(), 0.001);
     }
 
     @Test
     public void test082_scoreWeightsDefaultsValues() {
         OptimizationResult.ScoreWeights w = OptimizationResult.ScoreWeights.defaults();
-        assertEquals(15.0, w.wBtProfit, 0.001);
-        assertEquals(15.0, w.wFwProfit, 0.001);
-        assertEquals(10.0, w.wConsistency, 0.001);
-        assertEquals(10.0, w.wRisk, 0.001);
-        assertEquals(10.0, w.wEquityConsist, 0.001);
-        assertEquals(25.0, w.wSampleSize, 0.001);
+        assertEquals(7.0, w.wBtProfit, 0.001);
+        assertEquals(7.0, w.wFwProfit, 0.001);
+        assertEquals(6.0, w.wConsistency, 0.001);
+        assertEquals(3.0, w.wRisk, 0.001);
+        assertEquals(3.0, w.wEquityConsist, 0.001);
+        assertEquals(23.0, w.wSampleSize, 0.001);
         assertEquals(30.0, w.wFwTrades, 0.001);
-        assertEquals(25.0, w.wRecovery, 0.001);
+        assertEquals(21.0, w.wRecovery, 0.001);
     }
 
     @Test

@@ -46,10 +46,15 @@ public class BacktestResult {
     private double averageWin = 0;
     private double averageLoss = 0;
 
+    private String tickModel = "";
+
     // Equity history: each entry is [tradeNumber, balance, equity]
     private List<double[]> equityHistory = new ArrayList<>();
 
     // Getters & Setters
+
+    public String getTickModel() { return tickModel; }
+    public void setTickModel(String tickModel) { this.tickModel = tickModel; }
 
     public String getExpert() { return expert; }
     public void setExpert(String expert) { this.expert = expert; }

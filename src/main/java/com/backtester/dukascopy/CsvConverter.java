@@ -182,13 +182,20 @@ public class CsvConverter {
         return outputCsv;
     }
 
+    private static final java.util.Set<String> INDEX_SYMBOLS = java.util.Set.of(
+        "AUS200", "CHINA50", "DE40", "GER40", "EU50", "FRANCE40", "HK50", "JP225", "SPAIN35", "UK100", "US30", "US500", "USTEC"
+    );
+
     /**
      * Get the number of decimal digits for a symbol.
      */
     public static int getDigits(String symbol) {
         String s = symbol.toUpperCase();
+        if (INDEX_SYMBOLS.contains(s) || s.matches(".*(35|40|50|100|200|30|500).*")) {
+            return 2;
+        }
         if (s.contains("JPY")) return 3;
-        if (s.contains("XTI")) return 3;
+        if (s.contains("XTI") || s.contains("XBR")) return 3;
         if (s.startsWith("XAU")) return 2;
         if (s.startsWith("XAG")) return 5;
         return 5; // Default for most forex pairs

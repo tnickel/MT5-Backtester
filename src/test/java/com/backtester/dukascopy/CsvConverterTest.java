@@ -29,6 +29,10 @@ public class CsvConverterTest {
         assertEquals(5, CsvConverter.getDigits("XAGUSD"));
         assertEquals(5, CsvConverter.getDigits("EURUSD"));
         assertEquals(5, CsvConverter.getDigits("GBPUSD"));
+        assertEquals(2, CsvConverter.getDigits("SPAIN35"));
+        assertEquals(2, CsvConverter.getDigits("FRANCE40"));
+        assertEquals(2, CsvConverter.getDigits("DE40"));
+        assertEquals(2, CsvConverter.getDigits("US30"));
     }
 
     @Test

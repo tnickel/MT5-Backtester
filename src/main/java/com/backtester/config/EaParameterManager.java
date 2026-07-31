@@ -401,7 +401,7 @@ public class EaParameterManager {
             }
 
             log.info("Starting terminal to generate default config...");
-            Process process = com.backtester.engine.VirtualDesktopHelper.startOnDesktop2(terminalPath, mt5Args, mt5Dir);
+            Process process = com.backtester.engine.VirtualDesktopHelper.startTerminal(terminalPath, mt5Args, mt5Dir);
 
             // Consume output to prevent deadlock
             Thread outputConsumer = new Thread(() -> {

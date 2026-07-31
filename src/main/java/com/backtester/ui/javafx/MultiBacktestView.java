@@ -60,7 +60,7 @@ public class MultiBacktestView {
         private int dbId = -1;
         private java.util.List<com.backtester.report.BacktestResult> results = new java.util.ArrayList<>();
         private java.nio.file.Path htmlReportPath;
-        
+
         public BatchRun(String name) { this.name = name; }
         public String getName() { return name; }
         public void setName(String name) { this.name = name; }
@@ -90,12 +90,12 @@ public class MultiBacktestView {
         HBox topBox = new HBox(15);
         VBox configBox = createConfigBox();
         VBox paramBox = createParamBox();
-        
+
         HBox.setHgrow(configBox, Priority.ALWAYS);
         HBox.setHgrow(paramBox, Priority.ALWAYS);
         topBox.getChildren().addAll(configBox, paramBox);
         topBox.setMinHeight(0);
-        
+
         // Bottom: Results
         VBox resultsBox = createResultsBox();
 
@@ -103,7 +103,7 @@ public class MultiBacktestView {
         splitPane.setDividerPositions(0.45);
 
         root.setCenter(splitPane);
-        
+
         loadPreferences();
         expertField.textProperty().addListener((obs, oldVal, newVal) -> loadParameters());
         loadBatchesFromDb();
@@ -115,7 +115,7 @@ public class MultiBacktestView {
 
         Label title = new Label("Batch / Multi-Symbol Backtest Configuration");
         title.getStyleClass().add("sci-fi-panel-title");
-        
+
         String overview = "Der Multi-Backtester Tab ist das ideale Werkzeug, um die Universalität und Skalierbarkeit eines Expert Advisors zu prüfen. Eine klassische Falle in der algorithmischen Entwicklung ist die Überanpassung (Curve-Fitting) an ein einziges Währungspaar, z.B. EURUSD. Eine Strategie, die auf EURUSD fantastisch funktioniert, könnte auf USDJPY verheerende Verluste einfahren, weil sie nicht auf universellen Marktprinzipien beruht.\n\n" +
                           "Warum nutzt man den Multi-Backtester? Um echtes Portfolio-Trading zu simulieren und zu validieren. Anstatt mühsam 20 einzelne Backtests manuell zu starten, die Parameter jedes Mal zu ändern und zu warten, erlaubt dir dieses Tool die Definition einer ganzen 'Batch-Queue' (Warteschlange). Du kannst den EA auf 15 verschiedenen Symbolen und 5 verschiedenen Zeitrahmen testen – mit einem einzigen Klick.\n\n" +
                           "Dieses Tool arbeitet die Liste nacheinander vollautomatisch im Hintergrund ab. So kannst du den Rechner über Nacht laufen lassen und am nächsten Morgen sofort sehen, auf welchen Assets und Timeframes deine Strategie einen statistischen Edge (Vorteil) besitzt und welche Märkte strikt gemieden werden sollten.";
@@ -130,7 +130,7 @@ public class MultiBacktestView {
                          "   Während die Tests laufen, füllt sich die Tabelle auf der rechten Seite in Echtzeit. Diese Tabelle ist sortierbar. Du kannst nach Abschluss sofort auf 'Profit' oder 'Drawdown' klicken, um die lukrativsten oder sichersten Symbol-Timeframe-Kombinationen an die Spitze zu sortieren. So erkennst du sofort Muster (z.B. 'Die Strategie funktioniert nur auf M15, scheitert aber auf H1 völlig').\n\n" +
                          "5. Combined Portfolio Report:\n" +
                          "   Ein herausragendes Feature ist die Möglichkeit, einen kombinierten Report zu erstellen. Dabei werden die Einzelergebnisse aller erfolgreichen Backtests zu einer einzigen, aggregierten Portfolio-Equity-Kurve verschmolzen. Dies zeigt dir, wie sich dein Kapital entwickelt hätte, wenn du den EA auf all diesen Instrumenten gleichzeitig auf einem Live-Konto betrieben hättest, inklusive Überlappungen bei Drawdowns und Margin-Auslastungen.";
-                         
+
         javafx.scene.layout.Region infoSpacer = new javafx.scene.layout.Region();
         javafx.scene.layout.HBox.setHgrow(infoSpacer, javafx.scene.layout.Priority.ALWAYS);
         javafx.scene.layout.HBox titleBox = new javafx.scene.layout.HBox(15, title, infoSpacer, DocHelper.createInfoButton("Multi-Backtester", overview, details));
@@ -165,11 +165,11 @@ public class MultiBacktestView {
         depositSpinner = new Spinner<>(100, 10000000, config.getDefaultDeposit(), 1000);
         depositSpinner.setEditable(true);
         grid.add(depositSpinner, 1, 2);
-        
+
         currencyCombo = new ComboBox<>(FXCollections.observableArrayList("USD", "EUR", "GBP"));
         currencyCombo.getStyleClass().add("combo-box");
         currencyCombo.setValue(config.getDefaultCurrency());
-        
+
         leverageField = new TextField(config.getDefaultLeverage());
         leverageField.getStyleClass().add("text-input");
         leverageField.setPrefWidth(80);
@@ -262,13 +262,13 @@ public class MultiBacktestView {
             }
 
             sel.setEaName(expertField.getText().trim());
-            
+
             java.util.List<String> selectedSyms = new java.util.ArrayList<>();
             for (CheckBox cb : symbolBoxes) {
                 if (cb.isSelected()) selectedSyms.add(cb.getText());
             }
             sel.setSymbols(String.join(",", selectedSyms));
-            
+
             java.util.List<String> selectedTfs = new java.util.ArrayList<>();
             for (CheckBox cb : timeframeBoxes) {
                 if (cb.isSelected()) selectedTfs.add(cb.getText());
@@ -290,7 +290,7 @@ public class MultiBacktestView {
             inputDialog.setTitle("Neues Preset erstellen");
             inputDialog.setHeaderText("Preset-Namen eingeben");
             inputDialog.setContentText("Name:");
-            
+
             inputDialog.getDialogPane().setStyle("-fx-background-color: #0b0d13;");
             inputDialog.getDialogPane().lookup(".content.label").setStyle("-fx-text-fill: #e6e9f0;");
             inputDialog.getDialogPane().lookup(".header-panel").setStyle("-fx-background-color: #0b0d13;");
@@ -308,19 +308,19 @@ public class MultiBacktestView {
             if (result.isPresent() && !result.get().trim().isEmpty()) {
                 String name = result.get().trim();
                 String ea = expertField.getText().trim();
-                
+
                 java.util.List<String> selectedSyms = new java.util.ArrayList<>();
                 for (CheckBox cb : symbolBoxes) {
                     if (cb.isSelected()) selectedSyms.add(cb.getText());
                 }
                 String syms = String.join(",", selectedSyms);
-                
+
                 java.util.List<String> selectedTfs = new java.util.ArrayList<>();
                 for (CheckBox cb : timeframeBoxes) {
                     if (cb.isSelected()) selectedTfs.add(cb.getText());
                 }
                 String per = String.join(",", selectedTfs);
-                
+
                 // Snapshot parameters
                 java.util.List<com.backtester.config.EaParameter> currentParams = new java.util.ArrayList<>();
                 if (paramTable != null && !paramTable.getItems().isEmpty()) {
@@ -338,7 +338,7 @@ public class MultiBacktestView {
                         currentParams.add(copy);
                     }
                 }
-                
+
                 Preset newPreset = new Preset(name, ea, syms, per, currentParams);
                 PresetManager.getInstance().addPreset(newPreset);
                 presetCombo.getItems().setAll(PresetManager.getInstance().getPresets());
@@ -379,19 +379,19 @@ public class MultiBacktestView {
             if (result.isPresent() && !result.get().trim().isEmpty()) {
                 sel.setName(result.get().trim());
                 sel.setEaName(expertField.getText().trim());
-                
+
                 java.util.List<String> selectedSyms = new java.util.ArrayList<>();
                 for (CheckBox cb : symbolBoxes) {
                     if (cb.isSelected()) selectedSyms.add(cb.getText());
                 }
                 sel.setSymbols(String.join(",", selectedSyms));
-                
+
                 java.util.List<String> selectedTfs = new java.util.ArrayList<>();
                 for (CheckBox cb : timeframeBoxes) {
                     if (cb.isSelected()) selectedTfs.add(cb.getText());
                 }
                 sel.setPeriod(String.join(",", selectedTfs));
-                
+
                 // Snapshot parameters
                 java.util.List<com.backtester.config.EaParameter> currentParams = new java.util.ArrayList<>();
                 if (paramTable != null && !paramTable.getItems().isEmpty()) {
@@ -410,7 +410,7 @@ public class MultiBacktestView {
                     }
                 }
                 sel.setEaParameters(currentParams);
-                
+
                 PresetManager.getInstance().savePresets();
                 presetCombo.getItems().setAll(PresetManager.getInstance().getPresets());
                 presetCombo.setValue(sel);
@@ -490,18 +490,43 @@ public class MultiBacktestView {
 
     private TitledPane createSymbolsPane() {
         symbolsGrid = new GridPane();
-        symbolsGrid.setHgap(20);
-        symbolsGrid.setVgap(10);
-        
+        symbolsGrid.setHgap(15);
+        symbolsGrid.setVgap(8);
+
         String[] symbols = com.backtester.engine.BacktestConfig.SYMBOLS;
-        
+
         for (String sym : symbols) {
             CheckBox cb = addSymbolCheckbox(sym);
             cb.setOnAction(e -> updateSymbolsPaneTitle());
         }
-        
+
+        // Quick Selection Buttons
+        HBox quickBox = new HBox(8);
+        Button selectAllBtn = new Button("Select All");
+        selectAllBtn.getStyleClass().add("button");
+        selectAllBtn.setOnAction(e -> setAllSymbolsSelected(true));
+
+        Button selectForexBtn = new Button("Forex Only");
+        selectForexBtn.getStyleClass().add("button");
+        selectForexBtn.setOnAction(e -> selectSymbolsCategory("FOREX"));
+
+        Button selectIndicesBtn = new Button("Indices Only");
+        selectIndicesBtn.getStyleClass().add("button");
+        selectIndicesBtn.setOnAction(e -> selectSymbolsCategory("INDICES"));
+
+        Button clearAllBtn = new Button("Clear");
+        clearAllBtn.getStyleClass().add("button");
+        clearAllBtn.setOnAction(e -> setAllSymbolsSelected(false));
+
+        Button importPairsBtn = new Button("📥 Import Pairs CSV");
+        importPairsBtn.getStyleClass().add("button");
+        importPairsBtn.setOnAction(e -> importCurrencyPairsFromCsv());
+
+        quickBox.getChildren().addAll(selectAllBtn, selectForexBtn, selectIndicesBtn, clearAllBtn, importPairsBtn);
+
         HBox customBox = new HBox(10);
         customSymbolField = new TextField();
+        customSymbolField.setPromptText("Custom Symbol (z.B. SPAIN35)");
         customSymbolField.getStyleClass().add("text-input");
         HBox.setHgrow(customSymbolField, Priority.ALWAYS);
         Button addBtn = new Button("Add Custom");
@@ -520,11 +545,33 @@ public class MultiBacktestView {
             }
         });
         customBox.getChildren().addAll(customSymbolField, addBtn);
-        
-        VBox content = new VBox(10, symbolsGrid, customBox);
+
+        VBox content = new VBox(10, quickBox, symbolsGrid, customBox);
         TitledPane tp = new TitledPane("Symbols: (None)", content);
         tp.setExpanded(false);
         return tp;
+    }
+
+    private void setAllSymbolsSelected(boolean selected) {
+        for (CheckBox cb : symbolBoxes) {
+            cb.setSelected(selected);
+        }
+        updateSymbolsPaneTitle();
+    }
+
+    private void selectSymbolsCategory(String category) {
+        java.util.Set<String> indices = java.util.Set.of(
+            "AUS200", "CHINA50", "DE40", "EU50", "FRANCE40", "HK50", "JP225", "SPAIN35", "UK100", "US30", "US500", "USTEC"
+        );
+        for (CheckBox cb : symbolBoxes) {
+            String sym = cb.getText();
+            if ("INDICES".equals(category)) {
+                cb.setSelected(indices.contains(sym));
+            } else if ("FOREX".equals(category)) {
+                cb.setSelected(!indices.contains(sym) && !sym.startsWith("XAU") && !sym.startsWith("XAG") && !sym.startsWith("XTI") && !sym.startsWith("XBR"));
+            }
+        }
+        updateSymbolsPaneTitle();
     }
 
     private void updateSymbolsPaneTitle() {
@@ -541,8 +588,9 @@ public class MultiBacktestView {
         CheckBox cb = new CheckBox(sym);
         cb.getStyleClass().add("check-box");
         symbolBoxes.add(cb);
-        int r = (symbolBoxes.size() - 1) / 2;
-        int c = (symbolBoxes.size() - 1) % 2;
+        int cols = 4;
+        int r = (symbolBoxes.size() - 1) / cols;
+        int c = (symbolBoxes.size() - 1) % cols;
         symbolsGrid.add(cb, c, r);
         return cb;
     }
@@ -551,9 +599,9 @@ public class MultiBacktestView {
         GridPane grid = new GridPane();
         grid.setHgap(40);
         grid.setVgap(20);
-        
+
         String[] tfs = {"M1", "M5", "M15", "M30", "H1", "H4", "D1", "W1", "MN1"};
-        
+
         int row = 0, col = 0;
         for (String tf : tfs) {
             CheckBox cb = new CheckBox(tf);
@@ -564,7 +612,7 @@ public class MultiBacktestView {
             col++;
             if (col > 1) { col = 0; row++; }
         }
-        
+
         TitledPane tp = new TitledPane("Timeframes: (None)", grid);
         tp.setExpanded(false);
         return tp;
@@ -583,7 +631,7 @@ public class MultiBacktestView {
     private VBox createResultsBox() {
         VBox box = new VBox(10);
         box.getStyleClass().add("sci-fi-panel");
-        
+
         Label title = new Label("Batch Results Summary");
         title.getStyleClass().add("sci-fi-panel-title");
 
@@ -596,18 +644,18 @@ public class MultiBacktestView {
         VBox leftBox = new VBox(5);
         Label historyLabel = new Label("Batch History");
         historyLabel.getStyleClass().add("label");
-        
+
         batchList = new ListView<>();
         batchList.getStyleClass().add("sci-fi-panel");
         VBox.setVgrow(batchList, Priority.ALWAYS);
-        
+
         batchList.getSelectionModel().selectedItemProperty().addListener((obs, oldVal, newVal) -> {
             resultsTable.getItems().clear();
             if (newVal != null) {
                 resultsTable.getItems().addAll(newVal.getResults());
             }
         });
-        
+
         Button openReportBtn = new Button("🌐 Open Multi-Report Node");
         openReportBtn.getStyleClass().add("button");
         openReportBtn.setMaxWidth(Double.MAX_VALUE);
@@ -623,7 +671,7 @@ public class MultiBacktestView {
                 logView.log("WARN", "No HTML report available for this batch yet.");
             }
         });
-        
+
         Button deleteBatchBtn = new Button("🗑 Delete Batch");
         deleteBatchBtn.getStyleClass().add("button");
         deleteBatchBtn.setMaxWidth(Double.MAX_VALUE);
@@ -636,39 +684,39 @@ public class MultiBacktestView {
                 }
             }
         });
-        
+
         leftBox.getChildren().addAll(historyLabel, batchList, openReportBtn, deleteBatchBtn);
 
         // Right Side: Runs
         VBox rightBox = new VBox(5);
         Label runsLabel = new Label("Runs for Selected Batch");
         runsLabel.getStyleClass().add("label");
-        
+
         resultsTable = new TableView<>();
         resultsTable.setStyle("-fx-background-color: transparent;");
-        
+
         javafx.scene.control.TableColumn<com.backtester.report.BacktestResult, String> eaCol = new javafx.scene.control.TableColumn<>("Robot");
         eaCol.setCellValueFactory(new javafx.scene.control.cell.PropertyValueFactory<>("expert"));
         eaCol.setPrefWidth(120);
-        
+
         javafx.scene.control.TableColumn<com.backtester.report.BacktestResult, String> symCol = new javafx.scene.control.TableColumn<>("Symbol");
         symCol.setCellValueFactory(new javafx.scene.control.cell.PropertyValueFactory<>("symbol"));
-        
+
         javafx.scene.control.TableColumn<com.backtester.report.BacktestResult, String> perCol = new javafx.scene.control.TableColumn<>("Period");
         perCol.setCellValueFactory(new javafx.scene.control.cell.PropertyValueFactory<>("period"));
-        
+
         javafx.scene.control.TableColumn<com.backtester.report.BacktestResult, Integer> tradesCol = new javafx.scene.control.TableColumn<>("Trades");
         tradesCol.setCellValueFactory(new javafx.scene.control.cell.PropertyValueFactory<>("totalTrades"));
-        
+
         javafx.scene.control.TableColumn<com.backtester.report.BacktestResult, String> winCol = new javafx.scene.control.TableColumn<>("Win Rate");
         winCol.setCellValueFactory(cellData -> new javafx.beans.property.SimpleStringProperty(String.format("%.2f%%", cellData.getValue().getWinRate())));
-        
+
         javafx.scene.control.TableColumn<com.backtester.report.BacktestResult, String> ddCol = new javafx.scene.control.TableColumn<>("Drawdown");
         ddCol.setCellValueFactory(cellData -> new javafx.beans.property.SimpleStringProperty(String.format("%.2f%%", cellData.getValue().getMaxDrawdown())));
-        
+
         javafx.scene.control.TableColumn<com.backtester.report.BacktestResult, String> recCol = new javafx.scene.control.TableColumn<>("Recovery Factor");
         recCol.setCellValueFactory(cellData -> new javafx.beans.property.SimpleStringProperty(String.format("%.2f", cellData.getValue().getRecoveryFactor())));
-        
+
         javafx.scene.control.TableColumn<com.backtester.report.BacktestResult, String> profCol = new javafx.scene.control.TableColumn<>("Profit");
         profCol.setCellValueFactory(cellData -> new javafx.beans.property.SimpleStringProperty(String.format("%.2f", cellData.getValue().getTotalProfit())));
 
@@ -676,7 +724,7 @@ public class MultiBacktestView {
         statusCol.setCellValueFactory(cellData -> new javafx.beans.property.SimpleStringProperty(cellData.getValue().isSuccess() ? "OK" : "Fail"));
 
         resultsTable.getColumns().addAll(eaCol, symCol, perCol, tradesCol, winCol, ddCol, recCol, profCol, statusCol);
-        
+
         resultsTable.setOnMouseClicked(e -> {
             if (e.getClickCount() == 2) {
                 com.backtester.report.BacktestResult sel = resultsTable.getSelectionModel().getSelectedItem();
@@ -685,10 +733,14 @@ public class MultiBacktestView {
                 }
             }
         });
-        
+
         HBox tableBtnBox = new HBox(10);
         tableBtnBox.setAlignment(Pos.CENTER_RIGHT);
-        
+
+        Button exportPairsBtn = new Button("📤 Export Successful Pairs");
+        exportPairsBtn.getStyleClass().add("button");
+        exportPairsBtn.setOnAction(e -> exportSuccessfulPairsToCsv());
+
         Button showReportBtn = new Button("📊 Show Single Report");
         showReportBtn.getStyleClass().add("button");
         showReportBtn.setOnAction(e -> {
@@ -697,7 +749,7 @@ public class MultiBacktestView {
                 com.backtester.ui.ReportViewerDialog.showForDirectory(null, sel.getOutputDirectory());
             }
         });
-        
+
         Button delRunBtn = new Button("🗑 Delete Selected Runs");
         delRunBtn.getStyleClass().add("button");
         delRunBtn.setOnAction(e -> {
@@ -724,9 +776,9 @@ public class MultiBacktestView {
                 }
             }
         });
-        
-        tableBtnBox.getChildren().addAll(showReportBtn, delRunBtn);
-        
+
+        tableBtnBox.getChildren().addAll(exportPairsBtn, showReportBtn, delRunBtn);
+
         VBox.setVgrow(resultsTable, Priority.ALWAYS);
         rightBox.getChildren().addAll(runsLabel, resultsTable, tableBtnBox);
 
@@ -741,7 +793,7 @@ public class MultiBacktestView {
         FileChooser chooser = new FileChooser();
         chooser.setTitle("Select Expert Advisor");
         chooser.getExtensionFilters().add(new FileChooser.ExtensionFilter("MetaTrader EA", "*.ex5", "*.ex4"));
-        
+
         String currentExpert = expertField.getText().trim();
         java.nio.file.Path expertsDir = null;
         if (config.isMt4(currentExpert)) {
@@ -758,7 +810,7 @@ public class MultiBacktestView {
                 chooser.setInitialDirectory(otherDir.toFile());
             }
         }
-        
+
         File selected = chooser.showOpenDialog(expertField.getScene().getWindow());
         if (selected != null) {
             String pathStr = selected.getAbsolutePath().toLowerCase();
@@ -789,7 +841,7 @@ public class MultiBacktestView {
             expertField.setText(exp);
             loadParameters();
         }
-        
+
         String syms = config.get("multibacktest.symbol", "EURUSD");
         java.util.List<String> symList = java.util.Arrays.asList(syms.split(",\\s*"));
         for (String s : symList) {
@@ -810,7 +862,7 @@ public class MultiBacktestView {
             }
         }
         updateSymbolsPaneTitle();
-        
+
         String tfs = config.get("multibacktest.timeframes", "H1");
         java.util.List<String> tfList = java.util.Arrays.asList(tfs.split(",\\s*"));
         for (CheckBox cb : timeframeBoxes) {
@@ -819,7 +871,7 @@ public class MultiBacktestView {
             }
         }
         updateTimeframesPaneTitle();
-        
+
         String mod = config.get("multibacktest.model", "Every tick");
         try {
             int idx = Integer.parseInt(mod);
@@ -839,19 +891,19 @@ public class MultiBacktestView {
 
     private void savePreferences() {
         config.set("multibacktest.expert", expertField.getText().trim());
-        
+
         java.util.List<String> selectedSyms = new java.util.ArrayList<>();
         for (CheckBox cb : symbolBoxes) {
             if (cb.isSelected()) selectedSyms.add(cb.getText());
         }
         config.set("multibacktest.symbol", String.join(",", selectedSyms));
-        
+
         java.util.List<String> selectedTfs = new java.util.ArrayList<>();
         for (CheckBox cb : timeframeBoxes) {
             if (cb.isSelected()) selectedTfs.add(cb.getText());
         }
         config.set("multibacktest.timeframes", String.join(",", selectedTfs));
-        
+
         if (modelCombo.getValue() != null) config.set("multibacktest.model", modelCombo.getValue());
         config.save();
     }
@@ -914,7 +966,7 @@ public class MultiBacktestView {
         progress.setProgress(ProgressBar.INDETERMINATE_PROGRESS);
         progressLabel.setText("Starting batch...");
         resultsTable.getItems().clear();
-        
+
         BatchRun newBatch = new BatchRun("Batch " + java.time.LocalTime.now().format(java.time.format.DateTimeFormatter.ofPattern("HH:mm:ss")) + " (" + batchConfig.getTotalCombinations() + " Tasks)");
         batchList.getItems().add(0, newBatch);
         batchList.getSelectionModel().select(newBatch);
@@ -944,14 +996,14 @@ public class MultiBacktestView {
                     cancelBtn.setDisable(true);
                     progress.setProgress(1.0);
                     progressLabel.setText("Batch finished.");
-                    
+
                     try {
                         java.nio.file.Path htmlPath = getGeneratedReportPath();
                         if (htmlPath != null) {
                             newBatch.setHtmlReportPath(htmlPath);
                         }
                     } catch (Exception e) {}
-                    
+
                     // Persist batch to database
                     try {
                         com.google.gson.Gson gson = new com.google.gson.Gson();
@@ -971,7 +1023,7 @@ public class MultiBacktestView {
                     } catch (Exception ex) {
                         logView.log("ERROR", "Failed to save batch to DB: " + ex.getMessage());
                     }
-                    
+
                     batchList.refresh();
                     logView.log("INFO", "Batch execution completed.");
                 });
@@ -1123,7 +1175,7 @@ public class MultiBacktestView {
     private void loadParameters() {
         String expert = expertField.getText().trim();
         if (expert.isEmpty()) return;
-        
+
         // Try DB first
         String dbParamsJson = com.backtester.database.DatabaseManager.getInstance().getEaParameterSettings(expert, "GLOBAL", "GLOBAL");
         if (dbParamsJson != null && !dbParamsJson.isEmpty()) {
@@ -1140,7 +1192,7 @@ public class MultiBacktestView {
                 logView.log("WARN", "Failed to parse parameters from DB: " + e.getMessage());
             }
         }
-        
+
         // Fallback to files
         java.util.List<com.backtester.config.EaParameter> params = eaParamManager.getEffectiveParameters(expert);
         if (params != null) {
@@ -1177,7 +1229,7 @@ public class MultiBacktestView {
                 }
             }
         });
-        
+
         TableColumn<com.backtester.config.EaParameter, Boolean> optCol = new TableColumn<>("Opt");
         optCol.setCellValueFactory(cellData -> {
             com.backtester.config.EaParameter param = cellData.getValue();
@@ -1191,7 +1243,7 @@ public class MultiBacktestView {
         });
         optCol.setCellFactory(javafx.scene.control.cell.CheckBoxTableCell.forTableColumn(optCol));
         optCol.setPrefWidth(40);
-        
+
         TableColumn<com.backtester.config.EaParameter, String> nameCol = new TableColumn<>("Variable");
         nameCol.setCellValueFactory(cellData -> {
             com.backtester.config.EaParameter param = cellData.getValue();
@@ -1222,97 +1274,84 @@ public class MultiBacktestView {
             }
         });
         nameCol.setPrefWidth(200);
-        
+
         TableColumn<com.backtester.config.EaParameter, String> valCol = new TableColumn<>("Value");
         valCol.setCellValueFactory(new PropertyValueFactory<>("value"));
         valCol.setCellFactory(EnumAwareParamCell.forTableColumn());
         valCol.setOnEditCommit(e -> e.getRowValue().setValue(e.getNewValue()));
         valCol.setPrefWidth(100);
-        
+
         TableColumn<com.backtester.config.EaParameter, String> startCol = new TableColumn<>("Start");
         startCol.setCellValueFactory(new PropertyValueFactory<>("optimizeStart"));
         startCol.setCellFactory(EnumAwareParamCell.forTableColumn());
         startCol.setOnEditCommit(e -> e.getRowValue().setOptimizeStart(e.getNewValue()));
-        
+
         TableColumn<com.backtester.config.EaParameter, String> stepCol = new TableColumn<>("Step");
         stepCol.setCellValueFactory(new PropertyValueFactory<>("optimizeStep"));
         stepCol.setCellFactory(EnumAwareParamCell.forTableColumn());
         stepCol.setOnEditCommit(e -> e.getRowValue().setOptimizeStep(e.getNewValue()));
-        
+
         TableColumn<com.backtester.config.EaParameter, String> stopCol = new TableColumn<>("Stop");
         stopCol.setCellValueFactory(new PropertyValueFactory<>("optimizeEnd"));
         stopCol.setCellFactory(EnumAwareParamCell.forTableColumn());
         stopCol.setOnEditCommit(e -> e.getRowValue().setOptimizeEnd(e.getNewValue()));
-        
+
         paramTable.getColumns().addAll(optCol, nameCol, valCol, startCol, stepCol, stopCol);
-        
+
         Label placeholder = new Label("No parameters loaded.\nLoad an Expert Advisor or a .set file.");
         placeholder.setStyle("-fx-text-fill: #7e889a;");
         paramTable.setPlaceholder(placeholder);
-        
+
         VBox.setVgrow(paramTable, Priority.ALWAYS);
 
         HBox btnBox = new HBox(10);
         btnBox.setAlignment(Pos.CENTER_RIGHT);
         Button genConfigBtn = new Button("Gen Config");
         genConfigBtn.setOnAction(e -> generateDefaultConfig());
-        
+
         Button autoConfigBtn = new Button("AutoConfig");
         autoConfigBtn.setOnAction(e -> autoConfigParameters());
-        
+
+        Button refreshBtn = new Button("🔄 Refresh");
+        refreshBtn.setTooltip(new javafx.scene.control.Tooltip("Clear DB cache and reload parameters directly from disk defaults"));
+        refreshBtn.setOnAction(e -> resetDefaults());
+
         Button loadBtn = new Button("Load .set");
         loadBtn.setOnAction(e -> loadFromFile());
-        
+
         Button saveBtn = new Button("Save .set");
         saveBtn.setOnAction(e -> saveToFile());
-        
-        btnBox.getChildren().addAll(genConfigBtn, autoConfigBtn, loadBtn, saveBtn);
+
+        btnBox.getChildren().addAll(genConfigBtn, autoConfigBtn, refreshBtn, loadBtn, saveBtn);
 
         box.getChildren().addAll(title, paramTable, btnBox);
         return box;
     }
 
-    private void autoConfigParameters() {
-        if (paramTable.getItems().isEmpty()) {
-            logView.log("WARN", "No parameters loaded. Please select an EA first.");
+    private void resetDefaults() {
+        String expert = expertField.getText().trim();
+        if (expert.isEmpty()) {
+            logView.log("WARN", "Please select an Expert Advisor first.");
             return;
         }
-
-        int activated = 0;
-        int skipped = 0;
-
-        for (com.backtester.config.EaParameter param : paramTable.getItems()) {
-            String name = param.getName();
-            String value = param.getValue();
-
-            if (isExcludedParameterName(name) || !isNumericValue(value)) {
-                param.setOptimizeEnabled(false);
-                skipped++;
-                continue;
-            }
-
-            double[] range = calculateOptRange(name, value);
-            if (range == null) {
-                param.setOptimizeEnabled(false);
-                skipped++;
-                continue;
-            }
-
-            double steps = (range[2] - range[0]) / range[1];
-            if (steps < 5) {
-                param.setOptimizeEnabled(false);
-                skipped++;
-                continue;
-            }
-
-            param.setOptimizeEnabled(true);
-            param.setOptimizeStart(formatNumber(range[0]));
-            param.setOptimizeStep(formatNumber(range[1]));
-            param.setOptimizeEnd(formatNumber(range[2]));
-            activated++;
+        com.backtester.database.DatabaseManager.getInstance().deleteEaParameterSettings(expert);
+        java.util.List<com.backtester.config.EaParameter> params = eaParamManager.getEffectiveParameters(expert);
+        if (params != null) {
+            paramTable.getItems().setAll(params);
+            logView.log("INFO", "Reset and reloaded " + params.size() + " parameters from disk defaults for " + EaParameterManager.extractEaBaseName(expert));
+        } else {
+            paramTable.getItems().clear();
+            logView.log("WARN", "No default parameters found for " + EaParameterManager.extractEaBaseName(expert));
         }
-        paramTable.refresh();
-        logView.log("INFO", "AutoConfig applied: " + activated + " enabled, " + skipped + " skipped.");
+    }
+
+    private void autoConfigParameters() {
+        AutoConfigDialogHelper.showAutoConfigDialog(
+            paramTable,
+            logView,
+            root.getScene() != null ? root.getScene().getWindow() : null,
+            this::saveParametersOnDemand
+        );
     }
 
     private void generateDefaultConfig() {
@@ -1346,70 +1385,6 @@ public class MultiBacktestView {
         });
 
         new Thread(task).start();
-    }
-
-    private boolean isExcludedParameterName(String name) {
-        String lower = name.toLowerCase();
-        return lower.contains("magic") || lower.contains("slippage") || lower.contains("comment") || lower.contains("color");
-    }
-
-    private boolean isNumericValue(String value) {
-        if (value == null || value.isEmpty() || value.contains(":") || value.contains(",")) return false;
-        try { Double.parseDouble(value); return true; } catch (NumberFormatException e) { return false; }
-    }
-
-    private double[] calculateOptRange(String name, String currentValue) {
-        double current;
-        try { current = Double.parseDouble(currentValue); } catch (NumberFormatException e) { return null; }
-        
-        double start = 1;
-        double end = current;
-        double step = 1;
-        
-        String lower = name.toLowerCase();
-        if (lower.contains("lot") || lower.contains("volume")) {
-            start = 0.01;
-            end = Math.max(current, 0.1);
-            step = 0.01;
-        } else if (lower.contains("dist") || lower.contains("step") || lower.contains("tp") || lower.contains("sl")) {
-            start = 10;
-            end = Math.max(current, 100);
-            step = 10;
-        } else if (lower.contains("period") || lower.contains("ma") || lower.contains("rsi")) {
-            start = 2;
-            end = Math.max(current, 50);
-            step = 1;
-        } else if (lower.contains("mult") || lower.contains("factor")) {
-            start = 1.0;
-            end = Math.max(current, 3.0);
-            step = 0.1;
-        } else {
-            if (current == 0) return null;
-            if (current < 1) {
-                start = 0.01;
-                end = current;
-                step = 0.01;
-            } else if (current <= 10) {
-                start = 1;
-                end = current;
-                step = 1;
-            } else if (current <= 100) {
-                start = 5;
-                end = current;
-                step = 5;
-            } else {
-                start = 10;
-                end = current;
-                step = 10;
-            }
-        }
-        
-        return new double[]{start, step, end};
-    }
-
-    private String formatNumber(double value) {
-        if (value == (long) value) return String.format(java.util.Locale.US, "%d", (long) value);
-        else return String.format(java.util.Locale.US, "%s", value);
     }
 
     private void loadFromFile() {
@@ -1457,6 +1432,269 @@ public class MultiBacktestView {
         if (paramTable != null && !paramTable.getItems().isEmpty()) {
             com.backtester.database.DatabaseManager.getInstance().saveEaParameterSettings(expert, "GLOBAL", "GLOBAL", new com.google.gson.Gson().toJson(paramTable.getItems()));
             eaParamManager.saveCustomParameters(expert, new java.util.ArrayList<>(paramTable.getItems()));
+        }
+    }
+
+    public static class ImportedPair {
+        public String symbol;
+        public String period = "";
+        public double profit = 0;
+        public int trades = 0;
+        public double drawdown = 0;
+        public boolean hasDetails = false;
+
+        public ImportedPair(String symbol) {
+            this.symbol = symbol;
+        }
+    }
+
+    private void exportSuccessfulPairsToCsv() {
+        java.util.List<com.backtester.report.BacktestResult> currentResults = resultsTable.getItems();
+        if (currentResults == null || currentResults.isEmpty()) {
+            Alert alert = new Alert(Alert.AlertType.WARNING, "Keine Ergebnisse in der aktuellen Tabelle zum Exportieren vorhanden.");
+            if (root.getScene() != null) alert.initOwner(root.getScene().getWindow());
+            alert.show();
+            return;
+        }
+
+        // Filter: success, profit > 0, trades > 10
+        java.util.List<com.backtester.report.BacktestResult> successfulRuns = new java.util.ArrayList<>();
+        for (com.backtester.report.BacktestResult r : currentResults) {
+            if (r.isSuccess() && r.getTotalProfit() > 0 && r.getTotalTrades() > 10) {
+                if (r.getSymbol() != null && !r.getSymbol().trim().isEmpty()) {
+                    successfulRuns.add(r);
+                }
+            }
+        }
+
+        if (successfulRuns.isEmpty()) {
+            Alert alert = new Alert(Alert.AlertType.INFORMATION, "Keine erfolgreichen Währungspaare (Profit > 0 und Trades > 10) in den aktuellen Ergebnissen gefunden.");
+            if (root.getScene() != null) alert.initOwner(root.getScene().getWindow());
+            alert.show();
+            return;
+        }
+
+        FileChooser fileChooser = new FileChooser();
+        fileChooser.setTitle("Erfolgreiche Währungspaare als CSV speichern");
+        fileChooser.setInitialFileName("successful_currency_pairs.csv");
+        fileChooser.getExtensionFilters().add(new FileChooser.ExtensionFilter("CSV Dateien (*.csv)", "*.csv"));
+
+        File saveFile = fileChooser.showSaveDialog(root.getScene().getWindow());
+        if (saveFile == null) return;
+
+        try (java.io.PrintWriter writer = new java.io.PrintWriter(new java.io.FileWriter(saveFile))) {
+            writer.println("Symbol,Period,Profit,Trades,Drawdown");
+            for (com.backtester.report.BacktestResult r : successfulRuns) {
+                String sym = r.getSymbol().trim().toUpperCase();
+                String per = r.getPeriod() != null ? r.getPeriod().trim() : "";
+                double prof = r.getTotalProfit();
+                int trades = r.getTotalTrades();
+                double dd = r.getMaxDrawdown();
+                writer.println(String.format(java.util.Locale.US, "%s,%s,%.2f,%d,%.2f", sym, per, prof, trades, dd));
+            }
+            logView.log("INFO", "Erfolgreiche Währungspaare (" + successfulRuns.size() + ") exportiert nach: " + saveFile.getAbsolutePath());
+
+            Alert alert = new Alert(Alert.AlertType.INFORMATION, successfulRuns.size() + " erfolgreiche Währungspaare inkl. Gewinnen, Trades & Drawdown wurden exportiert!\n\nDatei: " + saveFile.getName());
+            if (root.getScene() != null) alert.initOwner(root.getScene().getWindow());
+            alert.show();
+        } catch (Exception ex) {
+            logView.log("ERROR", "Fehler beim Exportieren der Währungspaare: " + ex.getMessage());
+            Alert alert = new Alert(Alert.AlertType.ERROR, "Fehler beim Exportieren: " + ex.getMessage());
+            if (root.getScene() != null) alert.initOwner(root.getScene().getWindow());
+            alert.show();
+        }
+    }
+
+    private void importCurrencyPairsFromCsv() {
+        FileChooser fileChooser = new FileChooser();
+        fileChooser.setTitle("Währungspaare aus CSV importieren");
+        fileChooser.getExtensionFilters().addAll(
+            new FileChooser.ExtensionFilter("CSV / Text Dateien (*.csv, *.txt)", "*.csv", "*.txt"),
+            new FileChooser.ExtensionFilter("Alle Dateien (*.*)", "*.*")
+        );
+
+        File importFile = fileChooser.showOpenDialog(root.getScene().getWindow());
+        if (importFile == null) return;
+
+        java.util.List<ImportedPair> parsedPairs = new java.util.ArrayList<>();
+        try (java.io.BufferedReader reader = new java.io.BufferedReader(new java.io.FileReader(importFile))) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                line = line.trim();
+                if (line.isEmpty() || line.toLowerCase().startsWith("symbol") || line.startsWith("#")) continue;
+                String[] tokens = line.split("[,;\\t]+");
+                if (tokens.length >= 1) {
+                    String sym = tokens[0].trim().toUpperCase();
+                    if (!sym.isEmpty() && !sym.equalsIgnoreCase("Symbol")) {
+                        ImportedPair pair = new ImportedPair(sym);
+                        if (tokens.length >= 5) {
+                            try {
+                                pair.period = tokens[1].trim();
+                                pair.profit = Double.parseDouble(tokens[2].trim());
+                                pair.trades = Integer.parseInt(tokens[3].trim());
+                                pair.drawdown = Double.parseDouble(tokens[4].trim());
+                                pair.hasDetails = true;
+                            } catch (Exception ignored) {}
+                        } else if (tokens.length >= 2) {
+                            pair.period = tokens[1].trim();
+                        }
+                        parsedPairs.add(pair);
+                    }
+                }
+            }
+        } catch (Exception ex) {
+            logView.log("ERROR", "Fehler beim Lesen der CSV-Datei: " + ex.getMessage());
+            Alert alert = new Alert(Alert.AlertType.ERROR, "Fehler beim Lesen der Datei: " + ex.getMessage());
+            if (root.getScene() != null) alert.initOwner(root.getScene().getWindow());
+            alert.show();
+            return;
+        }
+
+        if (parsedPairs.isEmpty()) {
+            Alert alert = new Alert(Alert.AlertType.WARNING, "Keine Währungspaare in der ausgewählten Datei gefunden.");
+            if (root.getScene() != null) alert.initOwner(root.getScene().getWindow());
+            alert.show();
+            return;
+        }
+
+        // Show Dialog with detailed Table & Checkboxes for user selection
+        Dialog<java.util.List<String>> dialog = new Dialog<>();
+        dialog.setTitle("Währungspaare importieren");
+        if (root.getScene() != null) dialog.initOwner(root.getScene().getWindow());
+
+        DialogPane dialogPane = dialog.getDialogPane();
+        dialogPane.setStyle("-fx-background-color: #0b0d13;");
+        if (expertField.getScene() != null && !expertField.getScene().getStylesheets().isEmpty()) {
+            dialogPane.getStylesheets().addAll(expertField.getScene().getStylesheets());
+        }
+
+        VBox dialogContent = new VBox(12);
+        dialogContent.setPadding(new Insets(12));
+
+        Label headerLabel = new Label("Folgende " + parsedPairs.size() + " Währungspaare wurden in der Datei gefunden.\nWählen Sie die Paare aus, die übernommen werden sollen:");
+        headerLabel.setStyle("-fx-text-fill: #00e5ff; -fx-font-weight: bold; -fx-font-size: 13px;");
+
+        // Selection helpers inside dialog
+        HBox dlgBtnBox = new HBox(10);
+        Button dlgSelectAll = new Button("Alle auswählen");
+        dlgSelectAll.getStyleClass().add("button");
+        Button dlgDeselectAll = new Button("Alle abwählen");
+        dlgDeselectAll.getStyleClass().add("button");
+        dlgBtnBox.getChildren().addAll(dlgSelectAll, dlgDeselectAll);
+
+        GridPane dlgGrid = new GridPane();
+        dlgGrid.setHgap(20);
+        dlgGrid.setVgap(8);
+        dlgGrid.setPadding(new Insets(5));
+
+        // Column Headers
+        Label hSel = new Label("Auswahl"); hSel.setStyle("-fx-text-fill: #8c91a0; -fx-font-weight: bold;");
+        Label hSym = new Label("Symbol"); hSym.setStyle("-fx-text-fill: #8c91a0; -fx-font-weight: bold;");
+        Label hPer = new Label("Period"); hPer.setStyle("-fx-text-fill: #8c91a0; -fx-font-weight: bold;");
+        Label hProf = new Label("Nettogewinn"); hProf.setStyle("-fx-text-fill: #8c91a0; -fx-font-weight: bold;");
+        Label hTrd = new Label("Trades"); hTrd.setStyle("-fx-text-fill: #8c91a0; -fx-font-weight: bold;");
+        Label hDd = new Label("Drawdown"); hDd.setStyle("-fx-text-fill: #8c91a0; -fx-font-weight: bold;");
+
+        dlgGrid.add(hSel, 0, 0);
+        dlgGrid.add(hSym, 1, 0);
+        dlgGrid.add(hPer, 2, 0);
+        dlgGrid.add(hProf, 3, 0);
+        dlgGrid.add(hTrd, 4, 0);
+        dlgGrid.add(hDd, 5, 0);
+
+        java.util.List<CheckBox> dlgCheckboxes = new java.util.ArrayList<>();
+        java.util.Map<CheckBox, String> cbSymbolMap = new java.util.HashMap<>();
+
+        for (int i = 0; i < parsedPairs.size(); i++) {
+            ImportedPair pair = parsedPairs.get(i);
+            int row = i + 1;
+
+            CheckBox cb = new CheckBox();
+            cb.getStyleClass().add("check-box");
+            cb.setSelected(true); // Pre-checked by default
+            dlgCheckboxes.add(cb);
+            cbSymbolMap.put(cb, pair.symbol);
+
+            Label lblSym = new Label(pair.symbol);
+            lblSym.setStyle("-fx-text-fill: #ffffff; -fx-font-weight: bold;");
+
+            Label lblPer = new Label(pair.period.isEmpty() ? "-" : pair.period);
+            lblPer.setStyle("-fx-text-fill: #d0d0d0;");
+
+            Label lblProf = new Label(pair.hasDetails ? String.format(java.util.Locale.US, "%.2f", pair.profit) : "-");
+            lblProf.setStyle(pair.hasDetails && pair.profit >= 0 ? "-fx-text-fill: #12b886; -fx-font-weight: bold;" : "-fx-text-fill: #fa5252; -fx-font-weight: bold;");
+
+            Label lblTrd = new Label(pair.hasDetails ? String.valueOf(pair.trades) : "-");
+            lblTrd.setStyle("-fx-text-fill: #d0d0d0;");
+
+            Label lblDd = new Label(pair.hasDetails ? String.format(java.util.Locale.US, "%.2f%%", pair.drawdown) : "-");
+            lblDd.setStyle(pair.hasDetails && pair.drawdown > 20 ? "-fx-text-fill: #fa5252; -fx-font-weight: bold;" : "-fx-text-fill: #d0d0d0;");
+
+            dlgGrid.add(cb, 0, row);
+            dlgGrid.add(lblSym, 1, row);
+            dlgGrid.add(lblPer, 2, row);
+            dlgGrid.add(lblProf, 3, row);
+            dlgGrid.add(lblTrd, 4, row);
+            dlgGrid.add(lblDd, 5, row);
+        }
+
+        dlgSelectAll.setOnAction(e -> dlgCheckboxes.forEach(cb -> cb.setSelected(true)));
+        dlgDeselectAll.setOnAction(e -> dlgCheckboxes.forEach(cb -> cb.setSelected(false)));
+
+        ScrollPane scrollPane = new ScrollPane(dlgGrid);
+        scrollPane.setFitToWidth(true);
+        scrollPane.setPrefHeight(300);
+        scrollPane.setStyle("-fx-background-color: transparent; -fx-background: #141722;");
+
+        dialogContent.getChildren().addAll(headerLabel, dlgBtnBox, scrollPane);
+        dialogPane.setContent(dialogContent);
+
+        ButtonType importButtonType = new ButtonType("Übernehmen", ButtonBar.ButtonData.OK_DONE);
+        dialogPane.getButtonTypes().addAll(importButtonType, ButtonType.CANCEL);
+
+        dialog.setResultConverter(dialogButton -> {
+            if (dialogButton == importButtonType) {
+                java.util.List<String> selected = new java.util.ArrayList<>();
+                for (CheckBox cb : dlgCheckboxes) {
+                    if (cb.isSelected()) {
+                        String sym = cbSymbolMap.get(cb);
+                        if (sym != null && !selected.contains(sym)) {
+                            selected.add(sym);
+                        }
+                    }
+                }
+                return selected;
+            }
+            return null;
+        });
+
+        java.util.Optional<java.util.List<String>> result = dialog.showAndWait();
+        if (result.isPresent()) {
+            java.util.List<String> selectedToImport = result.get();
+            if (selectedToImport.isEmpty()) return;
+
+            // Uncheck all existing symbols first
+            setAllSymbolsSelected(false);
+
+            // Check/Add the imported selected symbols
+            for (String sym : selectedToImport) {
+                boolean found = false;
+                for (CheckBox cb : symbolBoxes) {
+                    if (cb.getText().equalsIgnoreCase(sym)) {
+                        cb.setSelected(true);
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found) {
+                    CheckBox newCb = addSymbolCheckbox(sym);
+                    newCb.setSelected(true);
+                    newCb.setOnAction(evt -> updateSymbolsPaneTitle());
+                }
+            }
+            updateSymbolsPaneTitle();
+            if (symbolsPane != null) symbolsPane.setExpanded(true);
+            logView.log("INFO", "Währungspaare (" + selectedToImport.size() + ") erfolgreich in die Auswahl übernommen.");
         }
     }
 }

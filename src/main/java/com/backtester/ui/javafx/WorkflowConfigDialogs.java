@@ -63,6 +63,39 @@ public class WorkflowConfigDialogs {
         };
     }
 
+    static double parseFiniteDecimal(String text, String fieldName, double minimum, double maximum) {
+        String normalized = text == null ? "" : text.trim().replace(',', '.');
+        final double value;
+        try {
+            value = Double.parseDouble(normalized);
+        } catch (NumberFormatException e) {
+            throw new IllegalArgumentException(fieldName + " muss eine gültige Zahl sein.");
+        }
+        if (!Double.isFinite(value)) {
+            throw new IllegalArgumentException(fieldName + " muss eine endliche Zahl sein.");
+        }
+        if (value < minimum) {
+            throw new IllegalArgumentException(fieldName + " muss mindestens " + minimum + " sein.");
+        }
+        if (value > maximum) {
+            throw new IllegalArgumentException(fieldName + " darf höchstens " + maximum + " sein.");
+        }
+        return value;
+    }
+
+    static int parsePositiveInteger(String text, String fieldName) {
+        final int value;
+        try {
+            value = Integer.parseInt(text == null ? "" : text.trim());
+        } catch (NumberFormatException e) {
+            throw new IllegalArgumentException(fieldName + " muss eine ganze Zahl sein.");
+        }
+        if (value < 1) {
+            throw new IllegalArgumentException(fieldName + " muss mindestens 1 sein.");
+        }
+        return value;
+    }
+
     // ─── Step 1: Strategy Selector & Ranges ─────────────────────────────────────
 
     public static void showStep1Dialog(WorkflowEngine engine, Window owner, Runnable onSave) {
@@ -1175,36 +1208,44 @@ public class WorkflowConfigDialogs {
         TextField minFwTradesField = new TextField(String.valueOf(engine.getMinFwTrades()));
         grid.add(minFwTradesField, 3, 1);
 
-        grid.add(new Label("Max. Backtest DD %:"), 0, 2);
-        TextField maxBtDdField = new TextField(String.valueOf(engine.getMaxBtDd()));
-        grid.add(maxBtDdField, 1, 2);
+        grid.add(new Label("Min. Backtest Recovery:"), 0, 2);
+        TextField minBtRecoveryField = new TextField(String.valueOf(engine.getMinBtRecovery()));
+        grid.add(minBtRecoveryField, 1, 2);
 
-        grid.add(new Label("Max. Forward DD %:"), 2, 2);
+        grid.add(new Label("Min. Forward Recovery:"), 2, 2);
+        TextField minFwRecoveryField = new TextField(String.valueOf(engine.getMinFwRecovery()));
+        grid.add(minFwRecoveryField, 3, 2);
+
+        grid.add(new Label("Max. Backtest DD %:"), 0, 3);
+        TextField maxBtDdField = new TextField(String.valueOf(engine.getMaxBtDd()));
+        grid.add(maxBtDdField, 1, 3);
+
+        grid.add(new Label("Max. Forward DD %:"), 2, 3);
         TextField maxFwDdField = new TextField(String.valueOf(engine.getMaxFwDd()));
-        grid.add(maxFwDdField, 3, 2);
+        grid.add(maxFwDdField, 3, 3);
 
         // Diversity delta thresholds
-        grid.add(new Label("Param Differenz %:"), 0, 4);
+        grid.add(new Label("Param Differenz %:"), 0, 5);
         TextField paramDiffField = new TextField(String.format(Locale.US, "%.0f", engine.getParamDiffPct() * 100));
-        grid.add(paramDiffField, 1, 4);
+        grid.add(paramDiffField, 1, 5);
 
-        grid.add(new Label("Trades Differenz %:"), 2, 4);
+        grid.add(new Label("Trades Differenz %:"), 2, 5);
         TextField tradeDiffField = new TextField(String.format(Locale.US, "%.0f", engine.getTradeDiffPct() * 100));
-        grid.add(tradeDiffField, 3, 4);
+        grid.add(tradeDiffField, 3, 5);
 
-        grid.add(new Label("Min. differente Params:"), 0, 5);
+        grid.add(new Label("Min. differente Params:"), 0, 6);
         Spinner<Integer> minDiffParamsSpin = new Spinner<>(1, 10, engine.getMinDifferentParams(), 1);
-        grid.add(minDiffParamsSpin, 1, 5);
+        grid.add(minDiffParamsSpin, 1, 6);
 
-        grid.add(new Label("Max. Strategien (Ziel):"), 2, 5);
+        grid.add(new Label("Max. Strategien (Ziel):"), 2, 6);
         Spinner<Integer> maxStratsSpin = new Spinner<>(1, 20, engine.getMaxStrategiesToSelect(), 1);
-        grid.add(maxStratsSpin, 3, 5);
+        grid.add(maxStratsSpin, 3, 6);
 
         // Set row stylings for separator
         Label sepLabel = new Label("DIVERSITÄTS-METRIKEN (ÄHNLICHKEITS-SCHWELLWERTE)");
         sepLabel.setFont(Font.font("Segoe UI", FontWeight.BOLD, 12));
         sepLabel.setTextFill(Color.web("#ffd740"));
-        grid.add(sepLabel, 0, 3, 4, 1);
+        grid.add(sepLabel, 0, 4, 4, 1);
 
         layout.getChildren().add(grid);
 
@@ -1222,7 +1263,7 @@ public class WorkflowConfigDialogs {
             
             TableColumn<CombinedPass, Double> scoreCol = new TableColumn<>();
             scoreCol.setGraphic(DocHelper.createHeaderWithTooltip("Score", 
-                "Unified Score (0-100):\nGewichteter Gesamtwert aus 10 Kriterien (Profit, DD, PF etc.). Konfigurierbar über das Regler-Symbol. Zeigt die beste Gesamtperformance."));
+                "Unified Score (0-100):\nGewichteter Gesamtwert aus 8 Säulen. Standardmäßig zählen viele Trades am stärksten, danach Recovery und positiver Profit. Konfigurierbar über 'Score-Gewichtung'."));
             scoreCol.setCellValueFactory(c -> new javafx.beans.property.SimpleObjectProperty<>(c.getValue().getScore()));
             scoreCol.setPrefWidth(75);
             scoreCol.setStyle("-fx-alignment: CENTER;");
@@ -1330,14 +1371,47 @@ public class WorkflowConfigDialogs {
         Button save = new Button("Speichern");
         save.getStyleClass().add("button-start");
         save.setOnAction(e -> {
-            try { engine.setMinBtProfit(Double.parseDouble(minBtProfitField.getText().trim())); } catch (Exception ignored) {}
-            try { engine.setMinFwProfit(Double.parseDouble(minFwProfitField.getText().trim())); } catch (Exception ignored) {}
-            try { engine.setMinBtTrades(Integer.parseInt(minBtTradesField.getText().trim())); } catch (Exception ignored) {}
-            try { engine.setMinFwTrades(Integer.parseInt(minFwTradesField.getText().trim())); } catch (Exception ignored) {}
-            try { engine.setMaxBtDd(Double.parseDouble(maxBtDdField.getText().trim())); } catch (Exception ignored) {}
-            try { engine.setMaxFwDd(Double.parseDouble(maxFwDdField.getText().trim())); } catch (Exception ignored) {}
-            try { engine.setParamDiffPct(Double.parseDouble(paramDiffField.getText().trim()) / 100.0); } catch (Exception ignored) {}
-            try { engine.setTradeDiffPct(Double.parseDouble(tradeDiffField.getText().trim()) / 100.0); } catch (Exception ignored) {}
+            final double minBtProfit;
+            final double minFwProfit;
+            final int minBtTrades;
+            final int minFwTrades;
+            final double minBtRecovery;
+            final double minFwRecovery;
+            final double maxBtDd;
+            final double maxFwDd;
+            final double paramDiffPct;
+            final double tradeDiffPct;
+            try {
+                minBtProfit = parseFiniteDecimal(minBtProfitField.getText(), "Min. Backtest Profit", 0.0, Double.MAX_VALUE);
+                minFwProfit = parseFiniteDecimal(minFwProfitField.getText(), "Min. Forward Profit", 0.0, Double.MAX_VALUE);
+                minBtTrades = parsePositiveInteger(minBtTradesField.getText(), "Min. Backtest Trades");
+                minFwTrades = parsePositiveInteger(minFwTradesField.getText(), "Min. Forward Trades");
+                minBtRecovery = parseFiniteDecimal(minBtRecoveryField.getText(), "Min. Backtest Recovery", 0.0, Double.MAX_VALUE);
+                minFwRecovery = parseFiniteDecimal(minFwRecoveryField.getText(), "Min. Forward Recovery", 0.0, Double.MAX_VALUE);
+                maxBtDd = parseFiniteDecimal(maxBtDdField.getText(), "Max. Backtest DD", 0.0, 100.0);
+                maxFwDd = parseFiniteDecimal(maxFwDdField.getText(), "Max. Forward DD", 0.0, 100.0);
+                paramDiffPct = parseFiniteDecimal(paramDiffField.getText(), "Parameter-Differenz", 0.0, 100.0) / 100.0;
+                tradeDiffPct = parseFiniteDecimal(tradeDiffField.getText(), "Trade-Differenz", 0.0, 100.0) / 100.0;
+            } catch (IllegalArgumentException ex) {
+                Alert alert = new Alert(Alert.AlertType.ERROR);
+                alert.initOwner(stage);
+                alert.setTitle("Ungültige Filtereinstellung");
+                alert.setHeaderText("Die Filterwerte konnten nicht gespeichert werden.");
+                alert.setContentText(ex.getMessage());
+                alert.showAndWait();
+                return;
+            }
+
+            engine.setMinBtProfit(minBtProfit);
+            engine.setMinFwProfit(minFwProfit);
+            engine.setMinBtTrades(minBtTrades);
+            engine.setMinFwTrades(minFwTrades);
+            engine.setMinBtRecovery(minBtRecovery);
+            engine.setMinFwRecovery(minFwRecovery);
+            engine.setMaxBtDd(maxBtDd);
+            engine.setMaxFwDd(maxFwDd);
+            engine.setParamDiffPct(paramDiffPct);
+            engine.setTradeDiffPct(tradeDiffPct);
             engine.setMinDifferentParams(minDiffParamsSpin.getValue());
             engine.setMaxStrategiesToSelect(maxStratsSpin.getValue());
             engine.saveState();
@@ -1468,7 +1542,7 @@ public class WorkflowConfigDialogs {
             });
 
             grid.add(label, 0, i);
-            if (i == 9) {
+            if (i == 7) {
                 HBox scaleBox = new HBox(6);
                 scaleBox.setAlignment(Pos.CENTER_LEFT);
                 scaleBox.setPadding(new Insets(4, 0, 0, 0));
@@ -1597,7 +1671,7 @@ public class WorkflowConfigDialogs {
         Button btnPresetGrid = new Button("Grid / High-Trade");
         btnPresetGrid.setStyle("-fx-background-color: #2a2d3a; -fx-text-fill: #38bdf8; -fx-border-color: #0284c7; -fx-border-width: 1; -fx-cursor: hand;");
         btnPresetGrid.setOnAction(e -> {
-            int[] gridWeights = {5, 5, 15, 5, 5, 35, 35, 40};
+            int[] gridWeights = {7, 7, 6, 3, 3, 23, 30, 21};
             for (int i = 0; i < N; i++) sliders[i].setValue(gridWeights[i]);
         });
 
@@ -1932,7 +2006,10 @@ public class WorkflowConfigDialogs {
             "rein zufällig gut aus. Erst ein Backtest auf einem Zeitfenster, das KEIN Schritt je " +
             "gesehen hat, liefert eine ehrliche Out-of-Sample-Schätzung.\n\n" +
             "Standard: Das Fenster beginnt einen Tag nach dem Optimierungs-Enddatum und endet heute. " +
-            "Es darf sich nicht mit dem Optimierungszeitraum überlappen."
+            "Es darf sich nicht mit dem Optimierungszeitraum überlappen. Bestanden ist die Validierung " +
+            "nur bei positivem Profit, mindestens " +
+            com.backtester.report.ValidationResult.MIN_VALIDATION_TRADES + " Trades und einem Recovery Factor von mindestens " +
+            String.format(Locale.US, "%.1f", com.backtester.report.ValidationResult.MIN_RECOVERY_FACTOR) + "."
         );
         info.setWrapText(true);
         info.setStyle("-fx-text-fill: #b4bac8; -fx-font-size: 12px;");
@@ -1990,8 +2067,9 @@ public class WorkflowConfigDialogs {
             resultsBox.getChildren().add(resTitle);
             for (com.backtester.report.ValidationResult vr : engine.getValidationResults()) {
                 Label line = new Label(vr.toSummaryLine());
+                boolean insufficient = com.backtester.report.ValidationResult.INSUFFICIENT_EVIDENCE.equals(vr.getVerdict());
                 line.setStyle("-fx-font-size: 11px; -fx-text-fill: " +
-                        (vr.isPassed() ? "#00e676" : "#ff5252") + ";");
+                        (vr.isPassed() ? "#00e676" : (insufficient ? "#ffd740" : "#ff5252")) + ";");
                 resultsBox.getChildren().add(line);
             }
         }
