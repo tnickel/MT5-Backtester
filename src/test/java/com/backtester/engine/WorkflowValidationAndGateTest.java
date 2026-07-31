@@ -236,6 +236,7 @@ public class WorkflowValidationAndGateTest {
 
         vr.setTrades(50);
         vr.setProfit(120.0);
+        vr.setRecoveryFactor(1.5);
         vr.computeVerdict();
         assertEquals(ValidationResult.PASSED, vr.getVerdict());
         assertTrue(vr.isPassed());
@@ -247,6 +248,25 @@ public class WorkflowValidationAndGateTest {
     }
 
     @Test
+    public void testSelectionThresholdSettersNormalizeInvalidValues() {
+        WorkflowEngine engine = new WorkflowEngine(null);
+
+        engine.setMinBtTrades(-10);
+        engine.setMinFwTrades(0);
+        engine.setMinBtProfit(Double.NaN);
+        engine.setMinFwProfit(Double.NEGATIVE_INFINITY);
+        engine.setMinBtRecovery(Double.NaN);
+        engine.setMinFwRecovery(-2.0);
+
+        assertEquals(1, engine.getMinBtTrades());
+        assertEquals(1, engine.getMinFwTrades());
+        assertEquals(0.01, engine.getMinBtProfit(), 0.0);
+        assertEquals(0.01, engine.getMinFwProfit(), 0.0);
+        assertEquals(0.0, engine.getMinBtRecovery(), 0.0);
+        assertEquals(0.0, engine.getMinFwRecovery(), 0.0);
+    }
+
+    @Test
     public void testValidationResultsPersistedInWorkflowState() {
         WorkflowEngine engine1 = new WorkflowEngine(null);
         engine1.setExpert("PersistEA");
@@ -254,6 +274,7 @@ public class WorkflowValidationAndGateTest {
         ValidationResult vr = new ValidationResult(7);
         vr.setProfit(250.0);
         vr.setTrades(40);
+        vr.setRecoveryFactor(1.5);
         vr.computeVerdict();
         vr.setValidationFrom("2026-04-08");
         vr.setValidationTo("2026-07-08");
@@ -271,6 +292,23 @@ public class WorkflowValidationAndGateTest {
     }
 
     @Test
+    public void testLegacyPassedValidationIsReevaluatedWhenLoaded() {
+        WorkflowEngine engine1 = new WorkflowEngine(null);
+        ValidationResult legacy = new ValidationResult(8);
+        legacy.setProfit(100.0);
+        legacy.setTrades(3);
+        legacy.setRecoveryFactor(2.0);
+        legacy.setVerdict(ValidationResult.PASSED);
+        engine1.setValidationResults(java.util.Collections.singletonList(legacy));
+        engine1.saveState();
+
+        WorkflowEngine engine2 = new WorkflowEngine(null);
+        ValidationResult loaded = engine2.getValidationResults().get(0);
+        assertEquals(ValidationResult.INSUFFICIENT_EVIDENCE, loaded.getVerdict());
+        assertFalse(loaded.isPassed());
+    }
+
+    @Test
     public void testBestExportAllowedOnlyForPassedOrPendingValidation() throws Exception {
         WorkflowEngine engine = new WorkflowEngine(null);
 
@@ -285,18 +323,22 @@ public class WorkflowValidationAndGateTest {
         error.setVerdict(ValidationResult.ERROR);
         ValidationResult noTrades = new ValidationResult(4);
         noTrades.setVerdict(ValidationResult.NO_TRADES);
+        ValidationResult insufficient = new ValidationResult(5);
+        insufficient.setVerdict(ValidationResult.INSUFFICIENT_EVIDENCE);
 
         List<ValidationResult> results = new ArrayList<>();
         results.add(passed);
         results.add(failed);
         results.add(error);
         results.add(noTrades);
+        results.add(insufficient);
         engine.setValidationResults(results);
 
         assertTrue("PASSED darf in den Best-Ordner", canExportToBest(engine, 1));
         assertFalse("FAILED darf nicht in den Best-Ordner", canExportToBest(engine, 2));
         assertFalse("ERROR darf nicht in den Best-Ordner", canExportToBest(engine, 3));
         assertFalse("NO_TRADES darf nicht in den Best-Ordner", canExportToBest(engine, 4));
+        assertFalse("INSUFFICIENT_EVIDENCE darf nicht in den Best-Ordner", canExportToBest(engine, 5));
         assertFalse("Fehlendes Ergebnis darf bei vorhandener Validierung nicht als bestanden gelten",
                 canExportToBest(engine, 99));
     }
@@ -310,6 +352,7 @@ public class WorkflowValidationAndGateTest {
         ValidationResult vr = new ValidationResult(7);
         vr.setProfit(250.0);
         vr.setTrades(40);
+        vr.setRecoveryFactor(1.5);
         vr.computeVerdict();
         vr.setValidationFrom("2026-04-08");
         vr.setValidationTo("2026-07-08");
@@ -412,18 +455,29 @@ public class WorkflowValidationAndGateTest {
     }
 
     @Test
-    public void testValidationVerdictWeakEvidenceMessage() {
+    public void testValidationVerdictRequiresEnoughTradesAndRecovery() {
         ValidationResult vr = new ValidationResult(1);
         vr.setTrades(3);
         vr.setProfit(50.0);
+        vr.setRecoveryFactor(2.0);
         vr.computeVerdict();
-        assertEquals(ValidationResult.PASSED, vr.getVerdict());
-        assertTrue("Wenige Trades müssen als schwache Evidenz markiert werden",
-                vr.getMessage().contains("schwache Evidenz"));
+        assertEquals(ValidationResult.INSUFFICIENT_EVIDENCE, vr.getVerdict());
+        assertFalse(vr.isPassed());
+        assertTrue("Wenige Trades müssen als unzureichende Evidenz markiert werden",
+                vr.getMessage().contains("unzureichende Evidenz"));
 
-        ValidationResult solid = new ValidationResult(2);
+        ValidationResult weakRecovery = new ValidationResult(2);
+        weakRecovery.setTrades(50);
+        weakRecovery.setProfit(50.0);
+        weakRecovery.setRecoveryFactor(0.8);
+        weakRecovery.computeVerdict();
+        assertEquals(ValidationResult.FAILED, weakRecovery.getVerdict());
+        assertTrue(weakRecovery.getMessage().contains("Recovery Factor"));
+
+        ValidationResult solid = new ValidationResult(3);
         solid.setTrades(50);
         solid.setProfit(50.0);
+        solid.setRecoveryFactor(1.2);
         solid.computeVerdict();
         assertEquals(ValidationResult.PASSED, solid.getVerdict());
         assertTrue(solid.getMessage() == null || solid.getMessage().isEmpty());

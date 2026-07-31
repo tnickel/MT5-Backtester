@@ -1377,7 +1377,7 @@ public class WorkflowView {
             String color = passed == totalV ? "#00e676" : (passed == 0 ? "#ff5252" : "#ffd740");
             setStepBoxState(step7Box, step7Status, step7Details,
                     passed == totalV ? "BESTANDEN" : (passed == 0 ? "DURCHGEFALLEN" : "TEILWEISE"),
-                    passed + " / " + totalV + " Strategien auf unberührten Daten profitabel", color, selectedStep == 7);
+                    passed + " / " + totalV + " Strategien erfüllen Profit-, Trade- und Recovery-Kriterien", color, selectedStep == 7);
         }
         updateStatsTab();
     }
@@ -1583,7 +1583,7 @@ public class WorkflowView {
                                     "Schritt 7 konnte nicht ausgeführt werden und wird für dieses Symbol übersprungen: "
                                             + validationEx.getMessage());
                             log.warn("Step 7 validation skipped for symbol {}: {}", symPrefix, validationEx.getMessage(), validationEx);
-                            Platform.runLater(this::updateVisualStates);
+                            Platform.runLater(() -> updateVisualStates());
                         }
                     } else {
                         logToConsole("WORKFLOW", "[" + currentSym + "] Schritt 7 übersprungen: Kein unberührtes Validierungsfenster (min. 14 Tage nach Optimierungsende). " +

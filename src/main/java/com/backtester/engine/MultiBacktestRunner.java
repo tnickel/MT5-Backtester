@@ -49,7 +49,7 @@ public class MultiBacktestRunner extends SwingWorker<List<BacktestResult>, Strin
         logMessage("Starting batch run of " + total + " backtests...");
 
         for (int i = 0; i < total; i++) {
-            if (isCancelled() || cancelled) {
+            if (isCancelled() || cancelled || Thread.currentThread().isInterrupted()) {
                 logMessage("Batch run was cancelled. Stopping.");
                 break;
             }

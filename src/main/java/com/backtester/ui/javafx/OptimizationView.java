@@ -45,7 +45,7 @@ public class OptimizationView {
     private final EaParameterManager eaParamManager = new EaParameterManager();
     private OptimizationRunner currentRunner;
     private Task<Void> currentTask;
-    
+
     // UI controls
     private TextField expertField;
     private ComboBox<String> symbolCombo;
@@ -138,15 +138,15 @@ public class OptimizationView {
     private double filterMinBtProfit = 0.01;
     private double filterMinFwProfit = 0.01;
     private int filterMinBtTrades = 100;
-    private int filterMinFwTrades = 15;
+    private int filterMinFwTrades = 50;
     private double filterMaxBtDd = 100.0;
     private double filterMaxFwDd = 100.0;
     private double filterMinBtPayoff = 0.0;
     private double filterMinFwPayoff = 0.0;
     private double filterMinBtSharpe = 0.0;
     private double filterMinFwSharpe = 0.0;
-    private double filterMinBtRecovery = 0.0;
-    private double filterMinFwRecovery = 0.0;
+    private double filterMinBtRecovery = 1.0;
+    private double filterMinFwRecovery = 1.0;
     private double filterMinScore = 0.0;
     private double filterMinConsistency = 0.0;
 
@@ -187,15 +187,15 @@ public class OptimizationView {
         mainLayout.setOrientation(javafx.geometry.Orientation.VERTICAL);
         mainLayout.setDividerPositions(0.45);
         mainLayout.setStyle("-fx-background-color: transparent; -fx-padding: 0;");
-        
+
         // Remove borders from the SplitPane dividers
         mainLayout.getStyleClass().add("transparent-split-pane");
 
         root.setCenter(mainLayout);
-        
+
         loadPreferences();
         expertField.textProperty().addListener((obs, oldVal, newVal) -> loadParameters());
-        
+
         symbolCombo.valueProperty().addListener((obs, oldVal, newVal) -> loadParameters());
         periodCombo.valueProperty().addListener((obs, oldVal, newVal) -> loadParameters());
 
@@ -208,10 +208,10 @@ public class OptimizationView {
         grid.getStyleClass().add("sci-fi-panel");
         grid.setHgap(10);
         grid.setVgap(10);
-        
+
         Label title = new Label("Optimization Settings");
         title.getStyleClass().add("sci-fi-panel-title");
-        
+
         String overview = "Der Optimizer-Tab ist das mächtigste analytische Instrument innerhalb der Suite, birgt aber gleichzeitig das größte Risiko für strategische Fehler. Sein Zweck ist es, durch maschinelles Ausprobieren abertausender Kombinationen die perfekten Eingabeparameter (z.B. Stop-Loss Abstände, Indikator-Perioden, Take-Profit Level) für deinen Expert Advisor zu finden.\n\n" +
                           "Warum ist Optimierung so wichtig, aber auch gefährlich? Eine Strategie kann oft von kleinen Parameter-Anpassungen massiv profitieren, da sich Märkte verändern. Die Gefahr liegt im 'Curve-Fitting' (Überanpassung). Wenn du den Optimizer zwingst, den absoluten Maximalprofit der Vergangenheit zu finden, wird er eine Parameterkombination ausspucken, die perfekt auf historische Marktrauschen zugeschnitten ist, aber im zukünftigen Live-Handel sofort versagt.\n\n" +
                           "Daher bietet dieser Tab nicht nur simple Optimierungs-Listen, sondern hochentwickelte Werkzeuge wie Forward-Testing (Out-of-Sample Validierung), Sensitivitätsanalysen und sogar KI-gestützte Auswertungen, um echte, robuste Parameter zu identifizieren, die den Test der Zeit überstehen.";
@@ -234,7 +234,7 @@ public class OptimizationView {
                          "   - Combined Analysis: Setzt In-Sample und Forward-Ergebnisse ins Verhältnis.\n" +
                          "   - Sensitivity Analysis: Eine komplexe mathematische Prüfung. Wie stark bricht der Profit ein, wenn der Take-Profit Parameter nicht exakt 50, sondern 49 oder 51 ist? Wenn kleine Abweichungen zum Totalverlust führen, ist die Strategie instabil.\n" +
                          "   - KI Analysis: Sendet die Sensitivitätsdaten an ein Large Language Model (z.B. OpenAI/Gemini), welches dir als virtueller Data-Scientist eine menschlich lesbare Warnung oder Empfehlung zur Robustheit der Parameterlandschaft gibt.";
-                         
+
         javafx.scene.layout.Region infoSpacer = new javafx.scene.layout.Region();
         javafx.scene.layout.HBox.setHgrow(infoSpacer, javafx.scene.layout.Priority.ALWAYS);
         javafx.scene.layout.HBox titleBox = new javafx.scene.layout.HBox(15, title, infoSpacer, DocHelper.createInfoButton("Optimizer", overview, details));
@@ -253,7 +253,7 @@ public class OptimizationView {
         symbolCombo = new ComboBox<>(FXCollections.observableArrayList(com.backtester.engine.BacktestConfig.SYMBOLS));
         symbolCombo.getStyleClass().add("combo-box");
         grid.add(symbolCombo, 1, 2, 2, 1);
-        
+
         grid.add(new Label("Period:"), 0, 3);
         periodCombo = new ComboBox<>(FXCollections.observableArrayList(
             "M1", "M5", "M15", "M30", "H1", "H4", "D1"));
@@ -267,7 +267,7 @@ public class OptimizationView {
         toDatePicker = new DatePicker();
         fromDatePicker.setPrefWidth(130);
         toDatePicker.setPrefWidth(130);
-        
+
         javafx.util.StringConverter<java.time.LocalDate> converter = new javafx.util.StringConverter<java.time.LocalDate>() {
             java.time.format.DateTimeFormatter dateFormatter = java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd");
             @Override
@@ -283,14 +283,14 @@ public class OptimizationView {
         toDatePicker.setConverter(converter);
         fromDatePicker.valueProperty().addListener((obs, oldVal, newVal) -> updateDateRangeMonthsLabel());
         toDatePicker.valueProperty().addListener((obs, oldVal, newVal) -> updateDateRangeMonthsLabel());
-        
+
         dateRangeMonthsLabel = new Label();
         dateRangeMonthsLabel.setStyle("-fx-text-fill: #00e5ff; -fx-font-size: 11px;");
         dateRow.getChildren().addAll(fromDatePicker, new Label(" - "), toDatePicker);
         VBox dateBox = new VBox(3, dateRow, dateRangeMonthsLabel);
         dateRangeMonthsLabel.setTranslateX(2);
         grid.add(dateBox, 1, 4, 2, 1);
-        
+
         grid.add(new Label("Deposit:"), 0, 5);
         HBox depBox = new HBox(5);
         depositField = new TextField("10000");
@@ -301,7 +301,7 @@ public class OptimizationView {
         currencyField.setPrefWidth(60);
         depBox.getChildren().addAll(depositField, currencyField);
         grid.add(depBox, 1, 5, 2, 1);
-        
+
         grid.add(new Label("Leverage:"), 0, 6);
         leverageField = new TextField("1:100");
         leverageField.getStyleClass().add("text-input");
@@ -316,17 +316,17 @@ public class OptimizationView {
         modeCombo = new ComboBox<>(FXCollections.observableArrayList(OptimizationConfig.OPTIMIZATION_MODES));
         modeCombo.getStyleClass().add("combo-box");
         grid.add(modeCombo, 1, 8, 2, 1);
-        
+
         grid.add(new Label("Opt. Criterion:"), 0, 9);
         optimizationCriterionCombo = new ComboBox<>(FXCollections.observableArrayList(OptimizationConfig.OPTIMIZATION_CRITERIA));
         optimizationCriterionCombo.getStyleClass().add("combo-box");
         grid.add(optimizationCriterionCombo, 1, 9, 2, 1);
-        
+
         grid.add(new Label("Forward Test:"), 0, 10);
         forwardModeCombo = new ComboBox<>(FXCollections.observableArrayList(OptimizationConfig.FORWARD_MODES));
         forwardModeCombo.getStyleClass().add("combo-box");
         grid.add(forwardModeCombo, 1, 10, 2, 1);
-        
+
         grid.add(new Label("Forward Date:"), 0, 11);
         forwardDatePicker = new DatePicker();
         forwardDatePicker.setPrefWidth(150);
@@ -343,10 +343,10 @@ public class OptimizationView {
     private VBox createParamBox() {
         VBox box = new VBox(10);
         box.getStyleClass().add("sci-fi-panel");
-        
+
         Label title = new Label("EA Parameters & Optimization Ranges");
         title.getStyleClass().add("sci-fi-panel-title");
-        
+
         paramTable = new TableView<>();
         paramTable.setStyle("-fx-background-color: transparent;");
         paramTable.setEditable(true);
@@ -365,7 +365,7 @@ public class OptimizationView {
                 }
             }
         });
-        
+
         TableColumn<EaParameter, Boolean> optCol = new TableColumn<>("Opt");
         optCol.setCellValueFactory(cellData -> {
             com.backtester.config.EaParameter param = cellData.getValue();
@@ -379,7 +379,7 @@ public class OptimizationView {
         });
         optCol.setCellFactory(javafx.scene.control.cell.CheckBoxTableCell.forTableColumn(optCol));
         optCol.setPrefWidth(40);
-        
+
         TableColumn<EaParameter, String> nameCol = new TableColumn<>("Variable");
         nameCol.setCellValueFactory(cellData -> {
             EaParameter param = cellData.getValue();
@@ -410,60 +410,81 @@ public class OptimizationView {
             }
         });
         nameCol.setPrefWidth(200);
-        
+
         TableColumn<EaParameter, String> valCol = new TableColumn<>("Value");
         valCol.setCellValueFactory(new PropertyValueFactory<>("value"));
         valCol.setCellFactory(EnumAwareParamCell.forTableColumn());
         valCol.setOnEditCommit(e -> e.getRowValue().setValue(e.getNewValue()));
         valCol.setPrefWidth(100);
-        
+
         TableColumn<EaParameter, String> startCol = new TableColumn<>("Start");
         startCol.setCellValueFactory(new PropertyValueFactory<>("optimizeStart"));
         startCol.setCellFactory(EnumAwareParamCell.forTableColumn());
         startCol.setOnEditCommit(e -> e.getRowValue().setOptimizeStart(e.getNewValue()));
-        
+
         TableColumn<EaParameter, String> stepCol = new TableColumn<>("Step");
         stepCol.setCellValueFactory(new PropertyValueFactory<>("optimizeStep"));
         stepCol.setCellFactory(EnumAwareParamCell.forTableColumn());
         stepCol.setOnEditCommit(e -> e.getRowValue().setOptimizeStep(e.getNewValue()));
-        
+
         TableColumn<EaParameter, String> stopCol = new TableColumn<>("Stop");
         stopCol.setCellValueFactory(new PropertyValueFactory<>("optimizeEnd"));
         stopCol.setCellFactory(EnumAwareParamCell.forTableColumn());
         stopCol.setOnEditCommit(e -> e.getRowValue().setOptimizeEnd(e.getNewValue()));
-        
+
         paramTable.getColumns().addAll(optCol, nameCol, valCol, startCol, stepCol, stopCol);
-        
+
         Label placeholder = new Label("No parameters loaded.\nLoad an Expert Advisor or a .set file.");
         placeholder.setStyle("-fx-text-fill: #7e889a;");
         paramTable.setPlaceholder(placeholder);
-        
+
         VBox.setVgrow(paramTable, Priority.ALWAYS);
 
         HBox btnBox = new HBox(10);
         btnBox.setAlignment(Pos.CENTER_RIGHT);
         Button genConfigBtn = new Button("Gen Config");
         genConfigBtn.setOnAction(e -> generateDefaultConfig());
-        
+
         Button autoConfigBtn = new Button("AutoConfig");
         autoConfigBtn.setOnAction(e -> autoConfigParameters());
-        
+
+        Button refreshBtn = new Button("🔄 Refresh");
+        refreshBtn.setTooltip(new javafx.scene.control.Tooltip("Clear DB cache and reload parameters directly from disk defaults"));
+        refreshBtn.setOnAction(e -> resetDefaults());
+
         Button loadBtn = new Button("Load .set");
         loadBtn.setOnAction(e -> loadFromFile());
-        
+
         Button saveBtn = new Button("Save .set");
         saveBtn.setOnAction(e -> saveToFile());
-        
-        btnBox.getChildren().addAll(genConfigBtn, autoConfigBtn, loadBtn, saveBtn);
+
+        btnBox.getChildren().addAll(genConfigBtn, autoConfigBtn, refreshBtn, loadBtn, saveBtn);
 
         box.getChildren().addAll(title, paramTable, btnBox);
         return box;
     }
 
+    private void resetDefaults() {
+        String expert = expertField.getText().trim();
+        if (expert.isEmpty()) {
+            logView.log("WARN", "Please select an Expert Advisor first.");
+            return;
+        }
+        com.backtester.database.DatabaseManager.getInstance().deleteEaParameterSettings(expert);
+        java.util.List<com.backtester.config.EaParameter> params = eaParamManager.getEffectiveParameters(expert);
+        if (params != null) {
+            paramTable.getItems().setAll(params);
+            logView.log("INFO", "Reset and reloaded " + params.size() + " parameters from disk defaults for " + EaParameterManager.extractEaBaseName(expert));
+        } else {
+            paramTable.getItems().clear();
+            logView.log("WARN", "No default parameters found for " + EaParameterManager.extractEaBaseName(expert));
+        }
+    }
+
     private VBox createResultsBox() {
         VBox box = new VBox(10);
         box.getStyleClass().add("sci-fi-panel");
-        
+
         Label title = new Label("Optimization Results");
         title.getStyleClass().add("sci-fi-panel-title");
 
@@ -480,14 +501,14 @@ public class OptimizationView {
 
         this.resultTabs = new TabPane();
         resultTabs.getStyleClass().add("tab-pane");
-        
+
         resultTable = createResultTable();
         forwardTable = createResultTable();
-        
+
         Tab mainTab = new Tab("Main Optimization", resultTable);
         mainTab.getStyleClass().add("tab");
         mainTab.setClosable(false);
-        
+
         Tab forwardTab = new Tab("Forward Results", forwardTable);
         forwardTab.getStyleClass().add("tab");
         forwardTab.setClosable(false);
@@ -495,19 +516,19 @@ public class OptimizationView {
         Tab combinedTab = new Tab("🏆 Combined Analysis", createCombinedPane());
         combinedTab.getStyleClass().add("tab");
         combinedTab.setClosable(false);
-        
+
         selectedTab = new Tab("⭐ Selected", createSelectedPane());
         selectedTab.getStyleClass().add("tab");
         selectedTab.setClosable(false);
-        
+
         Tab sensitivityTab = new Tab("⚖ Sensitivity Analysis", createSensitivityPane());
         sensitivityTab.getStyleClass().add("tab");
         sensitivityTab.setClosable(false);
-        
+
         kiAnalysisTab = new Tab("🤖 KI Analysis", createKiAnalysisPane());
         kiAnalysisTab.getStyleClass().add("tab");
         kiAnalysisTab.setClosable(false);
-        
+
         resultTabs.getTabs().addAll(mainTab, forwardTab, combinedTab, selectedTab, sensitivityTab, kiAnalysisTab);
         bindTabCounter(mainTab, "Main Optimization", resultTable);
         bindTabCounter(forwardTab, "Forward Results", forwardTable);
@@ -519,7 +540,7 @@ public class OptimizationView {
 
         HBox controlBox = new HBox(15);
         controlBox.setAlignment(Pos.CENTER_LEFT);
-        
+
         startBtn = new Button("▶ Start Optimization");
         startBtn.getStyleClass().addAll("button", "button-start");
         startBtn.setOnAction(e -> startOptimization(true));
@@ -528,7 +549,7 @@ public class OptimizationView {
         startKeepOpenBtn.getStyleClass().addAll("button", "button-start");
         startKeepOpenBtn.setStyle("-fx-background-color: linear-gradient(to bottom, #116b91, #0a4d6b); -fx-border-color: #1a8fbd;");
         startKeepOpenBtn.setOnAction(e -> startOptimization(false));
-        
+
         cancelBtn = new Button("⬛ Cancel");
         cancelBtn.getStyleClass().addAll("button", "button-cancel");
         cancelBtn.setDisable(true);
@@ -584,7 +605,7 @@ public class OptimizationView {
         Button clearAllTablesBtn = new Button("🗑️ Tabelle löschen");
         clearAllTablesBtn.getStyleClass().addAll("button", "button-cancel");
         clearAllTablesBtn.setOnAction(e -> clearCurrentTab());
-        
+
         controlBox.getChildren().addAll(startBtn, startKeepOpenBtn, cancelBtn, startSenBtn, cancelSenBtn, llmAnalyzeBtn, llmSettingsBtn, progressBar, progressLabel, spacer, applyBtn, openXmlBtn, clearAllTablesBtn);
 
         resultTabs.getSelectionModel().selectedItemProperty().addListener((obs, oldTab, newTab) -> {
@@ -602,7 +623,7 @@ public class OptimizationView {
             openXmlBtn.setManaged(!hideMainButtons);
             clearAllTablesBtn.setVisible(true); // Always visible
             clearAllTablesBtn.setManaged(true);
-            
+
             startSenBtn.setVisible(isSensitivity);
             startSenBtn.setManaged(isSensitivity);
             cancelSenBtn.setVisible(isSensitivity);
@@ -632,7 +653,7 @@ public class OptimizationView {
     private void bindTabCounter(Tab tab, String baseTitle, TableView<?> table) {
         javafx.beans.value.ChangeListener<javafx.collections.ObservableList<?>> listChangeListener = new javafx.beans.value.ChangeListener<javafx.collections.ObservableList<?>>() {
             private javafx.collections.ListChangeListener<?> currentListener = null;
-            
+
             @Override
             public void changed(javafx.beans.value.ObservableValue<? extends javafx.collections.ObservableList<?>> obs, javafx.collections.ObservableList<?> oldList, javafx.collections.ObservableList<?> newList) {
                 if (oldList != null && currentListener != null) {
@@ -647,9 +668,9 @@ public class OptimizationView {
                 }
             }
         };
-        
+
         table.itemsProperty().addListener((javafx.beans.value.ChangeListener) listChangeListener);
-        
+
         // Trigger initially
         listChangeListener.changed((javafx.beans.value.ObservableValue) table.itemsProperty(), null, table.getItems());
     }
@@ -666,27 +687,27 @@ public class OptimizationView {
         javafx.stage.Stage loadingStage = new javafx.stage.Stage();
         loadingStage.initModality(javafx.stage.Modality.APPLICATION_MODAL);
         loadingStage.initStyle(javafx.stage.StageStyle.UNDECORATED);
-        
+
         VBox loadBox = new VBox(15);
         loadBox.setAlignment(Pos.CENTER);
         loadBox.setStyle("-fx-background-color: #1a1d27; -fx-padding: 30; -fx-border-color: #7c3aed; -fx-border-width: 2; -fx-border-radius: 8; -fx-background-radius: 8;");
-        
+
         javafx.scene.control.ProgressIndicator spinner = new javafx.scene.control.ProgressIndicator();
         spinner.setStyle("-fx-progress-color: #a78bfa;");
-        
+
         Label waitLabel = new Label("KI analysiert Strategien...");
         waitLabel.setFont(Font.font("Segoe UI", FontWeight.BOLD, 16));
         waitLabel.setTextFill(Color.web("#e2e8f0"));
-        
+
         Label subLabel = new Label("Bitte warten, das Modell verarbeitet die Daten.");
         subLabel.setTextFill(Color.web("#94a3b8"));
-        
+
         loadBox.getChildren().addAll(spinner, waitLabel, subLabel);
-        
+
         javafx.scene.Scene loadScene = new javafx.scene.Scene(loadBox);
         loadScene.setFill(Color.TRANSPARENT);
         loadingStage.setScene(loadScene);
-        
+
         if (root.getScene() != null) {
             loadingStage.initOwner(root.getScene().getWindow());
         }
@@ -710,7 +731,7 @@ public class OptimizationView {
                     performanceData.put(item.getOriginalPass().getPassNumber(),
                             new com.backtester.engine.LlmAnalysisService.PassPerformance(item.getOriginalPass()));
                 } catch (Exception ex) {
-                    log.warn("[KI] Failed to extract performance for pass {}: {}", 
+                    log.warn("[KI] Failed to extract performance for pass {}: {}",
                             item.getOriginalPass().getPassNumber(), ex.getMessage());
                 }
             }
@@ -728,12 +749,12 @@ public class OptimizationView {
                     // Save the report to DB so it persists across restarts
                     long ts = System.currentTimeMillis();
                     com.backtester.database.DatabaseManager.getInstance().saveKiReport(ts, exp, sym, per, response);
-                    
+
                     // Log response length
                     int charCount = response.length();
                     int estimatedTokens = charCount / 4; // rough estimate: ~4 chars per token
                     logView.log("INFO", String.format("KI-Antwort: %d Zeichen (~%d Tokens)", charCount, estimatedTokens));
-                    
+
                     // Parse LLM response using Regex to extract STABILITY_SCORE lines for the Sensitivity Table
                     try {
                         java.util.regex.Pattern pattern = java.util.regex.Pattern.compile("STABILITY_SCORE\\|(\\d+)\\|(\\d+)");
@@ -790,35 +811,35 @@ public class OptimizationView {
     private VBox createKiAnalysisPane() {
         VBox box = new VBox(10);
         box.setStyle("-fx-background-color: #0b0d13;");
-        
+
         kiReportsTable = new TableView<>();
         kiReportsTable.getStyleClass().add("table-view");
         VBox.setVgrow(kiReportsTable, Priority.ALWAYS);
-        
+
         javafx.scene.control.TableColumn<com.backtester.engine.KiReport, String> dateCol = new javafx.scene.control.TableColumn<>("Datum");
         dateCol.setCellValueFactory(data -> new javafx.beans.property.SimpleStringProperty(data.getValue().getCreatedAt()));
         dateCol.setPrefWidth(150);
-        
+
         javafx.scene.control.TableColumn<com.backtester.engine.KiReport, String> expertCol = new javafx.scene.control.TableColumn<>("Expert");
         expertCol.setCellValueFactory(data -> new javafx.beans.property.SimpleStringProperty(data.getValue().getExpertName()));
         expertCol.setPrefWidth(200);
-        
+
         javafx.scene.control.TableColumn<com.backtester.engine.KiReport, String> symbolCol = new javafx.scene.control.TableColumn<>("Symbol");
         symbolCol.setCellValueFactory(data -> new javafx.beans.property.SimpleStringProperty(data.getValue().getSymbol()));
         symbolCol.setPrefWidth(100);
-        
+
         javafx.scene.control.TableColumn<com.backtester.engine.KiReport, String> periodCol = new javafx.scene.control.TableColumn<>("Periode");
         periodCol.setCellValueFactory(data -> new javafx.beans.property.SimpleStringProperty(data.getValue().getPeriod()));
         periodCol.setPrefWidth(100);
-        
+
         kiReportsTable.getColumns().addAll(dateCol, expertCol, symbolCol, periodCol);
-        
+
         box.getChildren().add(kiReportsTable);
-        
+
         // Listener to open report in a new window when a row is clicked
         kiReportsTable.setOnMouseClicked(event -> {
             if (kiReportsTable.getSelectionModel().getSelectedItem() == null) return;
-            
+
             // Only perform action on double click to prevent popup from stealing focus on single click
             if (event.getClickCount() == 2) {
                 com.backtester.engine.KiReport selected = kiReportsTable.getSelectionModel().getSelectedItem();
@@ -827,12 +848,12 @@ public class OptimizationView {
                     java.util.regex.Pattern pattern = java.util.regex.Pattern.compile("STABILITY_SCORE\\|(\\d+)\\|(\\d+)");
                     java.util.regex.Matcher matcher = pattern.matcher(selected.getReportMarkdown());
                     int matchCount = 0;
-                    
+
                     // First clear old KI scores
                     for (com.backtester.report.SensitivityResult item : sensitivityTable.getItems()) {
                         item.setKiResult("");
                     }
-                    
+
                     while (matcher.find()) {
                         matchCount++;
                         try {
@@ -845,12 +866,12 @@ public class OptimizationView {
                             }
                         } catch (Exception e) {}
                     }
-                    
+
                     sensitivityTable.refresh();
                     if (combinedTable != null) combinedTable.refresh();
                     if (selectedTable != null) selectedTable.refresh();
                     logView.log("INFO", "Geparste KI-Werte aus Historie: " + matchCount + " Einträge gefunden.");
-                    
+
                     // Save state so it survives restart
                     saveStateToDb();
                 } catch (Exception parseEx) {
@@ -861,9 +882,9 @@ public class OptimizationView {
                 showKiReportWindow(selected);
             }
         });
-        
+
         refreshKiReportsTable();
-        
+
         return box;
     }
 
@@ -876,7 +897,7 @@ public class OptimizationView {
         javafx.stage.Stage stage = new javafx.stage.Stage();
         stage.setTitle("\uD83E\uDD16 KI Strategie-Analyse: " + report.getExpertName() + " | " + report.getSymbol());
         stage.initModality(javafx.stage.Modality.NONE);
-        
+
         // Convert Markdown to HTML using commonmark
         org.commonmark.parser.Parser parser = org.commonmark.parser.Parser.builder().extensions(java.util.Collections.singletonList(org.commonmark.ext.gfm.tables.TablesExtension.create())).build();
         org.commonmark.node.Node document = parser.parse(report.getReportMarkdown());
@@ -936,7 +957,7 @@ public class OptimizationView {
         javafx.scene.control.PasswordField keyField = new javafx.scene.control.PasswordField();
         keyField.setStyle("-fx-control-inner-background: #1a1d27; -fx-text-fill: white; -fx-prompt-text-fill: #6b7280; -fx-font-size: 15px;");
         keyField.setPromptText("sk-or-v1-...");
-        
+
         com.backtester.database.DatabaseManager db = com.backtester.database.DatabaseManager.getInstance();
         String savedKey = db.getSetting(com.backtester.engine.LlmAnalysisService.SETTING_API_KEY);
         if (savedKey != null) keyField.setText(savedKey);
@@ -1028,7 +1049,7 @@ public class OptimizationView {
             db.saveSetting(com.backtester.engine.LlmAnalysisService.SETTING_MODEL, selectedModel);
             db.saveSetting(com.backtester.engine.LlmAnalysisService.SETTING_MAX_TOKENS, maxTokensField.getText().trim());
             db.saveSetting(com.backtester.engine.LlmAnalysisService.SETTING_PROMPT, promptField.getText().trim());
-            
+
             double perfW = com.backtester.engine.LlmAnalysisService.DEFAULT_PERFORMANCE_WEIGHT;
             double stabW = com.backtester.engine.LlmAnalysisService.DEFAULT_STABILITY_WEIGHT;
             try {
@@ -1042,7 +1063,7 @@ public class OptimizationView {
             logView.log("INFO", "KI-Einstellungen gespeichert.");
         });
 
-        box.getChildren().addAll(titleLabel, keyLabel, keyField, modelLabel, modelCombo, hintLabel, 
+        box.getChildren().addAll(titleLabel, keyLabel, keyField, modelLabel, modelCombo, hintLabel,
             perfWeightLabel, perfWeightField, stabWeightLabel, stabWeightField,
             maxTokensLabel, maxTokensField, maxTokensHint, promptLabel, promptField, saveBtn);
 
@@ -1082,7 +1103,7 @@ public class OptimizationView {
         try {
             Gson gson = buildGson();
             String optJson = lastOptResult != null ? gson.toJson(lastOptResult) : null;
-            
+
             List<Integer> selectedPassIds = new java.util.ArrayList<>();
             for (CombinedPass cp : masterSelectedList) {
                 if (cp != null) {
@@ -1090,12 +1111,12 @@ public class OptimizationView {
                 }
             }
             String selectedJson = gson.toJson(selectedPassIds);
-            
+
             String sensitivityJson = null;
             if (sensitivityTable != null) {
                 sensitivityJson = gson.toJson(new java.util.ArrayList<>(sensitivityTable.getItems()));
             }
-            
+
             com.backtester.database.DatabaseManager.getInstance().saveOptimizationState(optJson, selectedJson, sensitivityJson);
         } catch (Throwable t) {
             log.error("Failed to save optimization state", t);
@@ -1109,9 +1130,9 @@ public class OptimizationView {
         try {
             String[] state = com.backtester.database.DatabaseManager.getInstance().getOptimizationState();
             if (state == null) return;
-            
+
             Gson gson = buildGson();
-            
+
             // 1. Load lastOptResult
             if (state[0] != null && !state[0].isEmpty()) {
                 lastOptResult = gson.fromJson(state[0], OptimizationResult.class);
@@ -1123,7 +1144,7 @@ public class OptimizationView {
                     applyCombinedFilter();
                 }
             }
-            
+
             // 2. Load Selected Passes
             if (state[1] != null && !state[1].isEmpty() && lastOptResult != null) {
                 Type listType = new TypeToken<List<Integer>>(){}.getType();
@@ -1142,7 +1163,7 @@ public class OptimizationView {
                     applySelectedFilter();
                 }
             }
-            
+
             // 3. Load Sensitivity Results
             if (state[2] != null && !state[2].isEmpty()) {
                 Type senListType = new TypeToken<List<com.backtester.report.SensitivityResult>>(){}.getType();
@@ -1156,7 +1177,7 @@ public class OptimizationView {
             } else {
                 updateLlmAnalyzeButtonState(false);
             }
-            
+
             logView.log("INFO", "Optimization state loaded from database.");
         } catch (Exception e) {
             logView.log("ERROR", "Failed to load optimization state: " + e.getMessage());
@@ -1166,12 +1187,12 @@ public class OptimizationView {
     private void clearCurrentTab() {
         Tab current = resultTabs.getSelectionModel().getSelectedItem();
         if (current == null) return;
-        
-        javafx.scene.control.Alert confirm = new javafx.scene.control.Alert(javafx.scene.control.Alert.AlertType.CONFIRMATION, 
-            "Möchtest du wirklich die aktuelle Tabelle (" + current.getText().replaceAll("[⭐🏆⚖🤖]", "").trim() + ") leeren?", 
+
+        javafx.scene.control.Alert confirm = new javafx.scene.control.Alert(javafx.scene.control.Alert.AlertType.CONFIRMATION,
+            "Möchtest du wirklich die aktuelle Tabelle (" + current.getText().replaceAll("[⭐🏆⚖🤖]", "").trim() + ") leeren?",
             javafx.scene.control.ButtonType.YES, javafx.scene.control.ButtonType.NO);
         confirm.setHeaderText("Tabelle löschen");
-        
+
         if (confirm.showAndWait().orElse(javafx.scene.control.ButtonType.NO) == javafx.scene.control.ButtonType.YES) {
             String txt = current.getText();
             if (txt.contains("Main")) resultTable.getItems().clear();
@@ -1191,11 +1212,11 @@ public class OptimizationView {
     }
 
     private void clearAllTablesGlobal() {
-        javafx.scene.control.Alert confirm = new javafx.scene.control.Alert(javafx.scene.control.Alert.AlertType.CONFIRMATION, 
-            "Möchtest du wirklich ALLE Optimierungstabellen UND die gesamte KI-Historie aus der Datenbank löschen?", 
+        javafx.scene.control.Alert confirm = new javafx.scene.control.Alert(javafx.scene.control.Alert.AlertType.CONFIRMATION,
+            "Möchtest du wirklich ALLE Optimierungstabellen UND die gesamte KI-Historie aus der Datenbank löschen?",
             javafx.scene.control.ButtonType.YES, javafx.scene.control.ButtonType.NO);
         confirm.setHeaderText("Alles löschen");
-        
+
         if (confirm.showAndWait().orElse(javafx.scene.control.ButtonType.NO) == javafx.scene.control.ButtonType.YES) {
             resultTable.getItems().clear();
             forwardTable.getItems().clear();
@@ -1367,7 +1388,7 @@ public class OptimizationView {
             new Alert(Alert.AlertType.WARNING, "Keine kombinierten Ergebnisse zum Evaluieren vorhanden.").show();
             return;
         }
-        
+
         StrategyEvaluatorDialog dialog = new StrategyEvaluatorDialog(allCombined, this);
         dialog.initOwner(root.getScene().getWindow());
         dialog.show();
@@ -1397,8 +1418,9 @@ public class OptimizationView {
 
         // Score (highlight column)
         TableColumn<CombinedPass, String> scoreCol = new TableColumn<>();
-        scoreCol.setGraphic(DocHelper.createHeaderWithTooltip("Score", 
-            "Unified Score (0-100):\nGewichteter Gesamtwert aus 10 Kriterien (Profit, DD, PF etc.). Konfigurierbar über das Regler-Symbol. Zeigt die beste Gesamtperformance."));
+        scoreCol.setGraphic(DocHelper.createHeaderWithTooltip("Score",
+            "Unified Score (0-100):\nGewichteter Gesamtwert aus 10 Kriterien. Klicke auf das ⓘ Symbol, um den Mindest-Score-Filter anzupassen und die Doku zu öffnen.",
+            () -> showScoreDoc()));
         scoreCol.setCellValueFactory(c -> new SimpleStringProperty(
                 String.format("%.2f", c.getValue().getScore())));
         scoreCol.setStyle("-fx-alignment: CENTER;");
@@ -1422,8 +1444,9 @@ public class OptimizationView {
         });
 
         TableColumn<CombinedPass, String> consistCol = new TableColumn<>();
-        consistCol.setGraphic(DocHelper.createHeaderWithTooltip("Konsistenz", 
-            "Forward-Konsistenz (0.0-2.0):\nDas Verhältnis der Performance (Gewinn & Erholung) im Forward-Test (ungesehene Daten) zum Backtest. Je näher an 1.0 (oder höher), desto stabiler ist das Live-Verhalten."));
+        consistCol.setGraphic(DocHelper.createHeaderWithTooltip("Konsistenz",
+            "Forward-Konsistenz (0.0-2.0):\nVerhältnis der Performance im Forward-Test zum Backtest. Klicke auf das ⓘ Symbol, um den Mindest-Konsistenz-Filter anzupassen und die Doku zu öffnen.",
+            () -> showConsistencyDoc()));
         consistCol.setCellValueFactory(c -> new SimpleStringProperty(
                 String.format("%.2f", c.getValue().getConsistency())));
         consistCol.setStyle("-fx-alignment: CENTER;");
@@ -1530,7 +1553,7 @@ public class OptimizationView {
 
         // Build a lookup map for KI scores so sorting doesn't iterate the sensitivityTable O(n) per comparison
         TableColumn<CombinedPass, String> kiCol = new TableColumn<>();
-        kiCol.setGraphic(DocHelper.createHeaderWithTooltip("KI", 
+        kiCol.setGraphic(DocHelper.createHeaderWithTooltip("KI",
             "KI-Stabilitätsscore (0-100):\nDas qualitative Urteil der künstlichen Intelligenz (LLM) über die Form und Stabilität der Parameter-Kennlinien. Erkennt Curve-Fitting (Überoptimierung)."));
         kiCol.setCellValueFactory(c -> {
             int pn = c.getValue().getPassNumber();
@@ -1567,7 +1590,7 @@ public class OptimizationView {
         kiCol.setComparator(numericStringComparator());
 
         TableColumn<CombinedPass, String> robScoreCol = new TableColumn<>();
-        robScoreCol.setGraphic(DocHelper.createHeaderWithTooltip("Rob. Scorecard", 
+        robScoreCol.setGraphic(DocHelper.createHeaderWithTooltip("Rob. Scorecard",
             "Robustness Scorecard (0-100):\nErgebnis des Monte-Carlo-Stresstests und systematischen Parameter-Shifting. Simuliert Rauschen (Slippage, Spread, Execution) und bewertet die Geradlinigkeit (R²-Stabilität) der Equity-Kurve."));
         robScoreCol.setCellValueFactory(c -> {
             String fromDateStr = "Unbekannt";
@@ -1624,7 +1647,7 @@ public class OptimizationView {
         });
 
         TableColumn<CombinedPass, String> riCol = new TableColumn<>();
-        riCol.setGraphic(DocHelper.createHeaderWithTooltip("RI", 
+        riCol.setGraphic(DocHelper.createHeaderWithTooltip("RI",
             "Robustness Index (RI):\nEin fixierter mathematischer Wert ohne Gewichtung. Multipliziert BT Recovery Factor, Trades-Gewichtung und Forward-Konsistenz. Dient als objektiver Tie-Breaker."));
         riCol.setCellValueFactory(c -> {
             double ri = StrategyEvaluatorDialog.calculateRobustnessIndex(c.getValue());
@@ -1648,7 +1671,7 @@ public class OptimizationView {
         // Double-click → Zeige detaillierte Erklärung, Right-click → Kontextmenü für Backtest
         t.setRowFactory(tv -> {
             javafx.scene.control.TableRow<CombinedPass> row = new javafx.scene.control.TableRow<>();
-            
+
             javafx.scene.control.ContextMenu contextMenu = new javafx.scene.control.ContextMenu();
             javafx.scene.control.MenuItem backtestItem = new javafx.scene.control.MenuItem("Backtest in MT5 ausführen (Terminal offen lassen)");
             backtestItem.setOnAction(event -> {
@@ -1658,7 +1681,7 @@ public class OptimizationView {
                 }
             });
             contextMenu.getItems().add(backtestItem);
-            
+
             row.emptyProperty().addListener((obs, wasEmpty, isEmpty) -> {
                 if (isEmpty) {
                     row.setContextMenu(null);
@@ -1666,7 +1689,7 @@ public class OptimizationView {
                     row.setContextMenu(contextMenu);
                 }
             });
-            
+
             row.setOnMouseClicked(event -> {
                 if (event.getClickCount() == 2 && (!row.isEmpty())) {
                     showPassExplanationDialog(row.getItem());
@@ -1682,11 +1705,11 @@ public class OptimizationView {
         Label label = new Label(labelText);
         label.setTextFill(Color.web("#7e889a"));
         label.setFont(javafx.scene.text.Font.font("Segoe UI", javafx.scene.text.FontWeight.BOLD, 12));
-        
+
         Label value = new Label(valueText);
         value.setTextFill(Color.web("#e6e9f0"));
         value.setFont(javafx.scene.text.Font.font("Segoe UI", 12));
-        
+
         grid.add(label, 0, row);
         grid.add(value, 1, row);
         return value;
@@ -1699,23 +1722,23 @@ public class OptimizationView {
         if (root.getScene() != null) {
             dialog.initOwner(root.getScene().getWindow());
         }
-        
+
         VBox rootBox = new VBox(20);
         rootBox.setPadding(new Insets(25));
         rootBox.setStyle("-fx-background-color: #0d0f17;");
-        
+
         // ── Title ──
         Label title = new Label("🔬 Analyse der Strategie (Pass #" + sel.getPassNumber() + ")");
         title.setFont(Font.font("Segoe UI", FontWeight.BOLD, 22));
         title.setTextFill(Color.web("#00e5ff"));
-        
+
         // ── Left Column: Explanations ──
         // Consistency Explanation
         double cons = sel.getConsistency();
         String consLevel;
         Color consColor;
         String consDesc;
-        
+
         if (cons < 0.3) {
             consLevel = "Ungenügend / Gefährlich";
             consColor = Color.web("#ff3b30");
@@ -1742,28 +1765,28 @@ public class OptimizationView {
             consDesc = "Der Forward-Test hat deutlich MEHR Profit gemacht als der Backtest.\n\n" +
                        "Bedeutung: Positiv, kann aber bedeuten, dass die Forward-Phase zufällig sehr günstig war. Dennoch besser als Verlust!";
         }
-        
+
         Label consTitle = new Label("Konsistenz: " + String.format("%.2f", cons) + " (" + consLevel + ")");
         consTitle.setFont(Font.font("Segoe UI", FontWeight.BOLD, 15));
         consTitle.setTextFill(consColor);
-        
+
         String consCalc = "Berechnung: Forward Profit / Backtest Profit\n" +
                           String.format("=> %.2f / %.2f = %.2f\n", (sel.getForwardPass() != null ? sel.getFwProfit() : 0.0), sel.getBtProfit(), cons) +
                           "(Wert 1.0 bedeutet 100% identische Performance).\n\n" + consDesc;
-        
+
         Label consText = new Label(consCalc);
         consText.setWrapText(true);
         consText.setStyle("-fx-text-fill: #b4bac8; -fx-font-size: 13px;");
-        
+
         VBox consBox = new VBox(8, consTitle, consText);
         consBox.setStyle("-fx-background-color: #171b26; -fx-padding: 15; -fx-background-radius: 8; -fx-border-color: #2e3543; -fx-border-width: 1px; -fx-border-radius: 8;");
-        
+
         // Score Explanation
         double score = sel.getScore();
         String scoreLevel;
         Color scoreColor;
         String scoreDesc;
-        
+
         if (score >= 80) {
             scoreLevel = "Exzellent (Top Tier)";
             scoreColor = Color.web("#00e676");
@@ -1781,11 +1804,11 @@ public class OptimizationView {
             scoreColor = Color.web("#ff3b30");
             scoreDesc = "Durchgefallen. Profit zu gering, Drawdowns zu hoch oder Konsistenz eingebrochen.";
         }
-        
+
         Label scoreTitle = new Label("Gesamt-Score: " + String.format("%.1f", score) + " / 100 (" + scoreLevel + ")");
         scoreTitle.setFont(Font.font("Segoe UI", FontWeight.BOLD, 15));
         scoreTitle.setTextFill(scoreColor);
-        
+
         String scoreCalc = "Was bedeutet dieser Wert?\n" +
                            "Der Gesamt-Score (0-100) bewertet auf einen Blick, wie ausgewogen und robust eine Strategie im Vergleich zu allen anderen Durchgängen dieser Optimierung abschneidet. Ein hoher Score zeigt, dass die Strategie nicht nur hohen Profit erzielt, sondern auch ein gesundes Verhältnis von Risiko (geringer Drawdown), Stabilität (hoher Profit Factor) und Konsistenz zwischen Backtest und Forward-Phase aufweist. Er schützt vor Überoptimierung, indem er reine Gewinn-Ausreißer abwertet, wenn diese bei Marktveränderungen einbrechen. Kurz gesagt: Er filtert die stabilsten Allrounder heraus.\n\n" +
                            "⚠️ HINWEIS ZUR KENNLINIE:\n" +
@@ -1793,25 +1816,25 @@ public class OptimizationView {
                            "Berechnung & Details:\n" +
                            "Er bewertet Profit, Drawdown, PF und Konsistenz gemeinsam basierend auf deinen Filter-Gewichtungen.\n\n" + scoreDesc + "\n\n" +
                            "--- GENAUE BERECHNUNG ---\n" + sel.getScoreDetails();
-                           
+
         Label scoreText = new Label(scoreCalc);
         scoreText.setWrapText(true);
         scoreText.setStyle("-fx-text-fill: #b4bac8; -fx-font-size: 13px; -fx-font-family: monospace;");
-        
+
         VBox scoreBox = new VBox(8, scoreTitle, scoreText);
         scoreBox.setStyle("-fx-background-color: #171b26; -fx-padding: 15; -fx-background-radius: 8; -fx-border-color: #2e3543; -fx-border-width: 1px; -fx-border-radius: 8;");
-        
+
         javafx.scene.control.ScrollPane scroll = new javafx.scene.control.ScrollPane(scoreBox);
         scroll.setFitToWidth(true);
         scroll.setStyle("-fx-background: #0d0f17; -fx-border-color: transparent;");
         scroll.setVbarPolicy(javafx.scene.control.ScrollPane.ScrollBarPolicy.AS_NEEDED);
         VBox.setVgrow(scroll, Priority.ALWAYS);
-        
+
         VBox leftPane = new VBox(15, consBox, scroll);
         leftPane.setPrefWidth(550);
         leftPane.setMinWidth(450);
         HBox.setHgrow(leftPane, Priority.ALWAYS);
-        
+
         // ── Right Column: Performance Data, Chart, Parameters ──
         // 1. Backtest Card
         VBox btCard = new VBox(10);
@@ -1870,7 +1893,7 @@ public class OptimizationView {
         Label chartTitleLabel = new Label("EQUITY-KURVE (KAPITALVERLAUF)");
         chartTitleLabel.setFont(Font.font("Segoe UI", FontWeight.BOLD, 13));
         chartTitleLabel.setTextFill(Color.web("#00e5ff"));
-        
+
         javafx.scene.chart.NumberAxis xAxis = new javafx.scene.chart.NumberAxis();
         xAxis.setLabel("Trades");
         xAxis.setTickLabelFill(Color.web("#7e889a"));
@@ -1912,7 +1935,7 @@ public class OptimizationView {
             java.util.List<Double> fwCurve = StrategyEvaluatorDialog.generateSyntheticEquityCurve(fwStartBalance, sel.getFwProfit(), sel.getFwTrades(), sel.getFwPf(), sel.getPassNumber() + 999);
             javafx.scene.chart.XYChart.Series<Number, Number> forwardSeries = new javafx.scene.chart.XYChart.Series<>();
             forwardSeries.setName("Forward");
-            
+
             // Connect seamlessly
             int offset = btCurve.size() - 1;
             forwardSeries.getData().add(new javafx.scene.chart.XYChart.Data<>(offset, fwStartBalance));
@@ -1961,21 +1984,21 @@ public class OptimizationView {
         HBox contentBox = new HBox(25, leftPane, rightPane);
         contentBox.setAlignment(Pos.TOP_LEFT);
         VBox.setVgrow(contentBox, Priority.ALWAYS);
-        
+
         // ── Close Button ──
         Button closeBtn = new Button("Schließen");
         closeBtn.setStyle("-fx-background-color: #00e5ff; -fx-text-fill: #0d0f17; -fx-font-weight: bold; -fx-padding: 8 20; -fx-cursor: hand;");
         closeBtn.setOnAction(e -> dialog.close());
-        
+
         HBox btnBox = new HBox(closeBtn);
         btnBox.setAlignment(Pos.CENTER_RIGHT);
-        
+
         Label subtitle = new Label("Zeitraum: " + (lastOptResult != null && lastOptResult.getFromDate() != null && !lastOptResult.getFromDate().isEmpty() ? lastOptResult.getFromDate() + " bis " + lastOptResult.getToDate() : "Unbekannt"));
         subtitle.setFont(Font.font("Segoe UI", FontWeight.NORMAL, 13));
         subtitle.setTextFill(Color.web("#7e889a"));
 
         rootBox.getChildren().addAll(title, subtitle, contentBox, btnBox);
-        
+
         javafx.scene.Scene scene = new javafx.scene.Scene(rootBox, 1200, 865);
         try {
             scene.getStylesheets().add(getClass().getResource("/css/antigravity.css").toExternalForm());
@@ -2044,7 +2067,7 @@ public class OptimizationView {
     public javafx.collections.ObservableList<CombinedPass> getSelectedStrategies() {
         return masterSelectedList;
     }
-    
+
     public String getExpertName() {
         return expertField.getText().trim();
     }
@@ -2069,9 +2092,9 @@ public class OptimizationView {
 
         TableColumn<com.backtester.report.SensitivityResult, Integer> passCol = new TableColumn<>("Pass");
         passCol.setCellValueFactory(c -> new javafx.beans.property.SimpleIntegerProperty(c.getValue().getOriginalPass().getPassNumber()).asObject());
-        
 
-        
+
+
         TableColumn<com.backtester.report.SensitivityResult, String> btProfitCol = new TableColumn<>("BT Profit");
         btProfitCol.setCellValueFactory(c -> new SimpleStringProperty(String.format("%.2f", c.getValue().getOriginalPass().getBtProfit())));
         btProfitCol.setComparator(numericStringComparator());
@@ -2198,7 +2221,7 @@ public class OptimizationView {
 
         t.setRowFactory(tv -> {
             TableRow<com.backtester.report.SensitivityResult> row = new TableRow<>();
-            
+
             javafx.scene.control.ContextMenu contextMenu = new javafx.scene.control.ContextMenu();
             javafx.scene.control.MenuItem backtestItem = new javafx.scene.control.MenuItem("Backtest in MT5 ausführen (Terminal offen lassen)");
             backtestItem.setOnAction(event -> {
@@ -2208,7 +2231,7 @@ public class OptimizationView {
                 }
             });
             contextMenu.getItems().add(backtestItem);
-            
+
             row.emptyProperty().addListener((obs, wasEmpty, isEmpty) -> {
                 if (isEmpty) {
                     row.setContextMenu(null);
@@ -2216,7 +2239,7 @@ public class OptimizationView {
                     row.setContextMenu(contextMenu);
                 }
             });
-            
+
             row.setOnMouseClicked(event -> {
                 if (event.getClickCount() == 2 && (!row.isEmpty())) {
                     com.backtester.report.SensitivityResult rowData = row.getItem();
@@ -2232,12 +2255,12 @@ public class OptimizationView {
     private void showSensitivityDetails(com.backtester.report.SensitivityResult result) {
         javafx.stage.Stage stage = new javafx.stage.Stage();
         stage.setTitle("Sensitivity Details - Pass " + result.getOriginalPass().getPassNumber());
-        
+
         VBox box = new VBox(15);
         box.setPadding(new Insets(20));
         box.getStyleClass().add("root");
         box.setStyle("-fx-background-color: #0b0d13;"); // Ensure dark background
-        
+
         Label title = new Label("Strategy Details: Pass " + result.getOriginalPass().getPassNumber());
         title.setFont(Font.font("Segoe UI", FontWeight.BOLD, 18));
         title.setTextFill(Color.web("#00e5ff"));
@@ -2249,7 +2272,7 @@ public class OptimizationView {
         Label scoreLabel = new Label(String.format("BT Profit: %.2f  |  BT CV (worst): %.2f %%%s",
                 result.getOriginalPass().getBtProfit(), result.getOverallCV(), fwSummary));
         scoreLabel.setTextFill(Color.web("#00e676"));
-        
+
         Label btCvLabel = new Label("Backtest (in-sample) Parameter Robustness:");
         btCvLabel.setTextFill(Color.WHITE);
         btCvLabel.setFont(Font.font("Segoe UI", FontWeight.BOLD, 14));
@@ -2263,7 +2286,7 @@ public class OptimizationView {
         Label paramLabel = new Label("Optimized Strategy Settings:");
         paramLabel.setTextFill(Color.WHITE);
         paramLabel.setFont(Font.font("Segoe UI", FontWeight.BOLD, 14));
-        
+
         TableView<java.util.Map.Entry<String, String>> settingsTable = new TableView<>();
         TableColumn<java.util.Map.Entry<String, String>, String> sParamCol = new TableColumn<>("Parameter");
         sParamCol.setCellValueFactory(c -> new SimpleStringProperty(c.getValue().getKey()));
@@ -2274,7 +2297,7 @@ public class OptimizationView {
         settingsTable.setPrefHeight(250);
         settingsTable.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY);
         settingsTable.setSelectionModel(null); // avoid selection text-color artifacts on dark theme
-        
+
         box.getChildren().addAll(title, scoreLabel, btCvLabel, btCvTable);
 
         if (result.hasForwardCV()) {
@@ -2290,13 +2313,13 @@ public class OptimizationView {
         }
 
         box.getChildren().addAll(paramLabel, settingsTable);
-        
+
         // --- Detailed Interpretation ---
         Label explanationTitle = new Label("Ausführliche Erklärung zur Interpretation");
         explanationTitle.setFont(Font.font("Segoe UI", FontWeight.BOLD, 16));
         explanationTitle.setTextFill(Color.web("#00e5ff"));
-        
-        String interpretationText = 
+
+        String interpretationText =
             "Die Sensitivitätsanalyse testet, wie 'zerbrechlich' deine Strategie ist.\n" +
             "Dazu wird jeder Parameter (z.B. StopLoss, Takeprofit) in kleinen Schritten um seinen optimierten Wert herum verschoben. " +
             "Anschließend messen wir, wie stark sich der Profit durch diese kleinen Änderungen verändert.\n\n" +
@@ -2304,12 +2327,12 @@ public class OptimizationView {
             "• Unter 30% (Grün): Der Parameter ist extrem stabil. Wenn der Markt sich leicht ändert (Slippage, andere Spreads, leicht veränderte Volatilität), bleibt dein Profit weitgehend gleich.\n" +
             "• 30% bis 60% (Gelb): Normale Schwankung. Die Strategie reagiert auf Marktveränderungen, bleibt aber vermutlich noch profitabel.\n" +
             "• Über 60% (Rot): Gefahr! Die Strategie ist ein 'One-Hit-Wonder'. Ein winziger Unterschied im Markt, und die Strategie stürzt ab. Solche Werte bedeuten oft, dass der Backtest komplett 'curve-fitted' (überoptimiert) ist.\n\n";
-            
+
         double worstCv = result.getOverallCV();
         if (result.hasForwardCV() && result.getOverallCVFw() > worstCv) {
             worstCv = result.getOverallCVFw();
         }
-        
+
         String passVerdict = "";
         Color verdictColor = Color.WHITE;
         if (worstCv < 30.0) {
@@ -2322,21 +2345,21 @@ public class OptimizationView {
             passVerdict = String.format("FAZIT ZU DIESEM PASS:\nACHTUNG! Der schlechteste CV liegt bei gigantischen %.2f %%! Dieser Pass ist zu stark überoptimiert (Curve-Fitted). Im Live-Handel wird er höchstwahrscheinlich Verluste einfahren. Bitte mit Vorsicht behandeln!", worstCv);
             verdictColor = Color.web("#ff3b30");
         }
-        
+
         Label interpretationLabel = new Label(interpretationText);
         interpretationLabel.setWrapText(true);
         interpretationLabel.setStyle("-fx-text-fill: #b4bac8; -fx-font-size: 13px;");
-        
+
         Label verdictLabel = new Label(passVerdict);
         verdictLabel.setWrapText(true);
         verdictLabel.setFont(Font.font("Segoe UI", FontWeight.BOLD, 14));
         verdictLabel.setTextFill(verdictColor);
-        
+
         VBox expBox = new VBox(10, explanationTitle, interpretationLabel, verdictLabel);
         expBox.setStyle("-fx-background-color: #1a1d27; -fx-padding: 15; -fx-background-radius: 8; -fx-border-color: #2a2d3a; -fx-border-width: 1; -fx-border-radius: 8;");
-        
+
         box.getChildren().add(expBox);
-        
+
         // Wrap content in a scroll pane so the dialog scales gracefully when both
         // BT and FW breakdown tables are shown.
         javafx.scene.control.ScrollPane scroll = new javafx.scene.control.ScrollPane(box);
@@ -2617,7 +2640,7 @@ public class OptimizationView {
                 Platform.runLater(() -> {
                     setSensitivityUIState(false);
                     progressBar.setProgress(1.0);
-                    
+
                     if (currentSensitivityRunner != null && currentSensitivityRunner.isCancelled()) {
                         progressLabel.setText("Sensitivity Analysis cancelled.");
                         updateLlmAnalyzeButtonState(!sensitivityTable.getItems().isEmpty());
@@ -2626,7 +2649,7 @@ public class OptimizationView {
                         updateLlmAnalyzeButtonState(true);
                         new Alert(Alert.AlertType.INFORMATION, "Sensitivity Analysis completed!").show();
                     }
-                    
+
                     saveStateToDb();
                 });
             }
@@ -2647,20 +2670,20 @@ public class OptimizationView {
     /** Applies current filter settings and re-populates the combined table. */
     private void deleteSelectedCombinedPasses() {
         if (combinedTable == null || combinedTable.getItems().isEmpty()) return;
-        
+
         List<CombinedPass> selected = new java.util.ArrayList<>(combinedTable.getSelectionModel().getSelectedItems());
         if (selected.isEmpty()) {
-            javafx.scene.control.Alert alert = new javafx.scene.control.Alert(javafx.scene.control.Alert.AlertType.INFORMATION, 
+            javafx.scene.control.Alert alert = new javafx.scene.control.Alert(javafx.scene.control.Alert.AlertType.INFORMATION,
                 "Bitte markiere zuerst die Zeilen in der Tabelle, die du löschen möchtest.\n(Nutze Strg/Shift für Mehrfachauswahl)");
             alert.show();
             return;
         }
-        
-        javafx.scene.control.Alert confirm = new javafx.scene.control.Alert(javafx.scene.control.Alert.AlertType.CONFIRMATION, 
-            "Bist du sicher, dass du die " + selected.size() + " ausgewählten Optimierungsergebnisse löschen möchtest?\n\nSie werden aus dieser Tabelle und aus dem Speicher entfernt.", 
+
+        javafx.scene.control.Alert confirm = new javafx.scene.control.Alert(javafx.scene.control.Alert.AlertType.CONFIRMATION,
+            "Bist du sicher, dass du die " + selected.size() + " ausgewählten Optimierungsergebnisse löschen möchtest?\n\nSie werden aus dieser Tabelle und aus dem Speicher entfernt.",
             javafx.scene.control.ButtonType.YES, javafx.scene.control.ButtonType.NO);
         confirm.setHeaderText("Ergebnisse löschen");
-        
+
         if (confirm.showAndWait().orElse(javafx.scene.control.ButtonType.NO) == javafx.scene.control.ButtonType.YES) {
             // Remove from the underlying model so they don't reappear on refresh
             if (lastOptResult != null) {
@@ -2853,7 +2876,7 @@ public class OptimizationView {
             labels[i].setTooltip(new Tooltip(tooltips[i]));
             grid.add(labels[i],  0, i);
 
-            if (i == 9) {
+            if (i == 7) {
                 HBox scaleBox = new HBox(6);
                 scaleBox.setAlignment(Pos.CENTER_LEFT);
                 scaleBox.setPadding(new Insets(4, 0, 0, 0));
@@ -3065,6 +3088,8 @@ public class OptimizationView {
         TextField tfFwSharpe    = makeFilterField(String.valueOf(filterMinFwSharpe));
         TextField tfBtRecovery  = makeFilterField(String.valueOf(filterMinBtRecovery));
         TextField tfFwRecovery  = makeFilterField(String.valueOf(filterMinFwRecovery));
+        TextField tfMinScore    = makeFilterField(String.valueOf(filterMinScore));
+        TextField tfMinConsist  = makeFilterField(String.valueOf(filterMinConsistency));
 
         grid.add(styledLabel("BT Profit ≥"),        0, 0); grid.add(tfBtProfit,    1, 0);
         grid.add(styledLabel("FW Profit ≥"),        2, 0); grid.add(tfFwProfit,    3, 0);
@@ -3078,6 +3103,8 @@ public class OptimizationView {
         grid.add(styledLabel("FW Sharpe Ratio ≥"),  2, 4); grid.add(tfFwSharpe,    3, 4);
         grid.add(styledLabel("BT Recovery Factor ≥"),0, 5); grid.add(tfBtRecovery,  1, 5);
         grid.add(styledLabel("FW Recovery Factor ≥"),2, 5); grid.add(tfFwRecovery,  3, 5);
+        grid.add(styledLabel("Mindest-Score ≥"),    0, 6); grid.add(tfMinScore,    1, 6);
+        grid.add(styledLabel("Mindest-Konsistenz ≥"),2, 6); grid.add(tfMinConsist,  3, 6);
 
         Button applyBtn = new Button("✔ Anwenden & Schließen");
         applyBtn.setStyle("-fx-background-color: #00e5ff; -fx-text-fill: #0d0f17; -fx-font-weight: bold;");
@@ -3094,7 +3121,9 @@ public class OptimizationView {
             filterMinFwSharpe = parseFilterDouble(tfFwSharpe, 0.0);
             filterMinBtRecovery = parseFilterDouble(tfBtRecovery, 0.0);
             filterMinFwRecovery = parseFilterDouble(tfFwRecovery, 0.0);
-            
+            filterMinScore      = parseFilterDouble(tfMinScore, 0.0);
+            filterMinConsistency = parseFilterDouble(tfMinConsist, 0.0);
+
             com.backtester.database.DatabaseManager db = com.backtester.database.DatabaseManager.getInstance();
             db.saveSetting("opt.filter.minBtProfit", String.valueOf(filterMinBtProfit));
             db.saveSetting("opt.filter.minFwProfit", String.valueOf(filterMinFwProfit));
@@ -3108,6 +3137,8 @@ public class OptimizationView {
             db.saveSetting("opt.filter.minFwSharpe", String.valueOf(filterMinFwSharpe));
             db.saveSetting("opt.filter.minBtRecovery", String.valueOf(filterMinBtRecovery));
             db.saveSetting("opt.filter.minFwRecovery", String.valueOf(filterMinFwRecovery));
+            db.saveSetting("opt.filter.minScore", String.valueOf(filterMinScore));
+            db.saveSetting("opt.filter.minConsistency", String.valueOf(filterMinConsistency));
 
             // Auto-enable filter and save state
             if (filterEnabledCheck != null) {
@@ -3134,6 +3165,8 @@ public class OptimizationView {
             tfFwSharpe.setText("0.0");
             tfBtRecovery.setText("0.0");
             tfFwRecovery.setText("0.0");
+            tfMinScore.setText("0.0");
+            tfMinConsist.setText("0.0");
         });
 
         HBox btnRow = new HBox(10, resetBtn, new Region(), applyBtn);
@@ -3145,7 +3178,7 @@ public class OptimizationView {
 
         root.getChildren().addAll(title, grid, sep, btnRow);
 
-        javafx.scene.Scene scene = new javafx.scene.Scene(root, 580, 400);
+        javafx.scene.Scene scene = new javafx.scene.Scene(root, 580, 440);
         dialog.setScene(scene);
         dialog.showAndWait();
     }
@@ -3223,48 +3256,48 @@ public class OptimizationView {
     private TableView<com.backtester.report.OptimizationResult.Pass> createResultTable() {
         TableView<com.backtester.report.OptimizationResult.Pass> table = new TableView<>();
         table.setStyle("-fx-background-color: transparent;");
-        
+
         TableColumn<com.backtester.report.OptimizationResult.Pass, Integer> passCol = new TableColumn<>("Pass");
         passCol.setCellValueFactory(cellData -> new javafx.beans.property.SimpleObjectProperty<>(cellData.getValue().getPassNumber()));
         passCol.setPrefWidth(60);
-        
+
         TableColumn<com.backtester.report.OptimizationResult.Pass, String> profitCol = new TableColumn<>("Profit");
         profitCol.setCellValueFactory(cellData -> new javafx.beans.property.SimpleStringProperty(String.format(java.util.Locale.US, "%.2f", cellData.getValue().getProfit())));
         profitCol.setPrefWidth(100);
-        
+
         TableColumn<com.backtester.report.OptimizationResult.Pass, Integer> tradesCol = new TableColumn<>("Trades");
         tradesCol.setCellValueFactory(cellData -> new javafx.beans.property.SimpleObjectProperty<>(cellData.getValue().getTotalTrades()));
         tradesCol.setPrefWidth(70);
-        
+
         TableColumn<com.backtester.report.OptimizationResult.Pass, String> pfCol = new TableColumn<>("Profit Factor");
         pfCol.setCellValueFactory(cellData -> new javafx.beans.property.SimpleStringProperty(String.format(java.util.Locale.US, "%.2f", cellData.getValue().getProfitFactor())));
         pfCol.setPrefWidth(100);
-        
+
         TableColumn<com.backtester.report.OptimizationResult.Pass, String> payoffCol = new TableColumn<>("Expected Payoff");
         payoffCol.setCellValueFactory(cellData -> new javafx.beans.property.SimpleStringProperty(String.format(java.util.Locale.US, "%.2f", cellData.getValue().getExpectedPayoff())));
         payoffCol.setPrefWidth(120);
-        
+
         TableColumn<com.backtester.report.OptimizationResult.Pass, String> ddCol = new TableColumn<>("Drawdown %");
         ddCol.setCellValueFactory(cellData -> new javafx.beans.property.SimpleStringProperty(String.format(java.util.Locale.US, "%.2f", cellData.getValue().getDrawdownPercent())));
         ddCol.setPrefWidth(100);
-        
+
         TableColumn<com.backtester.report.OptimizationResult.Pass, String> recoveryCol = new TableColumn<>("Recovery Factor");
         recoveryCol.setCellValueFactory(cellData -> new javafx.beans.property.SimpleStringProperty(String.format(java.util.Locale.US, "%.2f", cellData.getValue().getRecoveryFactor())));
         recoveryCol.setPrefWidth(120);
-        
+
         TableColumn<com.backtester.report.OptimizationResult.Pass, String> sharpeCol = new TableColumn<>("Sharpe Ratio");
         sharpeCol.setCellValueFactory(cellData -> new javafx.beans.property.SimpleStringProperty(String.format(java.util.Locale.US, "%.2f", cellData.getValue().getSharpeRatio())));
         sharpeCol.setPrefWidth(100);
-        
+
         table.getColumns().addAll(passCol, profitCol, tradesCol, pfCol, payoffCol, ddCol, recoveryCol, sharpeCol);
-        
+
         Label placeholder = new Label("No results yet. Run an optimization.");
         placeholder.setStyle("-fx-text-fill: #7e889a;");
         table.setPlaceholder(placeholder);
-        
+
         table.setRowFactory(tv -> {
             javafx.scene.control.TableRow<com.backtester.report.OptimizationResult.Pass> row = new javafx.scene.control.TableRow<>();
-            
+
             javafx.scene.control.ContextMenu contextMenu = new javafx.scene.control.ContextMenu();
             javafx.scene.control.MenuItem backtestItem = new javafx.scene.control.MenuItem("Backtest in MT5 ausführen (Terminal offen lassen)");
             backtestItem.setOnAction(event -> {
@@ -3274,7 +3307,7 @@ public class OptimizationView {
                 }
             });
             contextMenu.getItems().add(backtestItem);
-            
+
             row.emptyProperty().addListener((obs, wasEmpty, isEmpty) -> {
                 if (isEmpty) {
                     row.setContextMenu(null);
@@ -3282,7 +3315,7 @@ public class OptimizationView {
                     row.setContextMenu(contextMenu);
                 }
             });
-            
+
             return row;
         });
 
@@ -3303,7 +3336,7 @@ public class OptimizationView {
         javafx.stage.FileChooser chooser = new javafx.stage.FileChooser();
         chooser.setTitle("Select Expert Advisor");
         chooser.getExtensionFilters().add(new javafx.stage.FileChooser.ExtensionFilter("MetaTrader EA", "*.ex5", "*.ex4"));
-        
+
         com.backtester.config.AppConfig config = com.backtester.config.AppConfig.getInstance();
         String currentExpert = expertField.getText().trim();
         java.nio.file.Path expertsDir = null;
@@ -3321,7 +3354,7 @@ public class OptimizationView {
                 chooser.setInitialDirectory(otherDir.toFile());
             }
         }
-        
+
         java.io.File selected = chooser.showOpenDialog(expertField.getScene().getWindow());
         if (selected != null) {
             String pathStr = selected.getAbsolutePath().toLowerCase();
@@ -3349,10 +3382,10 @@ public class OptimizationView {
     private void loadParameters() {
         String expert = expertField.getText().trim();
         if (expert.isEmpty()) return;
-        
+
         String symbol = symbolCombo.getValue() != null ? symbolCombo.getValue() : "EURUSD";
         String period = periodCombo.getValue() != null ? periodCombo.getValue() : "H1";
-        
+
         // Try DB first
         String dbParamsJson = com.backtester.database.DatabaseManager.getInstance().getEaParameterSettings(expert, symbol, period);
         if (dbParamsJson != null && !dbParamsJson.isEmpty()) {
@@ -3369,7 +3402,7 @@ public class OptimizationView {
                 logView.log("WARN", "Failed to parse parameters from DB: " + e.getMessage());
             }
         }
-        
+
         // Fallback to files
         java.util.List<EaParameter> params = eaParamManager.getEffectiveParameters(expert);
         if (params != null) {
@@ -3388,10 +3421,10 @@ public class OptimizationView {
             expertField.setText(exp);
             loadParameters();
         }
-        
+
         symbolCombo.setValue(config.get("optimization.symbol", "EURUSD"));
         periodCombo.setValue(config.get("optimization.period", "H1"));
-        
+
         String savedModel = config.get("optimization.model", "Every tick");
         if (!modelCombo.getItems().contains(savedModel)) modelCombo.getSelectionModel().select(0);
         else modelCombo.setValue(savedModel);
@@ -3408,12 +3441,12 @@ public class OptimizationView {
         String savedFwd = config.get("optimization.forwardMode", "Off");
         if (!forwardModeCombo.getItems().contains(savedFwd)) forwardModeCombo.getSelectionModel().select(0);
         else forwardModeCombo.setValue(savedFwd);
-        
+
         try {
             String from = config.get("optimization.fromDate", "");
             if (!from.isEmpty()) fromDatePicker.setValue(java.time.LocalDate.parse(from));
             else fromDatePicker.setValue(java.time.LocalDate.now().minusYears(1));
-            
+
             String to = config.get("optimization.toDate", "");
             if (!to.isEmpty()) toDatePicker.setValue(java.time.LocalDate.parse(to));
             else toDatePicker.setValue(java.time.LocalDate.now());
@@ -3424,26 +3457,26 @@ public class OptimizationView {
             com.backtester.database.DatabaseManager db = com.backtester.database.DatabaseManager.getInstance();
             filterMinScore = Double.parseDouble(db.getSetting("opt.filter.minScore", String.valueOf(filterMinScore)));
             filterMinConsistency = Double.parseDouble(db.getSetting("opt.filter.minConsistency", String.valueOf(filterMinConsistency)));
-            
+
             filterMinBtProfit = Double.parseDouble(db.getSetting("opt.filter.minBtProfit", "0.01"));
             filterMinFwProfit = Double.parseDouble(db.getSetting("opt.filter.minFwProfit", "0.01"));
             filterMinBtTrades = Integer.parseInt(db.getSetting("opt.filter.minBtTrades", "100"));
-            filterMinFwTrades = Integer.parseInt(db.getSetting("opt.filter.minFwTrades", "15"));
+            filterMinFwTrades = Integer.parseInt(db.getSetting("opt.filter.minFwTrades", "50"));
             filterMaxBtDd = Double.parseDouble(db.getSetting("opt.filter.maxBtDd", "100.0"));
             filterMaxFwDd = Double.parseDouble(db.getSetting("opt.filter.maxFwDd", "100.0"));
             filterMinBtPayoff = Double.parseDouble(db.getSetting("opt.filter.minBtPayoff", "0.0"));
             filterMinFwPayoff = Double.parseDouble(db.getSetting("opt.filter.minFwPayoff", "0.0"));
             filterMinBtSharpe = Double.parseDouble(db.getSetting("opt.filter.minBtSharpe", "0.0"));
             filterMinFwSharpe = Double.parseDouble(db.getSetting("opt.filter.minFwSharpe", "0.0"));
-            filterMinBtRecovery = Double.parseDouble(db.getSetting("opt.filter.minBtRecovery", "0.0"));
-            filterMinFwRecovery = Double.parseDouble(db.getSetting("opt.filter.minFwRecovery", "0.0"));
-            
+            filterMinBtRecovery = Double.parseDouble(db.getSetting("opt.filter.minBtRecovery", "1.0"));
+            filterMinFwRecovery = Double.parseDouble(db.getSetting("opt.filter.minFwRecovery", "1.0"));
+
             boolean filterEnabled = Boolean.parseBoolean(db.getSetting("opt.filter.enabled", "false"));
             if (filterEnabledCheck != null) filterEnabledCheck.setSelected(filterEnabled);
 
             boolean onlyMatched = Boolean.parseBoolean(db.getSetting("opt.filter.onlyMatched", "true"));
             if (onlyMatchedCheck != null) onlyMatchedCheck.setSelected(onlyMatched);
-            
+
             // Gewichte über die einzige Default-Quelle laden (ScoreWeights.loadFromDatabase)
             OptimizationResult.ScoreWeights sw = OptimizationResult.ScoreWeights.loadFromDatabase();
             if (wBtProfitSpin != null) wBtProfitSpin.getValueFactory().setValue((int) sw.wBtProfit);
@@ -3505,7 +3538,7 @@ public class OptimizationView {
 
     private void startOptimization(boolean closeTerminal) {
         savePreferences();
-        
+
         // Save current param table to custom .set
         if (!paramTable.getItems().isEmpty()) {
             String expert = expertField.getText().trim();
@@ -3515,15 +3548,61 @@ public class OptimizationView {
             eaParamManager.saveCustomParameters(expert, new java.util.ArrayList<>(paramTable.getItems()));
         }
 
+        // Validation: check if any optimized parameter has start == stop range
+        java.util.List<com.backtester.config.EaParameter> invalidParams = new java.util.ArrayList<>();
+        for (com.backtester.config.EaParameter p : paramTable.getItems()) {
+            if (p.isOptimizeEnabled()) {
+                String start = p.getOptimizeStart();
+                String end = p.getOptimizeEnd();
+                if (start != null && end != null) {
+                    start = start.trim();
+                    end = end.trim();
+                    if (!start.isEmpty() && !end.isEmpty()) {
+                        boolean equal = start.equals(end);
+                        if (!equal) {
+                            try {
+                                double dStart = Double.parseDouble(start);
+                                double dEnd = Double.parseDouble(end);
+                                if (Math.abs(dStart - dEnd) < 1e-9) {
+                                    equal = true;
+                                }
+                            } catch (NumberFormatException e) {
+                                // Not numeric, e.g. booleans
+                            }
+                        }
+                        if (equal) {
+                            invalidParams.add(p);
+                        }
+                    }
+                }
+            }
+        }
+
+        if (!invalidParams.isEmpty()) {
+            StringBuilder sb = new StringBuilder();
+            sb.append("Die Optimierung kann nicht gestartet werden, da folgende Parameter zur Optimierung ausgewählt sind, aber identische Start- und Stopwerte haben:\n\n");
+            for (com.backtester.config.EaParameter p : invalidParams) {
+                sb.append(" - ").append(p.getName()).append(" (Wert: ").append(p.getOptimizeStart()).append(")\n");
+            }
+            sb.append("\nMetaTrader 5 erlaubt keine Optimierung mit einer Range-Größe von 1. Bitte deaktiviere das Häkchen (Opt) für diese Parameter oder vergrößere deren Range.");
+
+            javafx.scene.control.Alert alert = new javafx.scene.control.Alert(javafx.scene.control.Alert.AlertType.ERROR);
+            alert.setTitle("Optimierungs-Fehler");
+            alert.setHeaderText("Ungültige Parameter-Auswahl");
+            alert.setContentText(sb.toString());
+            alert.showAndWait();
+            return;
+        }
+
         // Safety-Check for 1-Parameter Forward Test
         boolean isForwardEnabled = forwardModeCombo.getSelectionModel().getSelectedIndex() > 0;
         long optimizedParamsCount = paramTable.getItems().stream().filter(com.backtester.config.EaParameter::isOptimizeEnabled).count();
         if (isForwardEnabled && optimizedParamsCount == 1) {
-            javafx.scene.control.Alert alert = new javafx.scene.control.Alert(javafx.scene.control.Alert.AlertType.WARNING, 
+            javafx.scene.control.Alert alert = new javafx.scene.control.Alert(javafx.scene.control.Alert.AlertType.WARNING,
                 "Achtung: Für genetische Forward-Tests in MetaTrader 5 empfiehlt es sich, mindestens 2 Parameter zu aktivieren.\n\n" +
                 "Mit nur 1 Parameter springt der genetische Algorithmus von MT5 oft nicht an (zu wenig Kombinationen), " +
                 "was dazu führen kann, dass der Forward-Test ignoriert wird oder fehlschlägt.\n\n" +
-                "Möchtest du trotzdem fortfahren?", 
+                "Möchtest du trotzdem fortfahren?",
                 javafx.scene.control.ButtonType.YES, javafx.scene.control.ButtonType.NO);
             alert.setHeaderText("Mögliches MT5 Forward-Test Problem");
             if (alert.showAndWait().orElse(javafx.scene.control.ButtonType.NO) != javafx.scene.control.ButtonType.YES) {
@@ -3533,8 +3612,8 @@ public class OptimizationView {
 
         buildConfigFromUI();
         optConfig.setShutdownTerminal(closeTerminal);
-        
-        
+
+
         setUIState(true);
         progressBar.setProgress(ProgressBar.INDETERMINATE_PROGRESS);
         progressLabel.setText("Running...");
@@ -3542,7 +3621,7 @@ public class OptimizationView {
 
         com.backtester.config.AppConfig config = com.backtester.config.AppConfig.getInstance();
         currentRunner = new OptimizationRunner(config);
-        
+
         long totalPasses = 1;
         if (optConfig.getOptimizationMode() == 1) { // Slow Complete
             totalPasses = eaParamManager.calculateTotalPasses(paramTable.getItems());
@@ -3550,7 +3629,7 @@ public class OptimizationView {
             totalPasses = 10496; // Heuristic max for Genetic Algorithm
         }
         currentRunner.setTotalPasses(totalPasses);
-        
+
         currentRunner.setLogCallback(msg -> logView.log("OPT", msg));
         // Simple indeterminate progress, no label updates
         currentRunner.setProgressCallback((current, total) -> {});
@@ -3599,7 +3678,7 @@ public class OptimizationView {
         optConfig.setModel(mIdx >= 0 ? mIdx : 0);
         if (fromDatePicker.getValue() != null) optConfig.setFromDate(fromDatePicker.getValue());
         if (toDatePicker.getValue() != null) optConfig.setToDate(toDatePicker.getValue());
-        
+
         try {
             optConfig.setDeposit(Integer.parseInt(depositField.getText().trim()));
         } catch (Exception e) {
@@ -3637,7 +3716,7 @@ public class OptimizationView {
                     logView.log("WARN", "Optimization finished, but no passes were produced.");
                 } else {
                     logView.log("INFO", "Optimization finished successfully. Found " + result.getPasses().size() + " passes.");
-                    
+
                     // Populate Tables
                     resultTable.setItems(FXCollections.observableArrayList(result.getPasses()));
                     if (result.hasForwardResults()) {
@@ -3662,10 +3741,10 @@ public class OptimizationView {
                         metrics.addProperty("passes", result.getPasses().size());
                         metrics.addProperty("forwardPasses", result.getForwardPasses().size());
                         com.backtester.database.DatabaseManager.getInstance().saveRun(
-                            "OPTIMIZATION", 
-                            optConfig.getExpert(), 
-                            System.currentTimeMillis(), 
-                            metrics.toString(), 
+                            "OPTIMIZATION",
+                            optConfig.getExpert(),
+                            System.currentTimeMillis(),
+                            metrics.toString(),
                             result.getOutputDirectory()
                         );
                     } catch (Exception ex) {
@@ -3723,46 +3802,12 @@ public class OptimizationView {
     // ==================== AutoConfig & File I/O Logic ====================
 
     private void autoConfigParameters() {
-        if (paramTable.getItems().isEmpty()) {
-            logView.log("WARN", "No parameters loaded. Please select an EA first.");
-            return;
-        }
-
-        int activated = 0;
-        int skipped = 0;
-
-        for (com.backtester.config.EaParameter param : paramTable.getItems()) {
-            String name = param.getName();
-            String value = param.getValue();
-
-            if (isExcludedParameterName(name) || !isNumericValue(value)) {
-                param.setOptimizeEnabled(false);
-                skipped++;
-                continue;
-            }
-
-            double[] range = calculateOptRange(name, value);
-            if (range == null) {
-                param.setOptimizeEnabled(false);
-                skipped++;
-                continue;
-            }
-
-            double steps = (range[2] - range[0]) / range[1];
-            if (steps < 5) {
-                param.setOptimizeEnabled(false);
-                skipped++;
-                continue;
-            }
-
-            param.setOptimizeEnabled(true);
-            param.setOptimizeStart(formatNumber(range[0]));
-            param.setOptimizeStep(formatNumber(range[1]));
-            param.setOptimizeEnd(formatNumber(range[2]));
-            activated++;
-        }
-        paramTable.refresh();
-        logView.log("INFO", "AutoConfig applied: " + activated + " enabled, " + skipped + " skipped.");
+        AutoConfigDialogHelper.showAutoConfigDialog(
+            paramTable,
+            logView,
+            root.getScene() != null ? root.getScene().getWindow() : null,
+            this::saveParametersOnDemand
+        );
     }
 
     private void generateDefaultConfig() {
@@ -3796,70 +3841,6 @@ public class OptimizationView {
         });
 
         new Thread(task).start();
-    }
-
-    private boolean isExcludedParameterName(String name) {
-        String lower = name.toLowerCase();
-        return lower.contains("magic") || lower.contains("slippage") || lower.contains("comment") || lower.contains("color");
-    }
-
-    private boolean isNumericValue(String value) {
-        if (value == null || value.isEmpty() || value.contains(":") || value.contains(",")) return false;
-        try { Double.parseDouble(value); return true; } catch (NumberFormatException e) { return false; }
-    }
-
-    private double[] calculateOptRange(String name, String currentValue) {
-        double current;
-        try { current = Double.parseDouble(currentValue); } catch (NumberFormatException e) { return null; }
-        
-        double start = 1;
-        double end = current;
-        double step = 1;
-        
-        String lower = name.toLowerCase();
-        if (lower.contains("lot") || lower.contains("volume")) {
-            start = 0.01;
-            end = Math.max(current, 0.1);
-            step = 0.01;
-        } else if (lower.contains("dist") || lower.contains("step") || lower.contains("tp") || lower.contains("sl")) {
-            start = 10;
-            end = Math.max(current, 100);
-            step = 10;
-        } else if (lower.contains("period") || lower.contains("ma") || lower.contains("rsi")) {
-            start = 2;
-            end = Math.max(current, 50);
-            step = 1;
-        } else if (lower.contains("mult") || lower.contains("factor")) {
-            start = 1.0;
-            end = Math.max(current, 3.0);
-            step = 0.1;
-        } else {
-            if (current == 0) return null;
-            if (current < 1) {
-                start = 0.01;
-                end = current;
-                step = 0.01;
-            } else if (current <= 10) {
-                start = 1;
-                end = current;
-                step = 1;
-            } else if (current <= 100) {
-                start = 5;
-                end = current;
-                step = 5;
-            } else {
-                start = 10;
-                end = current;
-                step = 10;
-            }
-        }
-        
-        return new double[]{start, step, end};
-    }
-
-    private String formatNumber(double value) {
-        if (value == (long) value) return String.format(java.util.Locale.US, "%d", (long) value);
-        else return String.format(java.util.Locale.US, "%s", value);
     }
 
     private void loadFromFile() {
@@ -3905,12 +3886,12 @@ public class OptimizationView {
         javafx.collections.ListChangeListener<com.backtester.report.OptimizationResult.Pass> listListener = c -> {
             updateTabTitle(tab, resultTable.getItems() != null ? resultTable.getItems().size() : 0);
         };
-        
+
         updateTabTitle(tab, resultTable.getItems() != null ? resultTable.getItems().size() : 0);
         if (resultTable.getItems() != null) {
             resultTable.getItems().addListener(listListener);
         }
-        
+
         resultTable.itemsProperty().addListener((obs, oldList, newList) -> {
             if (oldList != null) {
                 oldList.removeListener(listListener);
@@ -3940,7 +3921,7 @@ public class OptimizationView {
 
         javafx.scene.web.WebView webView = new javafx.scene.web.WebView();
         webView.setPrefSize(800, 500);
-        
+
         String fullHtml = "<html><head><style>"
                 + "body { background-color:#161821; color:#c8cddc; font-family:\"Segoe UI\", sans-serif; font-size:16px; line-height:1.7; margin:20px; }"
                 + "h3 { color:#00e5ff; font-size:20px; margin-top:20px; border-bottom: 1px solid #3e4555; padding-bottom: 5px; font-weight: bold; }"
@@ -4045,7 +4026,7 @@ public class OptimizationView {
         javafx.scene.web.WebView webView = new javafx.scene.web.WebView();
         webView.setPrefSize(950, 500);
         webView.setStyle("-fx-background-color: #161821;");
-        
+
         webView.getEngine().loadContent(DocHelper.getScoreDocHtml());
 
         // Filter Controls Area (Glassmorphic style panel)
@@ -4064,7 +4045,7 @@ public class OptimizationView {
         slider.setMinorTickCount(5);
         slider.setBlockIncrement(5);
         slider.setStyle("-fx-control-inner-background: #2a2d3a;");
-        
+
         Label valLabel = new Label(String.format(java.util.Locale.US, "Mindest-Score: %.1f", filterMinScore));
         valLabel.setFont(Font.font("Segoe UI", FontWeight.BOLD, 13));
         valLabel.setTextFill(Color.web("#00e5ff"));
@@ -4156,7 +4137,7 @@ public class OptimizationView {
         javafx.scene.web.WebView webView = new javafx.scene.web.WebView();
         webView.setPrefSize(950, 500);
         webView.setStyle("-fx-background-color: #161821;");
-        
+
         webView.getEngine().loadContent(DocHelper.getConsistencyDocHtml());
 
         // Filter Controls Area (Glassmorphic style panel)
@@ -4175,7 +4156,7 @@ public class OptimizationView {
         slider.setMinorTickCount(5);
         slider.setBlockIncrement(0.1);
         slider.setStyle("-fx-control-inner-background: #2a2d3a;");
-        
+
         Label valLabel = new Label(String.format(java.util.Locale.US, "Mindest-Konsistenz: %.2f", filterMinConsistency));
         valLabel.setFont(Font.font("Segoe UI", FontWeight.BOLD, 13));
         valLabel.setTextFill(Color.web("#00e5ff"));
@@ -4299,14 +4280,14 @@ public class OptimizationView {
         btConfig.setPeriod(periodCombo.getValue());
         int mIdx = modelCombo.getSelectionModel().getSelectedIndex();
         btConfig.setModel(mIdx >= 0 ? mIdx : 0);
-        
+
         if (fromDatePicker.getValue() != null) {
             btConfig.setFromDate(fromDatePicker.getValue());
         }
         if (toDatePicker.getValue() != null) {
             btConfig.setToDate(toDatePicker.getValue());
         }
-        
+
         try {
             btConfig.setDeposit(Integer.parseInt(depositField.getText().trim()));
         } catch (Exception ex) {
@@ -4314,7 +4295,7 @@ public class OptimizationView {
         }
         btConfig.setCurrency(currencyField.getText().trim());
         btConfig.setLeverage(leverageField.getText().trim());
-        
+
         // Terminal offen lassen
         btConfig.setShutdownTerminal(false);
 

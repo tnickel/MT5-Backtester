@@ -159,12 +159,21 @@ public class BacktestConfig {
         "Every tick (real ticks)"
     };
 
-    /** Major currency pairs and crosses */
+    /** Major currency pairs, crosses, exotics, commodities and stock indices (Tickmill compatible) */
     public static final String[] SYMBOLS = {
+        // Forex Majors & Crosses
         "AUDCAD", "AUDCHF", "AUDJPY", "AUDNZD", "AUDUSD",
-        "CADCHF", "CADJPY", "EURAUD", "EURCHF", "EURGBP",
-        "EURJPY", "EURUSD", "GBPCHF", "GBPJPY", "GBPUSD",
-        "NZDJPY", "NZDUSD", "USDCAD", "USDCHF", "USDJPY",
-        "XAGUSD", "XAUUSD", "XTIUSD"
+        "CADCHF", "CADJPY", "CHFJPY",
+        "EURAUD", "EURCHF", "EURGBP", "EURJPY", "EURNZD", "EURUSD",
+        "GBPAUD", "GBPCAD", "GBPCHF", "GBPJPY", "GBPNZD", "GBPUSD",
+        "NZDCAD", "NZDCHF", "NZDJPY", "NZDSGD", "NZDUSD",
+        "USDCAD", "USDCHF", "USDJPY", "USDSGD",
+        // Exotics
+        "EURHUF", "EURNOK", "EURSEK", "EURTRY", "EURZAR",
+        "USDHUF", "USDMXN", "USDNOK", "USDSEK", "USDTRY", "USDZAR",
+        // Commodities & Energy
+        "XAGUSD", "XAUUSD", "XBRUSD", "XTIUSD",
+        // Stock Indices (Tickmill & MT5)
+        "AUS200", "CHINA50", "DE40", "EU50", "FRANCE40", "HK50", "JP225", "SPAIN35", "UK100", "US30", "US500", "USTEC"
     };
 }

@@ -87,5 +87,11 @@ public class BacktestConfigTest {
         java.util.List<String> symbolList = java.util.Arrays.asList(BacktestConfig.SYMBOLS);
         assertTrue(symbolList.contains("EURUSD"));
         assertTrue(symbolList.contains("GBPCHF"));
+        assertTrue(symbolList.contains("SPAIN35"));
+        assertTrue(symbolList.contains("FRANCE40"));
+        assertTrue(symbolList.contains("DE40"));
+        assertTrue(symbolList.contains("US30"));
+        assertTrue(symbolList.contains("US500"));
+        assertTrue(symbolList.contains("USTEC"));
     }
 }

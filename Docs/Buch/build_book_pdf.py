@@ -35,7 +35,7 @@ OUT_DIR = Path(__file__).resolve().parent
 ASSET_DIR = OUT_DIR / "generated_assets"
 MD_PATH = OUT_DIR / "Mastering_the_Backtester.md"
 PDF_PATH = OUT_DIR / "Mastering_the_Backtester.pdf"
-VERSION = "1.1"
+VERSION = "1.2"
 BUILD_DATE = date.today().strftime("%d.%m.%Y")
 
 
@@ -692,21 +692,18 @@ def p(text: str) -> str:
 
 
 def repeated_lesson(theme: str, project_link: str) -> list[str]:
+    # Frueher wurde hier pro Kapitel derselbe ausfuehrliche Block ("Kette von
+    # Annahmen" + "Fuer das Projekt bedeutet das konkret") wiederholt. Das
+    # erzeugte in jedem Kapitel 1-10 fast wortidentische Absaetze. Stattdessen
+    # liefern wir nur noch EINEN knappen, fachspezifischen Satz und verweisen
+    # auf die Grundlagen in Kapitel 1.
     return [
         p(f"""
-        In der Praxis ist {theme} nie nur ein einzelner Knopf. Es ist eine Kette von Annahmen:
-        Welche Daten gelten als bekannt, welche Kosten werden simuliert, welche Parameter wurden
-        bereits gesehen und welche Kennzahlen sind wirklich unabhaengig? Der Backtester macht diese
-        Kette sichtbar, weil fast jeder Schritt eine eigene Klasse, einen eigenen Report oder einen
-        eigenen Datenbankeintrag besitzt. Dadurch kann ein Nutzer spaeter nachvollziehen, ob eine
-        Entscheidung aus dem Marktverhalten entstand oder aus einer zufaelligen Optimierungsspur.
-        """),
-        p(f"""
-        Fuer das Projekt bedeutet das konkret: {project_link}. Diese technische Entscheidung hat
-        eine fachliche Wirkung. Sie trennt Bedienkomfort von Bewertungslogik und verhindert, dass
-        die Oberflaeche allein zur Quelle der Wahrheit wird. Das ist wichtig, weil robuste
-        Strategieentwicklung wiederholbar sein muss. Ein gutes Ergebnis ist nur dann ernst zu
-        nehmen, wenn derselbe Ablauf mit denselben Daten und Parametern wiederhergestellt werden kann.
+        Architekturentscheidung: {project_link}. Das trennt Bedienkomfort von
+        Bewertungslogik (siehe Kapitel 1). Robuste Strategieentwicklung muss
+        wiederholbar sein: ein Ergebnis ist nur dann ernst zu nehmen, wenn
+        derselbe Ablauf mit denselben Daten und Parametern wiederhergestellt
+        werden kann.
         """),
     ]
 
@@ -1684,7 +1681,131 @@ def image_plan() -> list[tuple[str, str]]:
     ]
 
 
-def build_pdf(snapshot: dict[str, object], diagrams: dict[str, Path], chapters: list[Section]) -> None:
+def parse_markdown(path: Path) -> list:
+    """Parse die Mastering_the_Backtester.md in eine Story-Liste fuer reportlab.
+
+    Unterstuetzte Elemente:
+    - # Titel (Deckblatt-Ueberschrift, wird ignoriert, da Deckblatt eigen gebaut wird)
+    - ## Kapitelueberschrift
+    - ### Abschnitt
+    - ![alt](rel) Bild (aus images/ am Repo-Root)
+    - | a | b | Tabellen (mit Trennzeile)
+    - - Aufzaehlungspunkt
+    - Fl fliesstext (Absaetze)
+    """
+    import re as _re
+    lines = read_text(path).splitlines()
+    story: list = []
+    i = 0
+    n = len(lines)
+    first_h1_seen = False
+    in_toc = False
+    while i < n:
+        line = lines[i].rstrip()
+        stripped = line.strip()
+
+        # Bilder
+        m_img = _re.match(r"^!\[(.*?)\]\((.*?)\)\s*$", stripped)
+        if m_img:
+            alt = m_img.group(1)
+            rel = m_img.group(2).lstrip("/")
+            img_path = ROOT / rel
+            if img_path.exists():
+                story.append(KeepTogether([
+                    scaled_image(img_path, 15.8 * cm, 9.0 * cm),
+                    para(alt, st["Caption"]),
+                ]))
+            else:
+                story.append(para(f"[Bild nicht gefunden: {rel}]", st["Small"]))
+            i += 1
+            continue
+
+        # Ueberschriften
+        if stripped.startswith("## "):
+            title = stripped[3:].strip()
+            if title.lower().startswith("inhaltsverzeichnis"):
+                in_toc = True
+                i += 1
+                # ueberspringe die TOC-Liste
+                while i < n and (lines[i].strip().startswith("- ") or lines[i].strip() == ""):
+                    i += 1
+                in_toc = False
+                continue
+            story.append(para(title, st["Chapter"]))
+            i += 1
+            continue
+        if stripped.startswith("### "):
+            story.append(para(stripped[4:].strip(), st["Section"]))
+            i += 1
+            continue
+        if stripped.startswith("# "):
+            # H1 nur einmal (Titel) -> Deckblatt separat, hier ignorieren
+            i += 1
+            continue
+
+        # Tabellen
+        if stripped.startswith("|") and i + 1 < n and _re.match(r"^\s*\|[\s:|-]+\|\s*$", lines[i + 1]):
+            headers = [c.strip() for c in stripped.strip().strip("|").split("|")]
+            rows = []
+            i += 2  # header + trenner
+            while i < n and lines[i].strip().startswith("|"):
+                cells = [c.strip() for c in lines[i].strip().strip("|").split("|")]
+                # gleiche Spaltenzahl wie Header erzwingen
+                while len(cells) < len(headers):
+                    cells.append("")
+                rows.append(cells[:len(headers)])
+                i += 1
+            widths = _auto_widths(headers)
+            story.append(Spacer(1, 0.25 * cm))
+            story.append(make_table([headers] + rows, widths, st))
+            story.append(Spacer(1, 0.2 * cm))
+            continue
+
+        # Aufzaehlungen (Block)
+        if stripped.startswith("- "):
+            items = []
+            while i < n and lines[i].strip().startswith("- "):
+                items.append(ListItem(para(lines[i].strip()[2:].strip(), st["BookBullet"])))
+                i += 1
+            if items:
+                story.append(ListFlowable(items, bulletType="bullet", leftIndent=16))
+            continue
+
+        # Leerzeile
+        if stripped == "":
+            i += 1
+            continue
+
+        # Fliesstext: sammle bis zur naechsten Leerzeile/Element
+        buf = [stripped]
+        i += 1
+        while i < n and lines[i].strip() != "" and not lines[i].strip().startswith(("#", "- ", "|", "![")):
+            buf.append(lines[i].strip())
+            i += 1
+        text = " ".join(buf).strip()
+        if text:
+            story.append(para(text, st["Body"]))
+
+    return story
+
+
+def _auto_widths(headers: list) -> list:
+    ncol = len(headers)
+    if ncol == 1:
+        return [16.0 * cm]
+    if ncol == 2:
+        return [4.5 * cm, 11.5 * cm]
+    if ncol == 3:
+        return [4.5 * cm, 5.0 * cm, 7.5 * cm]
+    if ncol == 4:
+        return [3.4 * cm, 2.6 * cm, 8.0 * cm, 2.4 * cm]
+    if ncol == 5:
+        return [2.5 * cm, 3.6 * cm, 4.6 * cm, 3.3 * cm, 2.4 * cm]
+    return [16.0 * cm / ncol] * ncol
+
+
+def build_pdf(snapshot: dict[str, object], diagrams: dict[str, Path]) -> None:
+    global st
     st = styles()
     doc = SimpleDocTemplate(
         str(PDF_PATH),
@@ -1697,6 +1818,7 @@ def build_pdf(snapshot: dict[str, object], diagrams: dict[str, Path], chapters: 
         author="Codex",
     )
     story: list = []
+    # Deckblatt
     story.append(Spacer(1, 4.0 * cm))
     story.append(para("Mastering the Backtester", st["BookTitle"]))
     story.append(para("Ein Leitfaden zur robusten Strategieoptimierung und zur Architektur des Backtester-Projekts", st["BookSubTitle"]))
@@ -1706,195 +1828,9 @@ def build_pdf(snapshot: dict[str, object], diagrams: dict[str, Path], chapters: 
     story.append(para("Benutzerhandbuch, Lehrbuch und technische Projektdokumentation", st["BookSubTitle"]))
     story.append(PageBreak())
 
-    story.append(para("Inhaltsverzeichnis", st["Chapter"]))
-    toc_rows = [["Teil", "Inhalt"]]
-    for i, sec in enumerate(chapters, 1):
-        toc_rows.append([str(i), sec.title])
-    toc_rows.extend([
-        ["A", "Parameter-Referenz"],
-        ["B", "Sourcecode-Modulindex"],
-        ["C", "Kritische Klassen und Entwicklerleitfaden"],
-        ["D", "Betriebschecklisten und Troubleshooting"],
-        ["E", "Glossar"],
-        ["F", "Screenshot-Galerie, Quellen und Bildnachweis"],
-    ])
-    story.append(make_table(toc_rows, [1.2 * cm, 14.8 * cm], st))
-    story.append(PageBreak())
-
-    diagram_order = [
-        ("curve_fitting", "Curve Fitting zeigt den Unterschied zwischen robustem Signal und historischer Ueberanpassung."),
-        ("architecture", "Architekturuebersicht des Backtester-Projekts."),
-        ("workflow", "Die sieben Schritte der Anti-Curvefitting-Pipeline."),
-        ("mt5_process", "Vom Java-Klick zum MetaTrader-Report."),
-        ("database", "SQLite als Gedaechtnis der Anwendung."),
-        ("scorecard", "Scorecard-Modell mit realen Kennzahlen."),
-        ("oos_gate", "Step 7 als echte nachgelagerte Out-of-Sample-Validierung."),
-    ]
-    diagram_by_chapter = {
-        "Bedienungsanleitung 5": ("workflow", "Acht Arbeitsphasen: Vorbereitung plus die sieben UI-Schritte des Workflow Automators."),
-        "Kapitel 2": diagram_order[0],
-        "Kapitel 3": diagram_order[1],
-        "Kapitel 5": diagram_order[3],
-        "Kapitel 6": diagram_order[4],
-        "Kapitel 7": diagram_order[5],
-        "Kapitel 10": diagram_order[6],
-    }
-    screenshot_iter = iter(image_plan())
-
-    for sec in chapters:
-        story.append(para(sec.title, st["Chapter"]))
-        key = next((k for k in diagram_by_chapter if sec.title.startswith(k)), None)
-        if key:
-            name, caption = diagram_by_chapter[key]
-            story.append(scaled_image(diagrams[name], 16.2 * cm, 8.5 * cm))
-            story.append(para(caption, st["Caption"]))
-        for idx, text in enumerate(sec.paragraphs):
-            story.append(para(text, st["Body"]))
-            if idx == 2 and sec.title.startswith(("Kapitel 4", "Kapitel 8", "Kapitel 9")):
-                try:
-                    img_rel, cap = next(screenshot_iter)
-                    img_path = ROOT / img_rel
-                    if img_path.exists():
-                        story.append(scaled_image(img_path, 15.8 * cm, 8.4 * cm))
-                        story.append(para(cap, st["Caption"]))
-                except StopIteration:
-                    pass
-        if sec.bullets:
-            items = [ListItem(para(b, st["BookBullet"])) for b in sec.bullets]
-            story.append(ListFlowable(items, bulletType="bullet", leftIndent=16))
-        for rel, cap in manual_images_for(sec.title):
-            img_path = ROOT / rel
-            if img_path.exists():
-                story.append(KeepTogether([
-                    scaled_image(img_path, 15.8 * cm, 8.4 * cm),
-                    para(cap, st["Caption"]),
-                ]))
-        for table_title, headers, rows, widths in manual_tables_for(sec.title):
-            story.append(Spacer(1, 0.25 * cm))
-            story.append(para(table_title, st["Section"]))
-            story.append(make_table([headers] + list(rows), widths, st))
-        story.append(Spacer(1, 0.3 * cm))
-        if sec.title.startswith(("Bedienungsanleitung", "Kapitel")):
-            story.append(PageBreak())
-
-    story.append(PageBreak())
-    story.append(para("Anhang A: Parameter-Referenz", st["Chapter"]))
-    story.append(para("Die folgende Tabelle fasst die wichtigsten Projektparameter zusammen. Sie ist bewusst breit angelegt: Nutzer erkennen die Wirkung im Tool, Entwickler erkennen die betroffenen Konfigurationsgruppen.", st["Body"]))
-    rows = [["Parameter", "Gruppe", "Bedeutung", "Typische Werte"]] + PARAMETERS
-    story.append(make_table(rows, [3.2 * cm, 2.3 * cm, 8.5 * cm, 2.4 * cm], st))
-
-    story.append(PageBreak())
-    story.append(para("Anhang B: Sourcecode-Modulindex", st["Chapter"]))
-    story.append(para(f"Die Hauptanwendung umfasst {snapshot['main_java_files']} Java-Dateien in {len(snapshot['packages'])} Paketen. Die Tabelle zeigt die aus dem Repository abgeleitete Struktur.", st["Body"]))
-    package_rows = [["Paket", "Dateien", "Zeilen", "Rolle"]]
-    for pkg in snapshot["packages"]:
-        package_rows.append([pkg["package"], pkg["files"], pkg["lines"], PACKAGE_SUMMARY.get(str(pkg["package"]), "Projektmodul")])
-    story.append(make_table(package_rows, [4.3 * cm, 1.5 * cm, 1.8 * cm, 8.6 * cm], st))
-    story.append(Spacer(1, 0.5 * cm))
-    story.append(para("Klassenuebersicht", st["Section"]))
-    class_rows = [["Paket", "Klasse", "Zeilen"]]
-    for pkg, cls, lines in snapshot["classes"]:
-        class_rows.append([pkg, cls, lines])
-    story.append(make_table(class_rows, [6.5 * cm, 6.8 * cm, 2.0 * cm], st))
-
-    story.append(PageBreak())
-    story.append(para("Test- und Qualitaetsindex", st["Chapter"]))
-    story.append(para("Die Tests sind keine vollstaendige formale Spezifikation, aber sie zeigen, welche Verhaltensweisen als schuetzenswert betrachtet werden: Forward-Split, Workflow-Gates, Scorecard, Persistenz, Parser, Dukascopy und UI-Komponenten.", st["Body"]))
-    test_rows = [["Testdatei", "Zeilen"]]
-    for path, lines in snapshot["tests"]:
-        test_rows.append([path, lines])
-    story.append(make_table(test_rows, [13.5 * cm, 2.0 * cm], st))
-
-    story.append(PageBreak())
-    story.append(para("Anhang C: Kritische Klassen und Entwicklerleitfaden", st["Chapter"]))
-    story.append(para("Die folgenden Klassen sind die wichtigsten Orientierungspunkte fuer Entwickler. Sie sind nicht alle gleich gross, aber sie tragen die fachlichen Grenzen des Systems: Prozessstart, Parameterwahrheit, Score, Persistenz, Validierung und Export.", st["Body"]))
-    key_rows = [["Klasse / Datei", "Rolle im Projekt"]] + KEY_CLASSES
-    story.append(make_table(key_rows, [4.8 * cm, 11.0 * cm], st))
-    story.append(PageBreak())
-    story.append(para("Workflow-Schrittmatrix", st["Chapter"]))
-    story.append(para("Die Matrix verbindet Benutzeraktion, Code-Ort und fachlichen Kontrollpunkt. Genau diese Verbindung macht das Buch zu einer Projektdokumentation und nicht nur zu einer Bedienungsanleitung.", st["Body"]))
-    workflow_rows = [["Schritt", "Code-Ort", "Aufgabe", "Kritischer Punkt"]] + WORKFLOW_DETAILS
-    story.append(make_table(workflow_rows, [2.4 * cm, 4.1 * cm, 5.0 * cm, 4.3 * cm], st))
-    story.append(PageBreak())
-    story.append(para("Architekturentscheidungen", st["Chapter"]))
-    story.append(para("Die folgenden Entscheidungen sind im Sourcecode sichtbar und sollten bei Erweiterungen respektiert werden. Sie beschreiben nicht nur, wie das Projekt gebaut ist, sondern warum bestimmte Grenzen existieren.", st["Body"]))
-    decision_rows = [["Entscheidung", "Umsetzung", "Wirkung"]] + ARCHITECTURE_DECISIONS
-    story.append(make_table(decision_rows, [4.4 * cm, 5.5 * cm, 5.8 * cm], st))
-    story.append(Spacer(1, 0.5 * cm))
-    story.append(para("Datenfluesse", st["Section"]))
-    flow_rows = [["Fluss", "Kette"]] + DATA_FLOWS
-    story.append(make_table(flow_rows, [3.0 * cm, 12.6 * cm], st))
-    story.append(PageBreak())
-    story.append(para("Entwicklerleitfaden: Erweiterungen ohne Methodikbruch", st["Chapter"]))
-    dev_paras = [
-        "Neue Funktionen sollten zuerst entscheiden, welche Schicht betroffen ist: UI, Engine, Report, Persistenz oder Datenimport. Ein neues UI-Element darf keine fachliche Regel umgehen, die bereits in WorkflowEngine, ScoreWeights oder ValidationResult kodiert ist.",
-        "Neue Score-Komponenten muessen auf real gemessenen Daten beruhen. Historisch wurden synthetische Saeulen entfernt, weil sie ein Gefuehl von Genauigkeit erzeugen konnten, ohne echte MetaTrader-Messwerte zu nutzen.",
-        "Neue Datenbankfelder brauchen defensive Migrationen. DatabaseManager wird bei bestehenden Nutzern laufen, deren history.db bereits alte Tabellen besitzt. Migrationen muessen fehlende Spalten erkennen und alte Daten erhalten.",
-        "Neue Runner sollten Seiteneffekte kapseln. Prozessstart, Dateikopien, Timeouts und Logtailing gehoeren in die Engine. UI-Klassen sollen den Start ausloesen und Status anzeigen, aber nicht selbst MetaTrader-Prozessdetails duplizieren.",
-        "Neue KI-Funktionen muessen zwischen Analyse und Entscheidung unterscheiden. Ein LLM kann Kennlinien erklaeren, aber eine PASSED-Validierung in Step 7 darf nicht durch einen sprachlichen Score ersetzt werden.",
-        "Neue Exportwege muessen die gleiche Gate-Logik respektieren wie exportPortfolio: Wenn Validierungsergebnisse existieren, sind nur PASSED-Kandidaten fuer den Best-Ordner geeignet.",
-        "Neue Tests sollten die fachliche Grenze abdecken, nicht nur die Codezeile. Besonders wichtig sind ForwardSplit, WorkflowValidationAndGateTest, Scorecard-Tests, Parser-Tests und Persistenztests.",
-        "Bei Refactorings der UI ist darauf zu achten, dass JavaFX die primaere Oberflaeche ist, Swing aber weiterhin relevante Bedien- und Dokumentationsspuren besitzt. Entfernen ohne Migrationsplan wuerde Nutzerpfade brechen.",
-    ]
-    for text in dev_paras:
-        story.append(para(text, st["Body"]))
-
-    story.append(PageBreak())
-    story.append(para("Anhang D: Betriebschecklisten und Troubleshooting", st["Chapter"]))
-    story.append(para("Diese Checklisten sind als Arbeitsblatt gedacht. Sie helfen, eine Strategie nicht zu frueh als robust einzustufen und typische Betriebsprobleme schneller zu diagnostizieren.", st["Body"]))
-    check_rows = [["Phase", "Pruefung", "Warum wichtig"]] + CHECKLISTS
-    story.append(make_table(check_rows, [3.0 * cm, 4.5 * cm, 8.2 * cm], st))
-    story.append(PageBreak())
-    story.append(para("Troubleshooting", st["Chapter"]))
-    trouble_rows = [["Symptom", "Diagnose / Loesung"]] + TROUBLESHOOTING
-    story.append(make_table(trouble_rows, [5.2 * cm, 10.5 * cm], st))
-
-    story.append(PageBreak())
-    story.append(para("Anhang E: Glossar", st["Chapter"]))
-    story.append(para("Das Glossar uebersetzt zentrale Begriffe aus Trading, Statistik, MetaTrader und Projektarchitektur in kurze Arbeitsdefinitionen.", st["Body"]))
-    glossary_rows = [["Begriff", "Bedeutung"]] + GLOSSARY
-    story.append(make_table(glossary_rows, [4.2 * cm, 11.5 * cm], st))
-
-    story.append(PageBreak())
-    story.append(para("Anhang F: Screenshot-Galerie", st["Chapter"]))
-    story.append(para("Die Galerie zeigt zuerst die fuer dieses Buch erzeugten Erklaergrafiken und danach die wichtigsten vorhandenen Projektbilder. Sie lockert das Buch auf und dient zugleich als visueller Index der Architektur und Benutzeroberflaeche.", st["Body"]))
-    generated_gallery = [
-        ("architecture", "Grafikindex: Architekturuebersicht des Backtester-Projekts."),
-        ("workflow", "Grafikindex: 8-Phasen Anti-Curvefitting Workflow."),
-        ("mt5_process", "Grafikindex: MT5-Prozessablauf."),
-        ("database", "Grafikindex: Persistenzmodell der Anwendung."),
-        ("scorecard", "Grafikindex: Scorecard-Modell."),
-        ("oos_gate", "Grafikindex: Step-7-OOS-Gate."),
-        ("curve_fitting", "Grafikindex: Curve-Fitting-Erklaergrafik."),
-    ]
-    for name, cap in generated_gallery:
-        story.append(KeepTogether([
-            scaled_image(diagrams[name], 16.0 * cm, 10.2 * cm),
-            para(cap, st["Caption"]),
-        ]))
-        story.append(PageBreak())
-    for rel, cap in image_plan():
-        img_path = ROOT / rel
-        if img_path.exists():
-            story.append(KeepTogether([
-                scaled_image(img_path, 15.8 * cm, 9.4 * cm),
-                para(cap, st["Caption"]),
-            ]))
-            story.append(PageBreak())
-
-    story.append(PageBreak())
-    story.append(para("Quellen und Bildnachweis", st["Chapter"]))
-    story.append(para("Webquellen wurden fuer die Lehrbuchteile zu Backtesting, Overfitting, Walk-Forward-Analyse und Out-of-Sample-Validierung herangezogen. Projektaussagen wurden aus dem lokalen Repository abgeleitet.", st["Body"]))
-    source_rows = [["Quelle", "Titel", "URL"]] + SOURCES
-    story.append(make_table(source_rows, [2.7 * cm, 6.3 * cm, 7.0 * cm], st))
-    story.append(Spacer(1, 0.5 * cm))
-    story.append(para("Bildnachweis", st["Section"]))
-    image_rows = [["Bild", "Herkunft"]]
-    for name, path in diagrams.items():
-        image_rows.append([path.name, "Fuer dieses Buch generierte Erklaergrafik"])
-    for rel, cap in image_plan():
-        image_rows.append([rel, cap])
-    story.append(make_table(image_rows, [6.0 * cm, 9.8 * cm], st))
+    # Inhalt aus Markdown parsen
+    body = parse_markdown(MD_PATH)
+    story.extend(body)
 
     doc.build(story, onFirstPage=footer, onLaterPages=footer)
 
@@ -1904,9 +1840,16 @@ def main() -> None:
     ASSET_DIR.mkdir(parents=True, exist_ok=True)
     snapshot = repo_snapshot()
     diagrams = make_diagrams()
-    chapters = build_chapters(snapshot)
-    write_markdown(snapshot, diagrams, chapters)
-    build_pdf(snapshot, diagrams, chapters)
+    # REGEN_MD=1 erzeugt die Markdown-Datei neu (ueberschreibt manuelle
+    # Bearbeitungen). Standardmaessig wird die vorhandene .md als einzige
+    # Quelle fuer das PDF geparst.
+    regen = os.environ.get("REGEN_MD", "") == "1"
+    if regen or not MD_PATH.exists():
+        chapters = build_chapters(snapshot)
+        write_markdown(snapshot, diagrams, chapters)
+    else:
+        print(f"Using existing {MD_PATH} as source (set REGEN_MD=1 to regenerate).")
+    build_pdf(snapshot, diagrams)
     print(f"Wrote {MD_PATH}")
     print(f"Wrote {PDF_PATH}")
 

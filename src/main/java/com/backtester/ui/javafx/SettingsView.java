@@ -23,6 +23,7 @@ public class SettingsView {
     private TextField mt5PathField;
     private TextField mt4PathField;
     private CheckBox portableCheckbox;
+    private ComboBox<String> launchModeCombo;
     private Label statusLabel;
 
     // Directory settings
@@ -116,6 +117,23 @@ public class SettingsView {
         portableCheckbox.setSelected(config.isPortableMode());
         grid.add(portableCheckbox, 1, 2);
 
+        grid.add(new Label("Start-Modus (MT5):"), 0, 3);
+        launchModeCombo = new ComboBox<>(FXCollections.observableArrayList(
+            "Normal (Sichtbar)",
+            "Virtueller Desktop 2",
+            "Headless (Unsichtbar /hide)"
+        ));
+        String currentMode = config.get("mt5.launch.mode", "HEADLESS");
+        if ("HEADLESS".equalsIgnoreCase(currentMode)) {
+            launchModeCombo.setValue("Headless (Unsichtbar /hide)");
+        } else if ("NORMAL".equalsIgnoreCase(currentMode)) {
+            launchModeCombo.setValue("Normal (Sichtbar)");
+        } else {
+            launchModeCombo.setValue("Virtueller Desktop 2");
+        }
+        launchModeCombo.getStyleClass().add("combo-box");
+        grid.add(launchModeCombo, 1, 3);
+
         statusLabel = new Label();
         statusLabel.setStyle("-fx-font-style: italic; -fx-font-size: 11px;");
         
@@ -143,7 +161,7 @@ public class SettingsView {
         updateStatus.run();
         mt5PathField.textProperty().addListener((obs, oldV, newV) -> updateStatus.run());
         mt4PathField.textProperty().addListener((obs, oldV, newV) -> updateStatus.run());
-        grid.add(statusLabel, 0, 3, 2, 1);
+        grid.add(statusLabel, 0, 4, 2, 1);
 
         section.getChildren().add(grid);
         return section;
@@ -273,6 +291,14 @@ public class SettingsView {
         config.setMt5TerminalPath(mt5Path);
         config.setMt4TerminalPath(mt4Path);
         config.set("mt5.portable.mode", String.valueOf(portableCheckbox.isSelected()));
+        String selectedMode = "VIRTUAL_DESKTOP";
+        String val = launchModeCombo.getValue();
+        if ("Headless (Unsichtbar /hide)".equals(val)) {
+            selectedMode = "HEADLESS";
+        } else if ("Normal (Sichtbar)".equals(val)) {
+            selectedMode = "NORMAL";
+        }
+        config.set("mt5.launch.mode", selectedMode);
         config.setReportsDirectory(outputDirField.getText().trim());
         config.setDataDirectory(dataDirField.getText().trim());
         config.set("backtest.deposit", String.valueOf(depositSpinner.getValue()));
@@ -291,6 +317,7 @@ public class SettingsView {
         mt5PathField.setText("C:\\Program Files\\MetaTrader 5\\terminal64.exe");
         mt4PathField.setText("C:\\Program Files\\MetaTrader 4\\terminal.exe");
         portableCheckbox.setSelected(true);
+        launchModeCombo.setValue("Virtueller Desktop 2");
         depositSpinner.getValueFactory().setValue(10000);
         currencyCombo.setValue("USD");
         leverageField.setText("1:100");

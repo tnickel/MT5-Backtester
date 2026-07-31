@@ -309,6 +309,37 @@ public class DatabaseManagerPersistenceTest {
     }
 
     @Test
+    public void testTradeFirstProfileIsInitialized() {
+        assertEquals("1", db.getSetting("workflow.selection.profile.version"));
+        assertEquals("30", db.getSetting("opt.weight.fwTrades"));
+        assertEquals("21", db.getSetting("opt.weight.recovery"));
+        assertEquals("100", db.getSetting("opt.filter.minBtTrades"));
+        assertEquals("50", db.getSetting("opt.filter.minFwTrades"));
+        assertEquals("1.0", db.getSetting("opt.filter.minBtRecovery"));
+        assertEquals("1.0", db.getSetting("opt.filter.minFwRecovery"));
+    }
+
+    @Test
+    public void testRepeatedInitializationPreservesCustomScoreSettings() throws Exception {
+        db.saveSetting("workflow.selection.profile.version", "1");
+        db.saveSetting("opt.weight.consistency", "15");
+        db.saveSetting("opt.weight.risk", "15");
+        db.saveSetting("opt.weight.sampleSize", "10");
+        db.saveSetting("opt.weight.fwTrades", "5");
+        db.saveSetting("opt.weight.recovery", "5");
+
+        java.lang.reflect.Method initMethod = DatabaseManager.class.getDeclaredMethod("initializeDatabase");
+        initMethod.setAccessible(true);
+        initMethod.invoke(db);
+
+        assertEquals("15", db.getSetting("opt.weight.consistency"));
+        assertEquals("15", db.getSetting("opt.weight.risk"));
+        assertEquals("10", db.getSetting("opt.weight.sampleSize"));
+        assertEquals("5", db.getSetting("opt.weight.fwTrades"));
+        assertEquals("5", db.getSetting("opt.weight.recovery"));
+    }
+
+    @Test
     public void testDeleteKiReport() {
         db.saveKiReport(1000L, "TestEA", "EURUSD", "H1", "Report Markdown");
         java.util.List<com.backtester.engine.KiReport> reports = db.getAllKiReports();
