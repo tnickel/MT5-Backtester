@@ -272,25 +272,23 @@ public class VirtualDesktopHelper {
                     "Import-Module VirtualDesktop -WarningAction SilentlyContinue 3>$null; " +
                     "$count = Get-DesktopCount; " +
                     "if ($count -lt 2) { New-Desktop | Out-Null; } " +
-                    "$curD = Get-CurrentDesktop; " +
                     "$d2 = Get-Desktop 1; " +
                     "$hwnd = 0; " +
-                    "for ($i = 0; $i -lt 40; $i++) { " +
-                    "  Start-Sleep -Milliseconds 500; " +
-                    "  $procs = Get-Process | Where-Object { $_.Id -eq " + pid + " }; " +
-                    "  if (-not $procs) { Write-Host 'Process gone'; break; } " +
+                    "for ($i = 0; $i -lt 80; $i++) { " +
+                    "  Start-Sleep -Milliseconds 250; " +
+                    "  $procs = Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.Id -eq " + pid + " -or $_.ProcessName -like '*terminal*' }; " +
                     "  foreach ($p in $procs) { " +
-                    "    try { $p.Refresh(); } catch {} " +
-                    "    if ($p.MainWindowHandle -ne 0) { $hwnd = $p.MainWindowHandle; break; } " +
+                    "    try { " +
+                    "      $p.Refresh(); " +
+                    "      if ($p.MainWindowHandle -ne 0) { " +
+                    "        $hwnd = $p.MainWindowHandle; " +
+                    "        Move-Window -Desktop $d2 -Hwnd $hwnd -ErrorAction SilentlyContinue; " +
+                    "      } " +
+                    "    } catch {} " +
                     "  } " +
-                    "  if ($hwnd -ne 0) { break; } " +
+                    "  if ($hwnd -ne 0) { Write-Host 'MOVED'; break; } " +
                     "} " +
-                    "if ($hwnd -ne 0) { " +
-                    "  try { " +
-                    "    Move-Window -Desktop $d2 -Hwnd $hwnd; " +
-                    "    Write-Host 'MOVED'; " +
-                    "  } catch { Write-Host 'MOVE_FAILED'; } " +
-                    "} else { Write-Host 'NO_HWND'; }";
+                    "if ($hwnd -eq 0) { Write-Host 'NO_HWND'; }";
 
                 ProcessBuilder pb = new ProcessBuilder("powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", psScript);
                 pb.redirectErrorStream(true);
@@ -323,16 +321,20 @@ public class VirtualDesktopHelper {
                 : "$app = Start-Process -FilePath '" + escapedExe + "' -ArgumentList '" + escapedArgs + "' -PassThru; ") +
             "$spid = $app.Id; " +
             "Write-Host \"STARTED_PID:$spid\"; " +
-            "for ($i = 0; $i -lt 30; $i++) { " +
-            "  Start-Sleep -Milliseconds 150; " +
-            "  $p = Get-Process -Id $spid -ErrorAction SilentlyContinue; " +
-            "  if ($p) { " +
-            "    $p.Refresh(); " +
-            "    if ($p.MainWindowHandle -ne 0) { " +
-            "      try { Move-Window -Desktop $d2 -Hwnd $p.MainWindowHandle; } catch {} " +
-            "      break; " +
-            "    } " +
+            "for ($i = 0; $i -lt 120; $i++) { " +
+            "  Start-Sleep -Milliseconds 250; " +
+            "  $procs = Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.Id -eq $spid -or $_.ProcessName -like '*terminal*' }; " +
+            "  $moved = $false; " +
+            "  foreach ($p in $procs) { " +
+            "    try { " +
+            "      $p.Refresh(); " +
+            "      if ($p.MainWindowHandle -ne 0) { " +
+            "        Move-Window -Desktop $d2 -Hwnd $p.MainWindowHandle -ErrorAction SilentlyContinue; " +
+            "        $moved = $true; " +
+            "      } " +
+            "    } catch {} " +
             "  } " +
+            "  if ($moved) { break; } " +
             "} " +
             "Write-Host 'MOVE_OK';";
     }
