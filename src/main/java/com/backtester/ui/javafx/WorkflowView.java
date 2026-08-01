@@ -64,6 +64,7 @@ public class WorkflowView {
     private final BorderPane root;
     private final LogView globalLogView;
     private final WorkflowEngine engine;
+    private final ProjectWorkflowEditorView projectWorkflowEditorView;
     private Tab workflowTab;
 
     // UI elements
@@ -131,14 +132,14 @@ public class WorkflowView {
 
         StackPane customProjectsStack = new StackPane();
         CustomProjectsOverviewView overviewView = new CustomProjectsOverviewView();
-        ProjectWorkflowEditorView editorView = new ProjectWorkflowEditorView();
+        projectWorkflowEditorView = new ProjectWorkflowEditorView();
 
         overviewView.setOnOpenProjectCallback(proj -> {
-            editorView.loadProject(proj);
-            customProjectsStack.getChildren().setAll(editorView.getView());
+            projectWorkflowEditorView.loadProject(proj);
+            customProjectsStack.getChildren().setAll(projectWorkflowEditorView.getView());
         });
 
-        editorView.setOnBackToOverviewCallback(() -> {
+        projectWorkflowEditorView.setOnBackToOverviewCallback(() -> {
             overviewView.reloadProjects();
             customProjectsStack.getChildren().setAll(overviewView.getView());
         });
@@ -182,6 +183,10 @@ public class WorkflowView {
 
     public BorderPane getView() {
         return root;
+    }
+
+    public void shutdown() {
+        projectWorkflowEditorView.shutdown();
     }
 
     public void bindTab(Tab tab) {

@@ -40,7 +40,7 @@ public class WorkflowEngine {
     private int deposit = 10000;
     private String currency = "USD";
     private String leverage = "1:100";
-    private int tickModel = 1; // 1 = Every tick
+    private int tickModel = BacktestConfig.MODEL_OHLC_M1;
     private List<EaParameter> eaParameters = new ArrayList<>();
 
     // Step 2 State
@@ -109,9 +109,11 @@ public class WorkflowEngine {
     private String lastExportDirectory = "";
 
     // Pipeline Runners
-    private OptimizationRunner currentOptRunner;
-    private SensitivityRunner currentSensitivityRunner;
-    private BacktestRunner currentValidationRunner;
+    private volatile OptimizationRunner currentOptRunner;
+    private volatile SensitivityRunner currentSensitivityRunner;
+    private volatile BacktestRunner currentLongtermRunner;
+    private volatile BacktestRunner currentValidationRunner;
+    private volatile boolean cancelRequested;
 
     public WorkflowEngine(AppConfig config) {
         this.config = config;
@@ -127,13 +129,15 @@ public class WorkflowEngine {
 
         try {
             String pwStr = db.getSetting(LlmAnalysisService.SETTING_PERFORMANCE_WEIGHT);
-            this.performanceWeight = pwStr != null && !pwStr.isEmpty() ? Double.parseDouble(pwStr) : LlmAnalysisService.DEFAULT_PERFORMANCE_WEIGHT;
+            setPerformanceWeight(pwStr != null && !pwStr.isEmpty()
+                    ? Double.parseDouble(pwStr) : LlmAnalysisService.DEFAULT_PERFORMANCE_WEIGHT);
         } catch (Exception e) {
             this.performanceWeight = LlmAnalysisService.DEFAULT_PERFORMANCE_WEIGHT;
         }
         try {
             String swStr = db.getSetting(LlmAnalysisService.SETTING_STABILITY_WEIGHT);
-            this.stabilityWeight = swStr != null && !swStr.isEmpty() ? Double.parseDouble(swStr) : LlmAnalysisService.DEFAULT_STABILITY_WEIGHT;
+            setStabilityWeight(swStr != null && !swStr.isEmpty()
+                    ? Double.parseDouble(swStr) : LlmAnalysisService.DEFAULT_STABILITY_WEIGHT);
         } catch (Exception e) {
             this.stabilityWeight = LlmAnalysisService.DEFAULT_STABILITY_WEIGHT;
         }
@@ -270,6 +274,11 @@ public class WorkflowEngine {
         this.kiGateBypassed = false;
         this.validationResults = new ArrayList<>();
         this.lastExportDirectory = "";
+    }
+
+    /** Clears run-specific state when switching into a custom project. */
+    public void resetTransientResults() {
+        clearRunResults();
     }
 
     public void saveStrategyConfig(String expertName) {
@@ -555,6 +564,7 @@ public class WorkflowEngine {
 
     public OptimizationResult runStep2(Consumer<String> logCallback, java.util.function.BiConsumer<Integer, Integer> progressCallback) throws Exception {
         runStep1(); // Ensure step 1 parameters are saved
+        requireValidDateRange(fromDate, toDate, "Optimierungszeitraum");
 
         OptimizationConfig optConfig = new OptimizationConfig();
         optConfig.setExpert(expert);
@@ -690,38 +700,62 @@ public class WorkflowEngine {
     public void setMinLtPf(double v) { this.minLtPf = v; }
 
     public List<CombinedPass> runLongtermTest(Consumer<String> logCallback, Consumer<Integer> progressCallback) throws Exception {
-        if (optResult == null) {
-            throw new IllegalStateException("Kein Optimierungsergebnis vorhanden. Bitte führe zuerst Schritt 2 aus.");
-        }
+        return runLongtermTest(null, logCallback, progressCallback);
+    }
 
-        List<CombinedPass> allPasses = optResult.buildCombinedPasses(forwardMode > 0, loadScoreWeightsFromDb());
+    /**
+     * Runs a long-term retest for an explicit databank snapshot. A null input
+     * retains the legacy wizard behaviour and builds candidates from optResult;
+     * an explicit empty list remains empty and never resurrects stale results.
+     */
+    public List<CombinedPass> runLongtermTest(List<CombinedPass> inputPasses,
+                                              Consumer<String> logCallback,
+                                              Consumer<Integer> progressCallback) throws Exception {
+        cancelRequested = false;
+        requireValidDateRange(getEffectiveLongtermFromDate(), getEffectiveLongtermToDate(), "Langzeittest-Zeitraum");
+        List<CombinedPass> allPasses;
+        if (inputPasses != null) {
+            allPasses = new ArrayList<>();
+            for (CombinedPass pass : inputPasses) {
+                if (pass != null) allPasses.add(pass);
+            }
+        } else {
+            if (optResult == null) {
+                throw new IllegalStateException("Kein Optimierungsergebnis vorhanden. Bitte führe zuerst Schritt 2 aus.");
+            }
+            allPasses = optResult.buildCombinedPasses(forwardMode > 0, loadScoreWeightsFromDb());
+        }
         if (allPasses.isEmpty()) {
             log.warn("Langzeittest: 0 Pässe vorhanden.");
             return new ArrayList<>();
         }
 
-        // 1. Pre-filter candidates using strict short-term criteria
         List<CombinedPass> candidates = new ArrayList<>();
-        for (CombinedPass cp : allPasses) {
-            if (!isPositiveFinite(cp.getBtProfit()) || cp.getBtProfit() < minBtProfit) continue;
-            if (cp.getBtTrades() < minBtTrades) continue;
-            if (!meetsMinimum(cp.getBtRecovery(), minBtRecovery)) continue;
-            if (cp.getBtDd() > maxBtDd) continue;
-            if (forwardMode > 0) {
-                if (!isPositiveFinite(cp.getFwProfit()) || cp.getFwProfit() < minFwProfit) continue;
-                if (cp.getFwTrades() < minFwTrades) continue;
-                if (!meetsMinimum(cp.getFwRecovery(), minFwRecovery)) continue;
-                if (cp.getFwDd() > maxFwDd) continue;
+        if (inputPasses != null) {
+            // The custom-project UI promises "retest all strategies from databank".
+            // Its explicit filter task is the sole gate, so legacy hidden limits
+            // must not silently discard source rows here.
+            candidates.addAll(allPasses);
+        } else {
+            // Legacy wizard: pre-filter candidates using its configured criteria.
+            for (CombinedPass cp : allPasses) {
+                if (!isPositiveFinite(cp.getBtProfit()) || cp.getBtProfit() < minBtProfit) continue;
+                if (cp.getBtTrades() < minBtTrades) continue;
+                if (!meetsMinimum(cp.getBtRecovery(), minBtRecovery)) continue;
+                if (!Double.isFinite(cp.getBtDd()) || cp.getBtDd() > maxBtDd) continue;
+                if (forwardMode > 0) {
+                    if (!isPositiveFinite(cp.getFwProfit()) || cp.getFwProfit() < minFwProfit) continue;
+                    if (cp.getFwTrades() < minFwTrades) continue;
+                    if (!meetsMinimum(cp.getFwRecovery(), minFwRecovery)) continue;
+                    if (!Double.isFinite(cp.getFwDd()) || cp.getFwDd() > maxFwDd) continue;
+                }
+                candidates.add(cp);
             }
-            candidates.add(cp);
-        }
 
-        // Sort candidates by combined score descending
-        candidates.sort((cp1, cp2) -> Double.compare(cp2.getScore(), cp1.getScore()));
-
-        // Limit to maxLongtermCandidates
-        if (candidates.size() > maxLongtermCandidates) {
-            candidates = new ArrayList<>(candidates.subList(0, maxLongtermCandidates));
+            candidates.sort((cp1, cp2) -> Double.compare(cp2.getScore(), cp1.getScore()));
+            if (candidates.size() > maxLongtermCandidates) {
+                candidates = new ArrayList<>(candidates.subList(0, maxLongtermCandidates));
+            }
         }
 
         if (candidates.isEmpty()) {
@@ -737,58 +771,71 @@ public class WorkflowEngine {
         java.nio.file.Path presetsDir = config.getTesterProfilesDir(expert);
         java.nio.file.Files.createDirectories(presetsDir);
 
-        BacktestRunner runner = new BacktestRunner();
-        runner.setLogCallback(logCallback);
+        currentLongtermRunner = new BacktestRunner();
+        currentLongtermRunner.setLogCallback(logCallback);
 
         int total = candidates.size();
-        for (int i = 0; i < total; i++) {
-            CombinedPass cp = candidates.get(i);
-            if (progressCallback != null) {
-                progressCallback.accept((i * 100) / total);
-            }
+        List<CombinedPass> successfulCandidates = new ArrayList<>();
+        try {
+            for (int i = 0; i < total; i++) {
+                if (cancelRequested || Thread.currentThread().isInterrupted()) {
+                    throw new InterruptedException("Langzeittest abgebrochen.");
+                }
+                CombinedPass cp = candidates.get(i);
+                cp.setLongtermPass(null);
+                if (progressCallback != null) {
+                    progressCallback.accept((i * 100) / total);
+                }
 
-            String presetFileName = "Longterm_Pass" + cp.getPassNumber() + ".set";
-            java.nio.file.Path presetFile = presetsDir.resolve(presetFileName);
-            List<EaParameter> finalParams = buildFinalParams(cp);
-            eaParamManager.writeSetFile(presetFile, finalParams, expert);
+                String presetFileName = "Longterm_Pass" + cp.getPassNumber() + ".set";
+                java.nio.file.Path presetFile = presetsDir.resolve(presetFileName);
+                List<EaParameter> finalParams = buildFinalParams(cp);
+                eaParamManager.writeSetFile(presetFile, finalParams, expert);
 
-            BacktestConfig btConfig = new BacktestConfig();
-            btConfig.setExpert(expert);
-            btConfig.setExpertParameters(presetFileName);
-            btConfig.setSymbol(symbol);
-            btConfig.setPeriod(period);
-            btConfig.setFromDate(getEffectiveLongtermFromDate());
-            btConfig.setToDate(getEffectiveLongtermToDate());
-            btConfig.setDeposit(deposit);
-            btConfig.setCurrency(currency);
-            btConfig.setLeverage(leverage);
-            btConfig.setModel(tickModel);
-            btConfig.setShutdownTerminal(true);
-            btConfig.setAutoKillMt5(true);
-            btConfig.setReportFileName("LongtermReport_Pass" + cp.getPassNumber());
+                BacktestConfig btConfig = new BacktestConfig();
+                btConfig.setExpert(expert);
+                btConfig.setExpertParameters(presetFileName);
+                btConfig.setSymbol(symbol);
+                btConfig.setPeriod(period);
+                btConfig.setFromDate(getEffectiveLongtermFromDate());
+                btConfig.setToDate(getEffectiveLongtermToDate());
+                btConfig.setDeposit(deposit);
+                btConfig.setCurrency(currency);
+                btConfig.setLeverage(leverage);
+                btConfig.setModel(tickModel);
+                btConfig.setShutdownTerminal(true);
+                btConfig.setAutoKillMt5(true);
+                btConfig.setReportFileName("LongtermReport_Pass" + cp.getPassNumber());
 
-            if (logCallback != null) {
-                logCallback.accept(String.format("[%d/%d] Führe Langzeittest für Pass %d aus...", (i + 1), total, cp.getPassNumber()));
-            }
-
-            BacktestResult btRes = runner.runBacktest(btConfig);
-            if (btRes != null) {
-                OptimizationResult.Pass ltPass = new OptimizationResult.Pass();
-                ltPass.setPassNumber(cp.getPassNumber());
-                ltPass.setProfit(btRes.getTotalProfit());
-                ltPass.setTotalTrades(btRes.getTotalTrades());
-                ltPass.setProfitFactor(btRes.getProfitFactor());
-                ltPass.setDrawdownPercent(btRes.getMaxDrawdownPercent());
-                ltPass.setRecoveryFactor(btRes.getRecoveryFactor());
-                ltPass.setSharpeRatio(btRes.getSharpeRatio());
-                ltPass.setExpectedPayoff(btRes.getExpectedPayoff());
-                ltPass.setParameterValues(cp.getBacktestPass().getParameterValues());
-                cp.setLongtermPass(ltPass);
-            } else {
                 if (logCallback != null) {
-                    logCallback.accept(String.format("WARNUNG: Pass %d Langzeittest schlug fehl.", cp.getPassNumber()));
+                    logCallback.accept(String.format("[%d/%d] Führe Langzeittest für Pass %d aus...", (i + 1), total, cp.getPassNumber()));
+                }
+
+                BacktestResult btRes = currentLongtermRunner.runBacktest(btConfig);
+                if (cancelRequested || Thread.currentThread().isInterrupted()) {
+                    throw new InterruptedException("Langzeittest abgebrochen.");
+                }
+                if (btRes != null && btRes.isSuccess()) {
+                    OptimizationResult.Pass ltPass = new OptimizationResult.Pass();
+                    ltPass.setPassNumber(cp.getPassNumber());
+                    ltPass.setProfit(btRes.getTotalProfit());
+                    ltPass.setTotalTrades(btRes.getTotalTrades());
+                    ltPass.setProfitFactor(btRes.getProfitFactor());
+                    ltPass.setDrawdownPercent(btRes.getMaxDrawdownPercent());
+                    ltPass.setRecoveryFactor(btRes.getRecoveryFactor());
+                    ltPass.setSharpeRatio(btRes.getSharpeRatio());
+                    ltPass.setExpectedPayoff(btRes.getExpectedPayoff());
+                    ltPass.setParameterValues(cp.getBacktestPass().getParameterValues());
+                    cp.setLongtermPass(ltPass);
+                    successfulCandidates.add(cp);
+                } else if (logCallback != null) {
+                    String detail = btRes != null ? btRes.getMessage() : "kein Ergebnis";
+                    logCallback.accept(String.format("WARNUNG: Pass %d Langzeittest schlug fehl: %s",
+                            cp.getPassNumber(), detail));
                 }
             }
+        } finally {
+            currentLongtermRunner = null;
         }
 
         if (progressCallback != null) {
@@ -796,7 +843,7 @@ public class WorkflowEngine {
         }
 
         saveState();
-        return candidates;
+        return successfulCandidates;
     }
 
     public List<CombinedPass> runStep3() {
@@ -813,16 +860,26 @@ public class WorkflowEngine {
 
         // Build combined passes from optResult
         List<CombinedPass> allPasses = optResult.buildCombinedPasses(forwardMode > 0, loadScoreWeightsFromDb());
+        return selectDiversePasses(allPasses);
+    }
+
+    /** Applies the diversity gate to an explicit custom-project databank. */
+    public List<CombinedPass> selectDiversePasses(List<CombinedPass> allPasses) {
         selectedDiversePasses = filterDiversePasses(allPasses);
+        sensitivityResults = new ArrayList<>();
+        kiReportText = "";
+        finalSelectedPasses = new ArrayList<>();
+        validationResults = new ArrayList<>();
         this.lastActiveStep = Math.max(this.lastActiveStep, 3);
         saveState();
-        return selectedDiversePasses;
+        return new ArrayList<>(selectedDiversePasses);
     }
 
     public List<SensitivityResult> runStep4(Consumer<String> logCallback, Consumer<Integer> progressCallback) throws Exception {
-        if (selectedDiversePasses.isEmpty()) {
+        if (selectedDiversePasses == null || selectedDiversePasses.isEmpty()) {
             throw new IllegalStateException("Keine ausgewählten Strategien für die Sensitivitätsanalyse vorhanden. Bitte führe zuerst Schritt 3 aus.");
         }
+        requireValidDateRange(fromDate, toDate, "Robustness-Zeitraum");
 
         List<SensitivityResult> targets = new ArrayList<>();
         for (CombinedPass cp : selectedDiversePasses) {
@@ -857,8 +914,28 @@ public class WorkflowEngine {
         return sensitivityResults;
     }
 
+    /** Prevents an AI task from analysing stale sensitivity rows from another databank route. */
+    public void retainSensitivityResultsForPasses(List<CombinedPass> passes) {
+        Set<Integer> passNumbers = new HashSet<>();
+        if (passes != null) {
+            for (CombinedPass pass : passes) {
+                if (pass != null) passNumbers.add(pass.getPassNumber());
+            }
+        }
+        List<SensitivityResult> retained = new ArrayList<>();
+        if (sensitivityResults != null) {
+            for (SensitivityResult result : sensitivityResults) {
+                if (result != null && result.getOriginalPass() != null
+                        && passNumbers.contains(result.getOriginalPass().getPassNumber())) {
+                    retained.add(result);
+                }
+            }
+        }
+        sensitivityResults = retained;
+    }
+
     public String runStep5(Consumer<String> logCallback) throws Exception {
-        if (sensitivityResults.isEmpty()) {
+        if (sensitivityResults == null || sensitivityResults.isEmpty()) {
             throw new IllegalStateException("Keine Sensitivitätsanalysen vorhanden. Bitte führe zuerst Schritt 4 aus.");
         }
 
@@ -899,7 +976,8 @@ public class WorkflowEngine {
                 int passNum = Integer.parseInt(matcher.group(1));
                 int score = Math.max(0, Math.min(100, Integer.parseInt(matcher.group(2))));
                 for (SensitivityResult sr : sensitivityResults) {
-                    if (sr.getOriginalPass().getPassNumber() == passNum) {
+                    if (sr != null && sr.getOriginalPass() != null
+                            && sr.getOriginalPass().getPassNumber() == passNum) {
                         sr.setKiResult(String.valueOf(score));
                     }
                 }
@@ -914,54 +992,7 @@ public class WorkflowEngine {
     }
 
     public List<CombinedPass> runStep6() {
-        if (selectedDiversePasses.isEmpty()) {
-            throw new IllegalStateException("Keine ausgewählten Strategien vorhanden. Bitte führe zuerst Schritt 3 aus.");
-        }
-
-        // Compile final 3-5 strategies using a WEIGHTED combination of
-        // Combined Score (performance) and KI Stability Score.
-        // This prevents the KI score from completely dominating — a high-performing
-        // strategy with acceptable stability should beat a mediocre but "robust" one.
-        List<CombinedPass> candidates = new ArrayList<>(selectedDiversePasses);
-
-        // Sort candidates by weighted final score (descending)
-        candidates.sort((cp1, cp2) -> {
-            double finalScore1 = computeWeightedFinalScore(cp1);
-            double finalScore2 = computeWeightedFinalScore(cp2);
-            return Double.compare(finalScore2, finalScore1);
-        });
-
-        // Filter out clearly fragile strategies (KI score < 30) if we have enough
-        // The threshold is lower than before (was 50) because the weighted score
-        // already dampens fragile strategies — no need for a harsh cutoff.
-        List<CombinedPass> finalFiltered = new ArrayList<>();
-        for (CombinedPass cp : candidates) {
-            int kiScore = getKiScore(cp.getPassNumber());
-            if (kiScore >= 0 && kiScore < 30) {
-                continue;
-            }
-            finalFiltered.add(cp);
-        }
-
-        // Fallback: if we filtered out everything, restore them to have at least
-        // some output — but flag the run so exports are visibly marked as
-        // NOT KI-validated instead of silently looking like a normal portfolio.
-        this.kiGateBypassed = finalFiltered.isEmpty() && !candidates.isEmpty();
-        if (kiGateBypassed) {
-            log.warn("KI-Gate: ALLE {} Kandidaten haben KI-Score < 30. Fallback aktiv — "
-                    + "der Export wird als NICHT VALIDIERT markiert!", candidates.size());
-            finalFiltered.addAll(candidates);
-        }
-
-        // Keep 3-5 strategies
-        int targetCount = Math.max(3, Math.min(5, finalFiltered.size()));
-        finalSelectedPasses = new ArrayList<>(finalFiltered.subList(0, Math.min(targetCount, finalFiltered.size())));
-
-        // A new final selection invalidates any previous validation results
-        this.validationResults = new ArrayList<>();
-
-        this.lastActiveStep = Math.max(this.lastActiveStep, 6);
-        saveState();
+        selectFinalPasses(selectedDiversePasses);
 
         // Automatic export when step 6 executes
         try {
@@ -970,12 +1001,52 @@ public class WorkflowEngine {
             exportPortfolio(expDir);
         } catch (Exception ex) {
             log.error("Automatic step 6 portfolio export failed: " + ex.getMessage(), ex);
+            throw new IllegalStateException("Portfolio-Export fehlgeschlagen: " + ex.getMessage(), ex);
         }
 
         // Save this completed workflow run to HISTORY_RUNS database
         saveWorkflowToHistory();
 
         return finalSelectedPasses;
+    }
+
+    /** Selects final candidates without exporting them, allowing OOS validation to run first. */
+    public List<CombinedPass> selectFinalPasses(List<CombinedPass> inputPasses) {
+        if (inputPasses == null || inputPasses.isEmpty()) {
+            throw new IllegalStateException("Keine ausgewählten Strategien für die finale Auswahl vorhanden.");
+        }
+
+        List<CombinedPass> candidates = new ArrayList<>();
+        for (CombinedPass pass : inputPasses) {
+            if (pass != null) candidates.add(pass);
+        }
+        if (candidates.isEmpty()) {
+            throw new IllegalStateException("Die finale Auswahl enthält nur ungültige Strategien.");
+        }
+
+        candidates.sort((cp1, cp2) -> Double.compare(
+                computeWeightedFinalScore(cp2), computeWeightedFinalScore(cp1)));
+
+        List<CombinedPass> finalFiltered = new ArrayList<>();
+        for (CombinedPass cp : candidates) {
+            int kiScore = getKiScore(cp.getPassNumber());
+            if (kiScore >= 0 && kiScore < 30) continue;
+            finalFiltered.add(cp);
+        }
+
+        this.kiGateBypassed = finalFiltered.isEmpty();
+        if (kiGateBypassed) {
+            log.warn("KI-Gate: ALLE {} Kandidaten haben KI-Score < 30. Fallback aktiv — "
+                    + "der Export wird als NICHT VALIDIERT markiert!", candidates.size());
+            finalFiltered.addAll(candidates);
+        }
+
+        int targetCount = Math.min(5, finalFiltered.size());
+        finalSelectedPasses = new ArrayList<>(finalFiltered.subList(0, targetCount));
+        validationResults = new ArrayList<>();
+        lastActiveStep = Math.max(lastActiveStep, 6);
+        saveState();
+        return new ArrayList<>(finalSelectedPasses);
     }
 
     // --- Step 7: Out-of-Sample Validation ---------------------------------
@@ -1027,6 +1098,7 @@ public class WorkflowEngine {
      */
     public List<ValidationResult> runStep7(Consumer<String> logCallback,
                                            java.util.function.BiConsumer<Integer, Integer> progressCallback) throws Exception {
+        cancelRequested = false;
         if (finalSelectedPasses == null || finalSelectedPasses.isEmpty()) {
             throw new IllegalStateException("Keine finalen Strategien vorhanden. Bitte führe zuerst Schritt 6 aus.");
         }
@@ -1057,6 +1129,9 @@ public class WorkflowEngine {
         int current = 0;
 
         for (CombinedPass cp : finalSelectedPasses) {
+            if (cancelRequested || Thread.currentThread().isInterrupted()) {
+                throw new InterruptedException("Validierung abgebrochen.");
+            }
             current++;
             if (progressCallback != null) progressCallback.accept(current, total);
 
@@ -1112,6 +1187,9 @@ public class WorkflowEngine {
                     vr.computeVerdict();
                 }
             } catch (Exception e) {
+                if (cancelRequested || Thread.currentThread().isInterrupted()) {
+                    throw new InterruptedException("Validierung abgebrochen.");
+                }
                 log.error("Validation backtest for pass " + cp.getPassNumber() + " failed", e);
                 vr.setVerdict(ValidationResult.ERROR);
                 vr.setMessage(e.getMessage());
@@ -1494,7 +1572,7 @@ public class WorkflowEngine {
      * If no KI score is available, falls back to Combined Score only.
      */
     private double computeWeightedFinalScore(CombinedPass cp) {
-        double combinedScore = cp.getScore(); // 0-100 scale
+        double combinedScore = Double.isFinite(cp.getScore()) ? cp.getScore() : 0.0;
         int kiScore = getKiScore(cp.getPassNumber());
 
         if (kiScore < 0) {
@@ -1502,7 +1580,11 @@ public class WorkflowEngine {
             return combinedScore;
         }
 
-        return performanceWeight * combinedScore + stabilityWeight * kiScore;
+        double safePerformanceWeight = Double.isFinite(performanceWeight)
+                ? performanceWeight : LlmAnalysisService.DEFAULT_PERFORMANCE_WEIGHT;
+        double safeStabilityWeight = Double.isFinite(stabilityWeight)
+                ? stabilityWeight : LlmAnalysisService.DEFAULT_STABILITY_WEIGHT;
+        return safePerformanceWeight * combinedScore + safeStabilityWeight * kiScore;
     }
 
     /**
@@ -1515,7 +1597,7 @@ public class WorkflowEngine {
     public double getWorstCvForPass(int passNum, boolean forward) {
         if (sensitivityResults == null) return Double.NaN;
         for (SensitivityResult sr : sensitivityResults) {
-            if (sr.getOriginalPass() != null && sr.getOriginalPass().getPassNumber() == passNum) {
+            if (sr != null && sr.getOriginalPass() != null && sr.getOriginalPass().getPassNumber() == passNum) {
                 return forward ? sr.getOverallCVFw() : sr.getOverallCV();
             }
         }
@@ -1529,7 +1611,7 @@ public class WorkflowEngine {
     private int getKiScore(int passNum) {
         if (sensitivityResults == null) return -1;
         for (SensitivityResult sr : sensitivityResults) {
-            if (sr.getOriginalPass() != null && sr.getOriginalPass().getPassNumber() == passNum) {
+            if (sr != null && sr.getOriginalPass() != null && sr.getOriginalPass().getPassNumber() == passNum) {
                 String res = sr.getKiResult();
                 if (res != null && !res.isEmpty()) {
                     try {
@@ -1550,7 +1632,7 @@ public class WorkflowEngine {
     private boolean isValidationPassedOrPending(int passNum) {
         if (validationResults == null || validationResults.isEmpty()) return true;
         for (ValidationResult vr : validationResults) {
-            if (vr.getPassNumber() == passNum) {
+            if (vr != null && vr.getPassNumber() == passNum) {
                 return ValidationResult.PASSED.equals(vr.getVerdict());
             }
         }
@@ -1591,21 +1673,22 @@ public class WorkflowEngine {
         // 1. Filter out passes that do not meet minimum performance requirements
         List<CombinedPass> filtered = new ArrayList<>();
         for (CombinedPass cp : allPasses) {
+            if (cp == null) continue;
             if (!isPositiveFinite(cp.getBtProfit()) || cp.getBtProfit() < minBtProfit) continue;
             if (cp.getBtTrades() < minBtTrades) continue;
             if (!meetsMinimum(cp.getBtRecovery(), minBtRecovery)) continue;
-            if (cp.getBtDd() > maxBtDd) continue;
+            if (!Double.isFinite(cp.getBtDd()) || cp.getBtDd() > maxBtDd) continue;
             if (forwardMode > 0) {
                 if (!isPositiveFinite(cp.getFwProfit()) || cp.getFwProfit() < minFwProfit) continue;
                 if (cp.getFwTrades() < minFwTrades) continue;
                 if (!meetsMinimum(cp.getFwRecovery(), minFwRecovery)) continue;
-                if (cp.getFwDd() > maxFwDd) continue;
+                if (!Double.isFinite(cp.getFwDd()) || cp.getFwDd() > maxFwDd) continue;
             }
             if (cp.getLongtermPass() != null) {
                 if (!isPositiveFinite(cp.getLtProfit()) || cp.getLtProfit() < minLtProfit) continue;
                 if (cp.getLtTrades() < minLtTrades) continue;
                 if (!meetsMinimum(cp.getLtRecovery(), minLtRecovery)) continue;
-                if (cp.getLtDd() > maxLtDd) continue;
+                if (!Double.isFinite(cp.getLtDd()) || cp.getLtDd() > maxLtDd) continue;
                 if (!meetsMinimum(cp.getLtPf(), minLtPf)) continue;
             }
             filtered.add(cp);
@@ -1638,6 +1721,12 @@ public class WorkflowEngine {
 
     private static boolean isPositiveFinite(double value) {
         return Double.isFinite(value) && value > 0.0;
+    }
+
+    private static void requireValidDateRange(LocalDate from, LocalDate to, String label) {
+        if (from == null || to == null || !from.isBefore(to)) {
+            throw new IllegalStateException(label + " ist ungültig: " + from + " bis " + to);
+        }
     }
 
     private static boolean meetsMinimum(double value, double minimum) {
@@ -1759,11 +1848,15 @@ public class WorkflowEngine {
     }
 
     public void cancel() {
+        cancelRequested = true;
         if (currentOptRunner != null) {
             currentOptRunner.cancel();
         }
         if (currentSensitivityRunner != null) {
             currentSensitivityRunner.cancel();
+        }
+        if (currentLongtermRunner != null) {
+            currentLongtermRunner.cancel();
         }
         if (currentValidationRunner != null) {
             currentValidationRunner.cancel();
@@ -1797,7 +1890,12 @@ public class WorkflowEngine {
     public void setLeverage(String leverage) { this.leverage = leverage; }
 
     public int getTickModel() { return tickModel; }
-    public void setTickModel(int tickModel) { this.tickModel = tickModel; }
+    public void setTickModel(int tickModel) {
+        if (tickModel < BacktestConfig.MODEL_EVERY_TICK || tickModel > BacktestConfig.MODEL_REAL_TICKS) {
+            throw new IllegalArgumentException("Unsupported MT5 model: " + tickModel);
+        }
+        this.tickModel = tickModel;
+    }
 
     public List<EaParameter> getEaParameters() { return eaParameters; }
     public void setEaParameters(List<EaParameter> eaParameters) { this.eaParameters = eaParameters; }
@@ -1854,7 +1952,10 @@ public class WorkflowEngine {
     public void setMaxStrategiesToSelect(int maxStrategiesToSelect) { this.maxStrategiesToSelect = maxStrategiesToSelect; }
 
     public List<CombinedPass> getSelectedDiversePasses() { return selectedDiversePasses; }
-    public void setSelectedDiversePasses(List<CombinedPass> selectedDiversePasses) { this.selectedDiversePasses = selectedDiversePasses; }
+    public void setSelectedDiversePasses(List<CombinedPass> selectedDiversePasses) {
+        this.selectedDiversePasses = selectedDiversePasses != null
+                ? new ArrayList<>(selectedDiversePasses) : new ArrayList<>();
+    }
 
     public List<SensitivityResult> getSensitivityResults() { return sensitivityResults; }
     public void setSensitivityResults(List<SensitivityResult> sensitivityResults) { this.sensitivityResults = sensitivityResults; }
@@ -1872,7 +1973,10 @@ public class WorkflowEngine {
     public void setKiReportText(String kiReportText) { this.kiReportText = kiReportText; }
 
     public List<CombinedPass> getFinalSelectedPasses() { return finalSelectedPasses; }
-    public void setFinalSelectedPasses(List<CombinedPass> finalSelectedPasses) { this.finalSelectedPasses = finalSelectedPasses; }
+    public void setFinalSelectedPasses(List<CombinedPass> finalSelectedPasses) {
+        this.finalSelectedPasses = finalSelectedPasses != null
+                ? new ArrayList<>(finalSelectedPasses) : new ArrayList<>();
+    }
 
     public int getLastActiveStep() { return lastActiveStep; }
     public void setLastActiveStep(int lastActiveStep) { this.lastActiveStep = lastActiveStep; }
@@ -1893,8 +1997,14 @@ public class WorkflowEngine {
     public String getLastExportDirectory() { return lastExportDirectory; }
 
     public double getPerformanceWeight() { return performanceWeight; }
-    public void setPerformanceWeight(double performanceWeight) { this.performanceWeight = performanceWeight; }
+    public void setPerformanceWeight(double performanceWeight) {
+        this.performanceWeight = Double.isFinite(performanceWeight) && performanceWeight >= 0.0
+                ? performanceWeight : LlmAnalysisService.DEFAULT_PERFORMANCE_WEIGHT;
+    }
 
     public double getStabilityWeight() { return stabilityWeight; }
-    public void setStabilityWeight(double stabilityWeight) { this.stabilityWeight = stabilityWeight; }
+    public void setStabilityWeight(double stabilityWeight) {
+        this.stabilityWeight = Double.isFinite(stabilityWeight) && stabilityWeight >= 0.0
+                ? stabilityWeight : LlmAnalysisService.DEFAULT_STABILITY_WEIGHT;
+    }
 }

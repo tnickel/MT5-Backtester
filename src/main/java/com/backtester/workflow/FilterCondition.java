@@ -26,9 +26,14 @@ public class FilterCondition {
 
         BT_RET_DD_RATIO("Return / Drawdown ratio (Backtest / IS)"),
         FW_RET_DD_RATIO("Return / Drawdown ratio (Forward / OOS)"),
+
+        BT_RECOVERY_FACTOR("Recovery factor (Backtest / IS)"),
+        FW_RECOVERY_FACTOR("Recovery factor (Forward / OOS)"),
+        LT_RECOVERY_FACTOR("Recovery factor (Longterm)"),
         
         BT_SHARPE_RATIO("Sharpe Ratio (Backtest / IS)"),
         FW_SHARPE_RATIO("Sharpe Ratio (Forward / OOS)"),
+        LT_SHARPE_RATIO("Sharpe Ratio (Longterm)"),
 
         PROFIT_FACTOR("Profit factor (Auto fallback)");
 
@@ -87,19 +92,29 @@ public class FilterCondition {
     public boolean isEnabled() { return enabled; }
     public void setEnabled(boolean enabled) { this.enabled = enabled; }
 
+    public FilterCondition copyForPersistence() {
+        FilterCondition copy = new FilterCondition(metric, operator, value);
+        copy.setEnabled(enabled);
+        return copy;
+    }
+
     public boolean evaluate(CombinedPass pass) {
-        if (!enabled || pass == null) return true;
+        if (pass == null) return false;
+        if (!enabled) return true;
+        if (metric == null || operator == null || !Double.isFinite(value)) return false;
 
         double metricVal = getPassMetricValue(pass);
-        if (Double.isNaN(metricVal)) return false;
+        if (!Double.isFinite(metricVal)) return false;
 
         switch (operator) {
             case GREATER_THAN:  return metricVal > value;
             case GREATER_EQUAL: return metricVal >= value;
             case LESS_THAN:     return metricVal < value;
             case LESS_EQUAL:    return metricVal <= value;
-            case EQUALS:        return Math.abs(metricVal - value) < 1e-6;
-            default:            return true;
+            case EQUALS:
+                double scale = Math.max(1.0, Math.max(Math.abs(metricVal), Math.abs(value)));
+                return Math.abs(metricVal - value) <= 1e-9 * scale;
+            default:            return false;
         }
     }
 
@@ -134,19 +149,35 @@ public class FilterCondition {
                 return pass.getLtDd();
 
             case BT_RET_DD_RATIO:
-                return pass.getBtDd() > 0 ? (pass.getBtProfit() / pass.getBtDd()) : (pass.getBtProfit() > 0 ? 999.0 : 0.0);
+                return safeRatio(pass.getBtProfit(), pass.getBtDd());
             case FW_RET_DD_RATIO:
-                return pass.getFwDd() > 0 ? (pass.getFwProfit() / pass.getFwDd()) : (pass.getFwProfit() > 0 ? 999.0 : 0.0);
+                return safeRatio(pass.getFwProfit(), pass.getFwDd());
+
+            case BT_RECOVERY_FACTOR:
+                return pass.getBtRecovery();
+            case FW_RECOVERY_FACTOR:
+                return pass.getFwRecovery();
+            case LT_RECOVERY_FACTOR:
+                return pass.getLtRecovery();
 
             case BT_SHARPE_RATIO:
                 return pass.getBtSharpe();
             case FW_SHARPE_RATIO:
                 return pass.getFwSharpe();
+            case LT_SHARPE_RATIO:
+                return pass.getLtSharpe();
 
             case PROFIT_FACTOR:
             default:
                 return pass.getBtPf();
         }
+    }
+
+    private static double safeRatio(double numerator, double denominator) {
+        if (!Double.isFinite(numerator) || !Double.isFinite(denominator) || denominator <= 0.0) {
+            return Double.NaN;
+        }
+        return numerator / denominator;
     }
 
     @Override

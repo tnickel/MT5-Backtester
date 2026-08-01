@@ -1,6 +1,8 @@
 package com.backtester.workflow;
 
 import com.backtester.report.OptimizationResult.CombinedPass;
+import com.backtester.engine.BacktestConfig;
+import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
@@ -9,6 +11,11 @@ import java.util.UUID;
  * Repräsentiert einen einzelnen modularen Task in einer Custom Project Pipeline (StrategyQuant-Stil).
  */
 public class WorkflowTask {
+
+    public static final int MODE_EVERY_TICK = 0;
+    public static final int MODE_OHLC_M1 = 1;
+    public static final int MODE_REAL_TICKS = 2;
+    public static final int MODE_OPEN_PRICES = 3;
 
     public enum TaskType {
         STRATEGY_SELECTION("Strategie-Auswahl", "EA, Symbol, Timeframe & Parameterbereiche festlegen"),
@@ -52,7 +59,8 @@ public class WorkflowTask {
     private boolean enabled;
     private TaskStatus status;
     private String taskConfigJson;
-    private List<CombinedPass> outputPasses;
+    /** Runtime cache; persisted databanks are the single source of truth. */
+    private transient List<CombinedPass> outputPasses;
     private String lastExecutionLog;
 
     // --- StrategyQuant Databank & Retest / Ranking Settings ---
@@ -62,7 +70,11 @@ public class WorkflowTask {
     private String endDate = "";
     private String retestSymbol = "";
     private String retestPeriod = "";
-    private int executionMode = 1; // 1 = OHLC M1, 0 = Every tick (Ticksimulation), 2 = Every tick based on real ticks (Realtick), 3 = Open prices only
+    /**
+     * UI-level modelling mode. This is deliberately not the raw MT5 model
+     * number: MT5 uses 4 for real ticks and 2 for open prices.
+     */
+    private int executionMode = MODE_OHLC_M1;
     private boolean deleteFailed = true;
     private List<FilterCondition> filterConditions;
 
@@ -82,6 +94,13 @@ public class WorkflowTask {
         this();
         this.name = name;
         this.type = type;
+        if (type == TaskType.LONGTERM_RETEST) {
+            this.startDate = LocalDate.now().minusYears(7).toString();
+            this.endDate = LocalDate.now().toString();
+        } else if (type == TaskType.OPTIMIZER || type == TaskType.ROBUSTNESS_CV) {
+            this.startDate = LocalDate.now().minusYears(2).toString();
+            this.endDate = LocalDate.now().toString();
+        }
     }
 
     public String getId() { return id; }
@@ -102,7 +121,10 @@ public class WorkflowTask {
     public String getTaskConfigJson() { return taskConfigJson != null ? taskConfigJson : "{}"; }
     public void setTaskConfigJson(String taskConfigJson) { this.taskConfigJson = taskConfigJson; }
 
-    public List<CombinedPass> getOutputPasses() { return outputPasses != null ? outputPasses : new ArrayList<>(); }
+    public List<CombinedPass> getOutputPasses() {
+        if (outputPasses == null) outputPasses = new ArrayList<>();
+        return outputPasses;
+    }
     public void setOutputPasses(List<CombinedPass> outputPasses) { this.outputPasses = outputPasses; }
 
     public String getLastExecutionLog() { return lastExecutionLog; }
@@ -126,22 +148,70 @@ public class WorkflowTask {
     public String getRetestPeriod() { return retestPeriod != null ? retestPeriod : ""; }
     public void setRetestPeriod(String retestPeriod) { this.retestPeriod = retestPeriod; }
 
-    public int getExecutionMode() { return executionMode; }
-    public void setExecutionMode(int executionMode) { this.executionMode = executionMode; }
+    public int getExecutionMode() {
+        return executionMode >= MODE_EVERY_TICK && executionMode <= MODE_OPEN_PRICES
+                ? executionMode : MODE_OHLC_M1;
+    }
+    public void setExecutionMode(int executionMode) {
+        if (executionMode < MODE_EVERY_TICK || executionMode > MODE_OPEN_PRICES) {
+            throw new IllegalArgumentException("Unsupported workflow execution mode: " + executionMode);
+        }
+        this.executionMode = executionMode;
+    }
+
+    /** Maps the four workflow choices to the raw model IDs expected by MT5. */
+    public int getMt5Model() {
+        switch (getExecutionMode()) {
+            case MODE_EVERY_TICK: return BacktestConfig.MODEL_EVERY_TICK;
+            case MODE_REAL_TICKS: return BacktestConfig.MODEL_REAL_TICKS;
+            case MODE_OPEN_PRICES: return BacktestConfig.MODEL_OPEN_PRICES;
+            case MODE_OHLC_M1:
+            default: return BacktestConfig.MODEL_OHLC_M1;
+        }
+    }
 
     public boolean isDeleteFailed() { return deleteFailed; }
     public void setDeleteFailed(boolean deleteFailed) { this.deleteFailed = deleteFailed; }
 
     public List<FilterCondition> getFilterConditions() {
         if (filterConditions == null) filterConditions = new ArrayList<>();
+        filterConditions.removeIf(condition -> condition == null);
         return filterConditions;
     }
     public void setFilterConditions(List<FilterCondition> filterConditions) {
-        this.filterConditions = filterConditions;
+        this.filterConditions = filterConditions != null
+                ? new ArrayList<>(filterConditions) : new ArrayList<>();
     }
 
     public void addFilterCondition(FilterCondition cond) {
-        getFilterConditions().add(cond);
+        if (cond != null) getFilterConditions().add(cond);
+    }
+
+    /** Creates a detached copy without the transient, potentially large output cache. */
+    public WorkflowTask copyForPersistence() {
+        WorkflowTask copy = new WorkflowTask();
+        copy.setId(id);
+        copy.setName(name);
+        copy.setType(type);
+        copy.setEnabled(enabled);
+        copy.setStatus(status);
+        copy.setTaskConfigJson(taskConfigJson);
+        copy.setLastExecutionLog(lastExecutionLog);
+        copy.setSourceDatabank(sourceDatabank);
+        copy.setTargetDatabank(targetDatabank);
+        copy.setStartDate(startDate);
+        copy.setEndDate(endDate);
+        copy.setRetestSymbol(retestSymbol);
+        copy.setRetestPeriod(retestPeriod);
+        copy.setExecutionMode(getExecutionMode());
+        copy.setDeleteFailed(deleteFailed);
+
+        List<FilterCondition> conditionCopies = new ArrayList<>();
+        for (FilterCondition condition : getFilterConditions()) {
+            conditionCopies.add(condition.copyForPersistence());
+        }
+        copy.setFilterConditions(conditionCopies);
+        return copy;
     }
 
     @Override

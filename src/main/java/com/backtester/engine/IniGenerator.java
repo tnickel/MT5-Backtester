@@ -34,7 +34,9 @@ public class IniGenerator {
      * @return the path to the generated INI file
      */
     public Path generate(BacktestConfig config, Path iniPath, String reportPath) throws IOException {
-        Files.createDirectories(iniPath.getParent());
+        validate(config, iniPath, reportPath);
+        Path parent = iniPath.toAbsolutePath().getParent();
+        if (parent != null) Files.createDirectories(parent);
 
         try (Writer writer = Files.newBufferedWriter(iniPath, StandardCharsets.UTF_8)) {
             writer.write("[Tester]\r\n");
@@ -118,7 +120,9 @@ public class IniGenerator {
      * @return the path to the generated INI file
      */
     public Path generateForOptimization(OptimizationConfig config, Path iniPath, String reportPath) throws IOException {
-        Files.createDirectories(iniPath.getParent());
+        validate(config, iniPath, reportPath);
+        Path parent = iniPath.toAbsolutePath().getParent();
+        if (parent != null) Files.createDirectories(parent);
 
         try (Writer writer = Files.newBufferedWriter(iniPath, StandardCharsets.UTF_8)) {
             writer.write("[Tester]\r\n");
@@ -202,5 +206,32 @@ public class IniGenerator {
 
         log.info("Generated optimization tester.ini at: {}", iniPath);
         return iniPath;
+    }
+
+    private static void validate(BacktestConfig config, Path iniPath, String reportPath) {
+        if (config == null) throw new IllegalArgumentException("BacktestConfig must not be null");
+        validateCommon(config.getExpert(), config.getSymbol(), config.getPeriod(),
+                config.getFromDate(), config.getToDate(), iniPath, reportPath);
+    }
+
+    private static void validate(OptimizationConfig config, Path iniPath, String reportPath) {
+        if (config == null) throw new IllegalArgumentException("OptimizationConfig must not be null");
+        validateCommon(config.getExpert(), config.getSymbol(), config.getPeriod(),
+                config.getFromDate(), config.getToDate(), iniPath, reportPath);
+    }
+
+    private static void validateCommon(String expert, String symbol, String period,
+                                       java.time.LocalDate fromDate, java.time.LocalDate toDate,
+                                       Path iniPath, String reportPath) {
+        if (iniPath == null) throw new IllegalArgumentException("INI path must not be null");
+        if (reportPath == null || reportPath.isBlank()) {
+            throw new IllegalArgumentException("Report path must not be blank");
+        }
+        if (expert == null || expert.isBlank()) throw new IllegalArgumentException("Expert must not be blank");
+        if (symbol == null || symbol.isBlank()) throw new IllegalArgumentException("Symbol must not be blank");
+        if (period == null || period.isBlank()) throw new IllegalArgumentException("Period must not be blank");
+        if (fromDate == null || toDate == null || !fromDate.isBefore(toDate)) {
+            throw new IllegalArgumentException("Invalid test date range: " + fromDate + " to " + toDate);
+        }
     }
 }

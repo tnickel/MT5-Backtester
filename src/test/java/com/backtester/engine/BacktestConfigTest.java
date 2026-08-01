@@ -94,4 +94,18 @@ public class BacktestConfigTest {
         assertTrue(symbolList.contains("US500"));
         assertTrue(symbolList.contains("USTEC"));
     }
+
+    @Test(expected = IllegalArgumentException.class)
+    public void rejectsUnsupportedMt5Model() {
+        new BacktestConfig().setModel(5);
+    }
+
+    @Test
+    public void modelNameIsBoundsSafe() throws Exception {
+        BacktestConfig config = new BacktestConfig();
+        java.lang.reflect.Field model = BacktestConfig.class.getDeclaredField("model");
+        model.setAccessible(true);
+        model.setInt(config, 99);
+        assertEquals("Unknown (99)", config.getModelName());
+    }
 }

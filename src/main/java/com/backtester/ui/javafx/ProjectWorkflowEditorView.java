@@ -1,9 +1,11 @@
 package com.backtester.ui.javafx;
 
 import com.backtester.config.AppConfig;
+import com.backtester.database.CustomProjectSaveCoordinator;
 import com.backtester.database.DatabaseManager;
 import com.backtester.engine.WorkflowEngine;
 import com.backtester.report.OptimizationResult.CombinedPass;
+import com.backtester.report.ValidationResult;
 import com.backtester.workflow.CustomProject;
 import com.backtester.workflow.DatabankManager;
 import com.backtester.workflow.FilterCondition;
@@ -31,8 +33,10 @@ import javafx.scene.text.FontWeight;
 import javafx.util.converter.DoubleStringConverter;
 
 import java.time.LocalDate;
+import java.time.Duration;
 import java.util.Locale;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 
 /**
@@ -44,10 +48,14 @@ import java.util.List;
  */
 public class ProjectWorkflowEditorView {
 
+    private static final long PROJECT_SAVE_DEBOUNCE_MILLIS = 500;
+    private static final Duration PROJECT_SAVE_FLUSH_TIMEOUT = Duration.ofMinutes(2);
+
     private final BorderPane root;
     private CustomProject project;
     private final WorkflowEngine engine;
     private final DatabankManager databankManager;
+    private final CustomProjectSaveCoordinator projectSaveCoordinator;
     private static final org.slf4j.Logger logger = org.slf4j.LoggerFactory.getLogger(ProjectWorkflowEditorView.class);
     private Runnable onBackToOverviewCallback;
 
@@ -97,6 +105,7 @@ public class ProjectWorkflowEditorView {
     // Bottom Fixed Databank Panel Components
     private TabPane bottomDatabankTabPane;
     private CheckBox persistDatabanksCheckBox;
+    private Pane databankToolbar;
 
     // Execution state
     private Task<Void> activeProjectTask;
@@ -104,6 +113,9 @@ public class ProjectWorkflowEditorView {
     public ProjectWorkflowEditorView() {
         this.engine = new WorkflowEngine(AppConfig.getInstance());
         this.databankManager = new DatabankManager();
+        this.projectSaveCoordinator = new CustomProjectSaveCoordinator(
+                DatabaseManager.getInstance(), PROJECT_SAVE_DEBOUNCE_MILLIS,
+                message -> logToConsole("DB", message));
 
         root = new BorderPane();
         root.setPadding(new Insets(10));
@@ -150,6 +162,7 @@ public class ProjectWorkflowEditorView {
     public void loadProject(CustomProject proj) {
         this.project = proj;
         if (proj != null) {
+            engine.resetTransientResults();
             projectTitleLabel.setText("/ " + proj.getName());
             databankManager.loadFromProject(proj);
             if (persistDatabanksCheckBox != null) {
@@ -177,11 +190,9 @@ public class ProjectWorkflowEditorView {
                 }
             }
 
-            if (proj.getExpert() != null && !proj.getExpert().isEmpty()) {
-                engine.changeExpert(proj.getExpert());
-                engine.setSymbol(proj.getSymbol());
-                engine.setPeriod(proj.getPeriod());
-            }
+            engine.changeExpert(proj.getExpert());
+            engine.setSymbol(proj.getSymbol());
+            engine.setPeriod(proj.getPeriod());
         }
         refreshTaskChain();
         refreshDatabanksUI();
@@ -202,9 +213,13 @@ public class ProjectWorkflowEditorView {
         Button backBtn = new Button("⬅ Custom Projects");
         backBtn.setStyle("-fx-background-color: #1e2432; -fx-text-fill: #00e5ff; -fx-font-weight: bold; -fx-cursor: hand;");
         backBtn.setOnAction(e -> {
-            if (onBackToOverviewCallback != null) {
-                onBackToOverviewCallback.run();
-            }
+            backBtn.setDisable(true);
+            flushProjectSaveAsync(() -> {
+                backBtn.setDisable(false);
+                if (onBackToOverviewCallback != null) {
+                    onBackToOverviewCallback.run();
+                }
+            });
         });
 
         projectTitleLabel = new Label("");
@@ -229,7 +244,12 @@ public class ProjectWorkflowEditorView {
 
         Button saveBtn = new Button("💾 Save");
         saveBtn.getStyleClass().add("button");
-        saveBtn.setOnAction(e -> saveProject());
+        saveBtn.setOnAction(e -> {
+            saveBtn.setDisable(true);
+            flushProjectSaveAsync(() -> {
+                saveBtn.setDisable(false);
+            });
+        });
 
         bar.getChildren().addAll(backBtn, projectTitleLabel, spacer, startBtn, stopBtn, resetBtn, saveBtn);
         return bar;
@@ -374,7 +394,10 @@ public class ProjectWorkflowEditorView {
         sourceDatabankCombo = new ComboBox<>(FXCollections.observableArrayList("Results", "Existing portfolio", "Final"));
         sourceDatabankCombo.setValue("Results");
         sourceDatabankCombo.setOnAction(e -> {
-            if (selectedTask != null) selectedTask.setSourceDatabank(sourceDatabankCombo.getValue());
+            if (selectedTask != null && sourceDatabankCombo.getValue() != null) {
+                selectedTask.setSourceDatabank(sourceDatabankCombo.getValue());
+                saveProject();
+            }
         });
         grid.add(sourceDatabankCombo, 1, 0);
 
@@ -382,7 +405,10 @@ public class ProjectWorkflowEditorView {
         targetDatabankCombo = new ComboBox<>(FXCollections.observableArrayList("Results", "Existing portfolio", "Final"));
         targetDatabankCombo.setValue("Results");
         targetDatabankCombo.setOnAction(e -> {
-            if (selectedTask != null) selectedTask.setTargetDatabank(targetDatabankCombo.getValue());
+            if (selectedTask != null && targetDatabankCombo.getValue() != null) {
+                selectedTask.setTargetDatabank(targetDatabankCombo.getValue());
+                saveProject();
+            }
         });
         grid.add(targetDatabankCombo, 1, 1);
 
@@ -414,7 +440,10 @@ public class ProjectWorkflowEditorView {
         symbolCombo = new ComboBox<>(FXCollections.observableArrayList("EURUSD", "GBPUSD", "USDJPY", "AUDCAD", "XAUUSD", "GBPJPY_M1_dukas"));
         symbolCombo.setValue("EURUSD");
         symbolCombo.setOnAction(e -> {
-            if (selectedTask != null) selectedTask.setRetestSymbol(symbolCombo.getValue());
+            if (selectedTask != null && symbolCombo.getValue() != null) {
+                selectedTask.setRetestSymbol(symbolCombo.getValue());
+                saveProject();
+            }
         });
         grid.add(symbolCombo, 1, 0);
 
@@ -422,7 +451,10 @@ public class ProjectWorkflowEditorView {
         timeframeCombo = new ComboBox<>(FXCollections.observableArrayList("M1", "M5", "M15", "M30", "H1", "H4", "D1"));
         timeframeCombo.setValue("H1");
         timeframeCombo.setOnAction(e -> {
-            if (selectedTask != null) selectedTask.setRetestPeriod(timeframeCombo.getValue());
+            if (selectedTask != null && timeframeCombo.getValue() != null) {
+                selectedTask.setRetestPeriod(timeframeCombo.getValue());
+                saveProject();
+            }
         });
         grid.add(timeframeCombo, 1, 1);
 
@@ -436,12 +468,12 @@ public class ProjectWorkflowEditorView {
         execModeCombo.setValue("OHLC M1 (Every tick based on OHLC M1)");
         execModeCombo.setOnAction(e -> {
             if (selectedTask != null && execModeCombo.getValue() != null) {
-                int mode = 1;
+                int mode = WorkflowTask.MODE_OHLC_M1;
                 String val = execModeCombo.getValue();
-                if (val.contains("Every Tick (Ticksimulation)")) mode = 0;
-                else if (val.contains("OHLC M1")) mode = 1;
-                else if (val.contains("Real Ticks")) mode = 2;
-                else if (val.contains("Open Prices")) mode = 3;
+                if (val.contains("Every Tick (Ticksimulation)")) mode = WorkflowTask.MODE_EVERY_TICK;
+                else if (val.contains("OHLC M1")) mode = WorkflowTask.MODE_OHLC_M1;
+                else if (val.contains("Real Ticks")) mode = WorkflowTask.MODE_REAL_TICKS;
+                else if (val.contains("Open Prices")) mode = WorkflowTask.MODE_OPEN_PRICES;
                 selectedTask.setExecutionMode(mode);
                 saveProject();
             }
@@ -449,19 +481,21 @@ public class ProjectWorkflowEditorView {
         grid.add(execModeCombo, 1, 2);
 
         grid.add(new Label("Start day (OOS From):"), 0, 3);
-        startDatePicker = new DatePicker(LocalDate.now().minusYears(2));
+        startDatePicker = new DatePicker();
         startDatePicker.setOnAction(e -> {
             if (selectedTask != null && startDatePicker.getValue() != null) {
                 selectedTask.setStartDate(startDatePicker.getValue().toString());
+                saveProject();
             }
         });
         grid.add(startDatePicker, 1, 3);
 
         grid.add(new Label("End day (OOS To):"), 0, 4);
-        endDatePicker = new DatePicker(LocalDate.now());
+        endDatePicker = new DatePicker();
         endDatePicker.setOnAction(e -> {
             if (selectedTask != null && endDatePicker.getValue() != null) {
                 selectedTask.setEndDate(endDatePicker.getValue().toString());
+                saveProject();
             }
         });
         grid.add(endDatePicker, 1, 4);
@@ -515,7 +549,10 @@ public class ProjectWorkflowEditorView {
         deleteFailedCheckBox.setSelected(true);
         deleteFailedCheckBox.setStyle("-fx-text-fill: #e6e9f0; -fx-font-weight: bold;");
         deleteFailedCheckBox.setOnAction(e -> {
-            if (selectedTask != null) selectedTask.setDeleteFailed(deleteFailedCheckBox.isSelected());
+            if (selectedTask != null) {
+                selectedTask.setDeleteFailed(deleteFailedCheckBox.isSelected());
+                saveProject();
+            }
         });
 
         filterConditionsTable = new TableView<>();
@@ -547,8 +584,10 @@ public class ProjectWorkflowEditorView {
             @Override public FilterCondition.Metric fromString(String string) { return FilterCondition.Metric.valueOf(string); }
         }, FilterCondition.Metric.values()));
         metricCol.setOnEditCommit(e -> {
-            e.getRowValue().setMetric(e.getNewValue());
-            saveProject();
+            if (e.getRowValue() != null && e.getNewValue() != null) {
+                e.getRowValue().setMetric(e.getNewValue());
+                saveProject();
+            }
         });
         metricCol.setPrefWidth(260);
 
@@ -559,8 +598,10 @@ public class ProjectWorkflowEditorView {
             @Override public FilterCondition.Operator fromString(String string) { return FilterCondition.Operator.valueOf(string); }
         }, FilterCondition.Operator.values()));
         opCol.setOnEditCommit(e -> {
-            e.getRowValue().setOperator(e.getNewValue());
-            saveProject();
+            if (e.getRowValue() != null && e.getNewValue() != null) {
+                e.getRowValue().setOperator(e.getNewValue());
+                saveProject();
+            }
         });
         opCol.setPrefWidth(160);
 
@@ -568,8 +609,14 @@ public class ProjectWorkflowEditorView {
         valCol.setCellValueFactory(c -> new SimpleDoubleProperty(c.getValue().getValue()).asObject());
         valCol.setCellFactory(TextFieldTableCell.forTableColumn(new DoubleStringConverter()));
         valCol.setOnEditCommit(e -> {
-            e.getRowValue().setValue(e.getNewValue());
-            saveProject();
+            Double newValue = e.getNewValue();
+            if (e.getRowValue() != null && newValue != null && Double.isFinite(newValue)) {
+                e.getRowValue().setValue(newValue);
+                saveProject();
+            } else {
+                filterConditionsTable.refresh();
+                logToConsole("FILTER", "NaN und unendliche Filterwerte sind nicht zulässig.");
+            }
         });
         valCol.setPrefWidth(100);
 
@@ -796,11 +843,13 @@ public class ProjectWorkflowEditorView {
         VBox panel = new VBox(8);
         panel.setPadding(new Insets(8));
         panel.setStyle("-fx-background-color: rgba(15, 18, 26, 0.95); -fx-border-color: #00e5ff; -fx-border-width: 1 0 0 0;");
-        panel.setMinHeight(220);
+        panel.setMinHeight(160);
+        panel.setPrefHeight(260);
 
         // Databank Header Toolbar
-        HBox bar = new HBox(15);
+        FlowPane bar = new FlowPane(15, 8);
         bar.setAlignment(Pos.CENTER_LEFT);
+        databankToolbar = bar;
 
         Button newDatabankBtn = new Button("+ New databank");
         newDatabankBtn.setStyle("-fx-background-color: transparent; -fx-text-fill: #00e5ff; -fx-font-weight: bold; -fx-cursor: hand;");
@@ -812,6 +861,8 @@ public class ProjectWorkflowEditorView {
             Tab activeTab = bottomDatabankTabPane.getSelectionModel().getSelectedItem();
             if (activeTab != null) {
                 String dbName = activeTab.getText().replaceAll("\\s*\\(\\d+\\)$", "");
+                if (!confirmDestructiveAction("Databank leeren",
+                        "Alle Strategien aus '" + dbName + "' unwiderruflich entfernen?")) return;
                 databankManager.clearDatabank(dbName);
                 saveProject();
                 refreshDatabanksUI(dbName);
@@ -822,10 +873,16 @@ public class ProjectWorkflowEditorView {
         Button clearAllBtn = new Button("Clear all databanks");
         clearAllBtn.setStyle("-fx-background-color: transparent; -fx-text-fill: #ff5252; -fx-font-weight: bold; -fx-cursor: hand;");
         clearAllBtn.setOnAction(e -> {
+            if (!confirmDestructiveAction("Alle Databanken leeren",
+                    "Alle Strategien und alle eigenen Databank-Tabs entfernen?")) return;
             databankManager.clearAll();
             saveProject();
             refreshDatabanksUI();
         });
+
+        Button deleteDatabankBtn = new Button("🗑 Databank löschen");
+        deleteDatabankBtn.setStyle("-fx-background-color: transparent; -fx-text-fill: #ff5252; -fx-font-weight: bold; -fx-cursor: hand;");
+        deleteDatabankBtn.setOnAction(e -> deleteCurrentDatabank());
 
         Button deleteSelectedStratsBtn = new Button("🗑 Selektierte Strategien löschen");
         deleteSelectedStratsBtn.setStyle("-fx-background-color: transparent; -fx-text-fill: #ffab40; -fx-font-weight: bold; -fx-cursor: hand;");
@@ -855,7 +912,8 @@ public class ProjectWorkflowEditorView {
             DatabankColumnChooserDialog.show(root.getScene().getWindow(), this::refreshDatabanksUI);
         });
 
-        bar.getChildren().addAll(newDatabankBtn, clearCurrentDbBtn, clearAllBtn, deleteSelectedStratsBtn, configColumnsBtn, persistDatabanksCheckBox);
+        bar.getChildren().addAll(newDatabankBtn, clearCurrentDbBtn, clearAllBtn, deleteDatabankBtn,
+                deleteSelectedStratsBtn, configColumnsBtn, persistDatabanksCheckBox);
 
         bottomDatabankTabPane = new TabPane();
         VBox.setVgrow(bottomDatabankTabPane, Priority.ALWAYS);
@@ -908,6 +966,9 @@ public class ProjectWorkflowEditorView {
             return;
         }
 
+        if (!confirmDestructiveAction("Databank löschen",
+                "Databank '" + dbName + "' einschließlich aller Strategien löschen?")) return;
+
         databankManager.removeDatabank(dbName);
         saveProject();
         updateDatabankComboBoxes();
@@ -915,13 +976,20 @@ public class ProjectWorkflowEditorView {
         logToConsole("DATABANK", "Databank '" + dbName + "' wurde gelöscht.");
     }
 
+    private boolean confirmDestructiveAction(String title, String message) {
+        Alert alert = new Alert(Alert.AlertType.CONFIRMATION, message, ButtonType.CANCEL, ButtonType.OK);
+        alert.setTitle(title);
+        alert.setHeaderText(null);
+        if (root.getScene() != null) alert.initOwner(root.getScene().getWindow());
+        return alert.showAndWait().orElse(ButtonType.CANCEL) == ButtonType.OK;
+    }
+
     private void deleteSelectedRowsFromDatabank(String dbName, TableView<CombinedPass> table) {
         if (table == null) return;
         List<CombinedPass> selected = new ArrayList<>(table.getSelectionModel().getSelectedItems());
         if (selected == null || selected.isEmpty()) return;
 
-        List<CombinedPass> dbList = databankManager.getDatabank(dbName);
-        dbList.removeAll(selected);
+        databankManager.removePassesFromDatabank(dbName, selected);
         saveProject();
         refreshDatabanksUI(dbName);
         logToConsole("DATABANK", selected.size() + " Strategie(n) aus Databank '" + dbName + "' gelöscht.");
@@ -1309,23 +1377,27 @@ public class ProjectWorkflowEditorView {
 
             if (execModeCombo != null) {
                 switch (task.getExecutionMode()) {
-                    case 0: execModeCombo.setValue("Every Tick (Ticksimulation)"); break;
-                    case 2: execModeCombo.setValue("Every Tick based on Real Ticks (Realtick)"); break;
-                    case 3: execModeCombo.setValue("Open Prices Only"); break;
+                    case WorkflowTask.MODE_EVERY_TICK: execModeCombo.setValue("Every Tick (Ticksimulation)"); break;
+                    case WorkflowTask.MODE_REAL_TICKS: execModeCombo.setValue("Every Tick based on Real Ticks (Realtick)"); break;
+                    case WorkflowTask.MODE_OPEN_PRICES: execModeCombo.setValue("Open Prices Only"); break;
                     default: execModeCombo.setValue("OHLC M1 (Every tick based on OHLC M1)"); break;
                 }
             }
-            if (symbolCombo != null && task.getRetestSymbol() != null && !task.getRetestSymbol().isEmpty()) {
-                symbolCombo.setValue(task.getRetestSymbol());
+            if (symbolCombo != null) {
+                String taskSymbol = task.getRetestSymbol();
+                symbolCombo.setValue(taskSymbol != null && !taskSymbol.isBlank()
+                        ? taskSymbol : (project != null ? project.getSymbol() : "EURUSD"));
             }
-            if (timeframeCombo != null && task.getRetestPeriod() != null && !task.getRetestPeriod().isEmpty()) {
-                timeframeCombo.setValue(task.getRetestPeriod());
+            if (timeframeCombo != null) {
+                String taskPeriod = task.getRetestPeriod();
+                timeframeCombo.setValue(taskPeriod != null && !taskPeriod.isBlank()
+                        ? taskPeriod : (project != null ? project.getPeriod() : "H1"));
             }
-            if (startDatePicker != null && task.getStartDate() != null && !task.getStartDate().isEmpty()) {
-                try { startDatePicker.setValue(LocalDate.parse(task.getStartDate())); } catch (Exception ignored) {}
+            if (startDatePicker != null) {
+                startDatePicker.setValue(parseDateOrNull(task.getStartDate()));
             }
-            if (endDatePicker != null && task.getEndDate() != null && !task.getEndDate().isEmpty()) {
-                try { endDatePicker.setValue(LocalDate.parse(task.getEndDate())); } catch (Exception ignored) {}
+            if (endDatePicker != null) {
+                endDatePicker.setValue(parseDateOrNull(task.getEndDate()));
             }
 
             // Dynamically display only sub-tabs relevant to this task type
@@ -1351,6 +1423,12 @@ public class ProjectWorkflowEditorView {
                     if (retestSubTab != null) fullSettingsSubTabPane.getTabs().add(retestSubTab);
                     if (rankingSubTab != null) fullSettingsSubTabPane.getTabs().add(rankingSubTab);
                     break;
+                case ROBUSTNESS_CV:
+                case OOS_VALIDATION:
+                    if (dataSubTab != null) fullSettingsSubTabPane.getTabs().add(dataSubTab);
+                    if (retestSubTab != null) fullSettingsSubTabPane.getTabs().add(retestSubTab);
+                    if (rankingSubTab != null) fullSettingsSubTabPane.getTabs().add(rankingSubTab);
+                    break;
                 case PRE_FILTER:
                     if (rankingSubTab != null) fullSettingsSubTabPane.getTabs().add(rankingSubTab);
                     if (retestSubTab != null) fullSettingsSubTabPane.getTabs().add(retestSubTab);
@@ -1370,14 +1448,125 @@ public class ProjectWorkflowEditorView {
         }
     }
 
+    private static LocalDate parseDateOrNull(String value) {
+        if (value == null || value.isBlank()) return null;
+        try {
+            return LocalDate.parse(value.trim());
+        } catch (RuntimeException ignored) {
+            return null;
+        }
+    }
+
+    /** Applies every task-level override before any runner/config is created. */
+    private void applyTaskExecutionConfig(WorkflowTask task) {
+        if (task == null || task.getType() == null) {
+            throw new IllegalArgumentException("Task-Typ fehlt oder ist ungültig.");
+        }
+
+        engine.setTickModel(task.getMt5Model());
+        String taskSymbol = task.getRetestSymbol();
+        String taskPeriod = task.getRetestPeriod();
+        engine.setSymbol(taskSymbol != null && !taskSymbol.isBlank()
+                ? taskSymbol.trim() : (project != null ? project.getSymbol() : engine.getSymbol()));
+        engine.setPeriod(taskPeriod != null && !taskPeriod.isBlank()
+                ? taskPeriod.trim() : (project != null ? project.getPeriod() : engine.getPeriod()));
+
+        String startText = task.getStartDate();
+        String endText = task.getEndDate();
+        boolean hasStart = startText != null && !startText.isBlank();
+        boolean hasEnd = endText != null && !endText.isBlank();
+        if (hasStart != hasEnd) {
+            throw new IllegalArgumentException("Start- und Enddatum müssen gemeinsam gesetzt werden.");
+        }
+
+        LocalDate start = null;
+        LocalDate end = null;
+        if (hasStart) {
+            try {
+                start = LocalDate.parse(startText.trim());
+                end = LocalDate.parse(endText.trim());
+            } catch (RuntimeException ex) {
+                throw new IllegalArgumentException("Ungültiges Datumsformat im Task (erwartet: YYYY-MM-DD).", ex);
+            }
+            if (!start.isBefore(end)) {
+                throw new IllegalArgumentException("Das Startdatum muss vor dem Enddatum liegen.");
+            }
+        }
+
+        switch (task.getType()) {
+            case OPTIMIZER:
+            case ROBUSTNESS_CV:
+                if (start != null) {
+                    engine.setFromDate(start);
+                    engine.setToDate(end);
+                }
+                break;
+            case LONGTERM_RETEST:
+                engine.setLongtermFromDate(start != null ? start : LocalDate.now().minusYears(7));
+                engine.setLongtermToDate(end != null ? end : LocalDate.now());
+                break;
+            case OOS_VALIDATION:
+                engine.setValidationFromDate(start);
+                engine.setValidationToDate(end);
+                break;
+            default:
+                break;
+        }
+    }
+
+    private static List<CombinedPass> passedValidationCandidates(List<CombinedPass> inputPasses,
+                                                                  List<ValidationResult> validationResults) {
+        Set<Integer> passedNumbers = new HashSet<>();
+        if (validationResults != null) {
+            for (ValidationResult result : validationResults) {
+                if (result != null && result.isPassed()) passedNumbers.add(result.getPassNumber());
+            }
+        }
+        List<CombinedPass> passed = new ArrayList<>();
+        if (inputPasses != null) {
+            for (CombinedPass pass : inputPasses) {
+                if (pass != null && passedNumbers.contains(pass.getPassNumber())) passed.add(pass);
+            }
+        }
+        return passed;
+    }
+
+    private List<CombinedPass> exportPortfolioCandidates(List<CombinedPass> inputPasses) {
+        if (inputPasses == null || inputPasses.isEmpty()) {
+            throw new IllegalStateException("Keine Strategien für den Portfolio-Export vorhanden.");
+        }
+        boolean allPassedOos = true;
+        for (CombinedPass pass : inputPasses) {
+            ValidationResult result = pass != null ? engine.getValidationResultForPass(pass.getPassNumber()) : null;
+            if (result == null || !result.isPassed()) {
+                allPassedOos = false;
+                break;
+            }
+        }
+
+        List<CombinedPass> exportPasses;
+        if (allPassedOos) {
+            exportPasses = new ArrayList<>(inputPasses);
+            engine.setFinalSelectedPasses(exportPasses);
+        } else {
+            exportPasses = engine.selectFinalPasses(inputPasses);
+        }
+        engine.exportPortfolio(AppConfig.getInstance().getExportDirectory().toString());
+        engine.saveWorkflowToHistory();
+        return exportPasses;
+    }
+
     // ─── Execution Logic ──────────────────────────────────────────────────────
 
     private void runSingleTask(WorkflowTask task) {
         if (task == null) return;
 
+        saveProject();
+
         startBtn.setDisable(true);
         stopBtn.setDisable(false);
         resetBtn.setDisable(true);
+        setEditorLocked(true);
         consoleLog.clear();
 
         centerMainTabPane.getSelectionModel().select(progressTab);
@@ -1387,6 +1576,9 @@ public class ProjectWorkflowEditorView {
         activeProjectTask = new Task<Void>() {
             @Override
             protected Void call() throws Exception {
+                if (!projectSaveCoordinator.flush(PROJECT_SAVE_FLUSH_TIMEOUT)) {
+                    throw new IllegalStateException("Projekt konnte vor dem Einzeltest nicht gespeichert werden.");
+                }
                 task.setStatus(WorkflowTask.TaskStatus.RUNNING);
                 Platform.runLater(() -> {
                     refreshTaskChain();
@@ -1396,6 +1588,7 @@ public class ProjectWorkflowEditorView {
 
                 List<CombinedPass> inputPasses = databankManager.getDatabank(task.getSourceDatabank());
                 List<CombinedPass> outputPasses = new ArrayList<>();
+                applyTaskExecutionConfig(task);
 
                 switch (task.getType()) {
                     case STRATEGY_SELECTION:
@@ -1414,46 +1607,45 @@ public class ProjectWorkflowEditorView {
                         }
                         break;
                     case LONGTERM_RETEST:
-                        engine.setTickModel(task.getExecutionMode());
-                        if (task.getRetestSymbol() != null && !task.getRetestSymbol().isEmpty()) engine.setSymbol(task.getRetestSymbol());
-                        if (task.getRetestPeriod() != null && !task.getRetestPeriod().isEmpty()) engine.setPeriod(task.getRetestPeriod());
-                        if (task.getStartDate() != null && !task.getStartDate().isEmpty()) {
-                            try { engine.setLongtermFromDate(LocalDate.parse(task.getStartDate())); } catch (Exception ignored) {}
-                        }
-                        if (task.getEndDate() != null && !task.getEndDate().isEmpty()) {
-                            try { engine.setLongtermToDate(LocalDate.parse(task.getEndDate())); } catch (Exception ignored) {}
-                        }
                         outputPasses = engine.runLongtermTest(
+                            inputPasses,
                             msg -> logToConsole("RETEST", msg),
                             pct -> updateProgressUI((double) pct / 100.0, "Retest " + pct + "%")
                         );
                         break;
                     case PRE_FILTER:
-                    case DIVERSITY_FILTER:
                         outputPasses = new ArrayList<>(inputPasses);
                         break;
+                    case DIVERSITY_FILTER:
+                        outputPasses = engine.selectDiversePasses(inputPasses);
+                        break;
                     case ROBUSTNESS_CV:
+                        engine.setSelectedDiversePasses(inputPasses);
                         engine.runStep4(
                             msg -> logToConsole("STRESS", msg),
                             pct -> updateProgressUI((double) pct / 100.0, "Robustness " + pct + "%")
                         );
-                        outputPasses = engine.getSelectedDiversePasses();
+                        outputPasses = new ArrayList<>(inputPasses);
                         break;
                     case KI_EVALUATION:
+                        engine.setSelectedDiversePasses(inputPasses);
+                        engine.retainSensitivityResultsForPasses(inputPasses);
                         engine.runStep5(msg -> logToConsole("KI-EVAL", msg));
-                        outputPasses = engine.getSelectedDiversePasses();
+                        outputPasses = new ArrayList<>(inputPasses);
                         break;
                     case PORTFOLIO_EXPORT:
-                        outputPasses = engine.runStep6();
+                        outputPasses = exportPortfolioCandidates(inputPasses);
                         break;
                     case OOS_VALIDATION:
-                        if (engine.hasUsableValidationWindow(14)) {
-                            engine.runStep7(
-                                msg -> logToConsole("VALIDIERUNG", msg),
-                                (curr, totV) -> updateProgressUI((double) curr / Math.max(1, totV), "Validierung " + curr + " / " + totV)
-                            );
+                        List<CombinedPass> validationCandidates = engine.selectFinalPasses(inputPasses);
+                        if (!engine.hasUsableValidationWindow(14)) {
+                            throw new IllegalStateException("Kein nutzbares OOS-Validierungsfenster von mindestens 14 Tagen konfiguriert.");
                         }
-                        outputPasses = engine.getFinalSelectedPasses();
+                        List<ValidationResult> validationResults = engine.runStep7(
+                            msg -> logToConsole("VALIDIERUNG", msg),
+                            (curr, totV) -> updateProgressUI((double) curr / Math.max(1, totV), "Validierung " + curr + " / " + totV)
+                        );
+                        outputPasses = passedValidationCandidates(validationCandidates, validationResults);
                         break;
                     default:
                         outputPasses = new ArrayList<>(inputPasses);
@@ -1472,9 +1664,20 @@ public class ProjectWorkflowEditorView {
             @Override
             protected void succeeded() { cleanupExecutionState(); }
             @Override
-            protected void failed() { cleanupExecutionState(); }
+            protected void failed() {
+                task.setStatus(WorkflowTask.TaskStatus.FAILED);
+                Throwable error = getException();
+                String message = error != null && error.getMessage() != null ? error.getMessage() : "Unbekannter Fehler";
+                task.setLastExecutionLog(message);
+                logToConsole("ERROR", "Task '" + task.getName() + "' fehlgeschlagen: " + message);
+                cleanupExecutionState();
+            }
             @Override
-            protected void cancelled() { cleanupExecutionState(); }
+            protected void cancelled() {
+                task.setStatus(WorkflowTask.TaskStatus.PENDING);
+                task.setLastExecutionLog("Vom Benutzer abgebrochen.");
+                cleanupExecutionState();
+            }
         };
 
         Thread t = new Thread(activeProjectTask);
@@ -1484,10 +1687,23 @@ public class ProjectWorkflowEditorView {
 
     private void startProjectExecution() {
         if (project == null || project.getTasks().isEmpty()) return;
+        try {
+            validateProjectExecutionOrder();
+        } catch (IllegalStateException ex) {
+            Alert alert = new Alert(Alert.AlertType.ERROR, ex.getMessage(), ButtonType.OK);
+            alert.setTitle("Workflow-Konfiguration ungültig");
+            alert.setHeaderText("Projekt kann nicht sicher gestartet werden");
+            if (root.getScene() != null) alert.initOwner(root.getScene().getWindow());
+            alert.showAndWait();
+            return;
+        }
+
+        saveProject();
 
         startBtn.setDisable(true);
         stopBtn.setDisable(false);
         resetBtn.setDisable(true);
+        setEditorLocked(true);
         consoleLog.clear();
 
         centerMainTabPane.getSelectionModel().select(progressTab);
@@ -1497,6 +1713,9 @@ public class ProjectWorkflowEditorView {
         activeProjectTask = new Task<Void>() {
             @Override
             protected Void call() throws Exception {
+                if (!projectSaveCoordinator.flush(PROJECT_SAVE_FLUSH_TIMEOUT)) {
+                    throw new IllegalStateException("Projekt konnte vor dem Workflow-Start nicht gespeichert werden.");
+                }
                 List<WorkflowTask> tasks = project.getTasks();
                 int total = tasks.size();
                 List<CombinedPass> currentPipelinePasses = new ArrayList<>();
@@ -1521,6 +1740,10 @@ public class ProjectWorkflowEditorView {
                         " [Source: " + task.getSourceDatabank() + " -> Target: " + task.getTargetDatabank() + "] ===");
 
                     try {
+                        List<CombinedPass> inputPasses = databankManager.getDatabank(task.getSourceDatabank());
+                        currentPipelinePasses = new ArrayList<>(inputPasses);
+                        applyTaskExecutionConfig(task);
+
                         switch (task.getType()) {
                             case STRATEGY_SELECTION:
                                 engine.runStep1();
@@ -1537,47 +1760,45 @@ public class ProjectWorkflowEditorView {
                                 }
                                 break;
                             case LONGTERM_RETEST:
-                                engine.setTickModel(task.getExecutionMode());
-                                if (task.getRetestSymbol() != null && !task.getRetestSymbol().isEmpty()) engine.setSymbol(task.getRetestSymbol());
-                                if (task.getRetestPeriod() != null && !task.getRetestPeriod().isEmpty()) engine.setPeriod(task.getRetestPeriod());
-                                if (task.getStartDate() != null && !task.getStartDate().isEmpty()) {
-                                    try { engine.setLongtermFromDate(LocalDate.parse(task.getStartDate())); } catch (Exception ignored) {}
-                                }
-                                if (task.getEndDate() != null && !task.getEndDate().isEmpty()) {
-                                    try { engine.setLongtermToDate(LocalDate.parse(task.getEndDate())); } catch (Exception ignored) {}
-                                }
                                 currentPipelinePasses = engine.runLongtermTest(
+                                    inputPasses,
                                     msg -> logToConsole("LANGZEITTEST", msg),
                                     pct -> updateProgressUI((double) currentIdx / total, "Langzeittest " + pct + "%")
                                 );
                                 break;
                             case PRE_FILTER:
+                                currentPipelinePasses = new ArrayList<>(inputPasses);
+                                break;
                             case DIVERSITY_FILTER:
-                                List<CombinedPass> srcList = databankManager.getDatabank(task.getSourceDatabank());
-                                currentPipelinePasses = new ArrayList<>(srcList.isEmpty() ? currentPipelinePasses : srcList);
+                                currentPipelinePasses = engine.selectDiversePasses(inputPasses);
                                 break;
                             case ROBUSTNESS_CV:
+                                engine.setSelectedDiversePasses(inputPasses);
                                 engine.runStep4(
                                     msg -> logToConsole("STRESS", msg),
                                     pct -> updateProgressUI((double) currentIdx / total, "Robustness " + pct + "%")
                                 );
-                                currentPipelinePasses = engine.getSelectedDiversePasses();
+                                currentPipelinePasses = new ArrayList<>(inputPasses);
                                 break;
                             case KI_EVALUATION:
+                                engine.setSelectedDiversePasses(inputPasses);
+                                engine.retainSensitivityResultsForPasses(inputPasses);
                                 engine.runStep5(msg -> logToConsole("KI-EVAL", msg));
-                                currentPipelinePasses = engine.getSelectedDiversePasses();
+                                currentPipelinePasses = new ArrayList<>(inputPasses);
                                 break;
                             case PORTFOLIO_EXPORT:
-                                currentPipelinePasses = engine.runStep6();
+                                currentPipelinePasses = exportPortfolioCandidates(inputPasses);
                                 break;
                             case OOS_VALIDATION:
-                                if (engine.hasUsableValidationWindow(14)) {
-                                    engine.runStep7(
-                                        msg -> logToConsole("VALIDIERUNG", msg),
-                                        (curr, totV) -> updateProgressUI((double) currentIdx / total, "Validierung " + curr + " / " + totV)
-                                    );
+                                List<CombinedPass> validationCandidates = engine.selectFinalPasses(inputPasses);
+                                if (!engine.hasUsableValidationWindow(14)) {
+                                    throw new IllegalStateException("Kein nutzbares OOS-Validierungsfenster von mindestens 14 Tagen konfiguriert.");
                                 }
-                                currentPipelinePasses = engine.getFinalSelectedPasses();
+                                List<ValidationResult> taskValidationResults = engine.runStep7(
+                                    msg -> logToConsole("VALIDIERUNG", msg),
+                                    (curr, totV) -> updateProgressUI((double) currentIdx / total, "Validierung " + curr + " / " + totV)
+                                );
+                                currentPipelinePasses = passedValidationCandidates(validationCandidates, taskValidationResults);
                                 break;
                             default:
                                 break;
@@ -1587,11 +1808,14 @@ public class ProjectWorkflowEditorView {
                         List<CombinedPass> processed = databankManager.processTaskDatabanks(task, currentPipelinePasses);
                         task.setOutputPasses(processed);
                         task.setStatus(WorkflowTask.TaskStatus.COMPLETED);
+                        task.setLastExecutionLog("Erfolgreich: " + processed.size() + " Strategien geroutet.");
+                        saveProject();
 
                         logToConsole("PROJECT", "=== TASK " + (i + 1) + " FERTIG. Databank '" + task.getTargetDatabank() + "' enthält " + processed.size() + " Strategien ===");
                         Platform.runLater(() -> refreshDatabanksUI());
                     } catch (Exception ex) {
                         task.setStatus(WorkflowTask.TaskStatus.FAILED);
+                        task.setLastExecutionLog(ex.getMessage());
                         logToConsole("ERROR", "Fehler in Task " + (i + 1) + ": " + ex.getMessage());
                         throw ex;
                     }
@@ -1613,11 +1837,22 @@ public class ProjectWorkflowEditorView {
 
             @Override
             protected void failed() {
+                Throwable error = getException();
+                String message = error != null && error.getMessage() != null ? error.getMessage() : "Unbekannter Fehler";
+                logToConsole("ERROR", "Projektlauf fehlgeschlagen: " + message);
                 cleanupExecutionState();
             }
 
             @Override
             protected void cancelled() {
+                if (project != null) {
+                    for (WorkflowTask task : project.getTasks()) {
+                        if (task != null && task.getStatus() == WorkflowTask.TaskStatus.RUNNING) {
+                            task.setStatus(WorkflowTask.TaskStatus.PENDING);
+                            task.setLastExecutionLog("Vom Benutzer abgebrochen.");
+                        }
+                    }
+                }
                 cleanupExecutionState();
             }
         };
@@ -1625,6 +1860,28 @@ public class ProjectWorkflowEditorView {
         Thread t = new Thread(activeProjectTask);
         t.setDaemon(true);
         t.start();
+    }
+
+    private void validateProjectExecutionOrder() {
+        List<WorkflowTask> enabledTasks = new ArrayList<>();
+        for (WorkflowTask task : project.getTasks()) {
+            if (task != null && task.isEnabled()) enabledTasks.add(task);
+        }
+        boolean hasOosGate = enabledTasks.stream()
+                .anyMatch(task -> task.getType() == WorkflowTask.TaskType.OOS_VALIDATION);
+        boolean oosCompletedInChain = false;
+        for (WorkflowTask task : enabledTasks) {
+            if (task.getType() == null) {
+                throw new IllegalStateException("Ein aktivierter Task besitzt keinen gültigen Typ.");
+            }
+            if (task.getType() == WorkflowTask.TaskType.OOS_VALIDATION) {
+                oosCompletedInChain = true;
+            } else if (task.getType() == WorkflowTask.TaskType.PORTFOLIO_EXPORT
+                    && hasOosGate && !oosCompletedInChain) {
+                throw new IllegalStateException(
+                        "Der Portfolio-Export steht vor der OOS-Validierung. Verschiebe die OOS-Validierung vor den Export.");
+            }
+        }
     }
 
     private void stopProjectExecution() {
@@ -1654,6 +1911,7 @@ public class ProjectWorkflowEditorView {
         startBtn.setDisable(false);
         stopBtn.setDisable(true);
         resetBtn.setDisable(false);
+        setEditorLocked(false);
         activeProjectTask = null;
         saveProject();
         Platform.runLater(() -> {
@@ -1663,15 +1921,36 @@ public class ProjectWorkflowEditorView {
         });
     }
 
+    private void setEditorLocked(boolean locked) {
+        if (fullSettingsTab != null) fullSettingsTab.setDisable(locked);
+        if (taskChainListBox != null) taskChainListBox.setDisable(locked);
+        if (bottomDatabankTabPane != null) bottomDatabankTabPane.setDisable(locked);
+        if (databankToolbar != null) databankToolbar.setDisable(locked);
+    }
+
     private void saveProject() {
         if (project != null) {
-            if (project.isSaveDatabanksPersistently()) {
-                databankManager.saveToProject(project);
-            } else {
-                project.getDatabanks().clear();
-            }
-            DatabaseManager.getInstance().saveCustomProject(project);
+            projectSaveCoordinator.requestSave(project, databankManager);
         }
+    }
+
+    private void flushProjectSaveAsync(Runnable continuation) {
+        saveProject();
+        projectSaveCoordinator.flushAsync().whenComplete((saved, error) -> Platform.runLater(() -> {
+            if (error != null || !Boolean.TRUE.equals(saved)) {
+                logToConsole("DB", "Projekt konnte nicht vollstaendig gespeichert werden.");
+            }
+            if (continuation != null) continuation.run();
+        }));
+    }
+
+    /** Flushes pending project data before the application shuts down. */
+    public void shutdown() {
+        saveProject();
+        if (!projectSaveCoordinator.flush(PROJECT_SAVE_FLUSH_TIMEOUT)) {
+            logger.warn("Pending Custom Project data could not be flushed during shutdown");
+        }
+        projectSaveCoordinator.close();
     }
 
     private void logToConsole(String tag, String msg) {

@@ -14,6 +14,7 @@ public class MainView {
     
     private BorderPane root;
     private TabPane tabPane;
+    private WorkflowView workflowView;
 
     public MainView() {
         root = new BorderPane();
@@ -69,7 +70,7 @@ public class MainView {
         robustnessView.bindTab(robustnessTab);
         
         // Integration of new WorkflowAutomator
-        WorkflowView workflowView = new WorkflowView(logView);
+        workflowView = new WorkflowView(logView);
         Tab workflowTab = new Tab("🔄 Workflow Automator", workflowView.getView());
         tabPane.getTabs().add(workflowTab);
         tabPane.getSelectionModel().select(workflowTab);
@@ -124,5 +125,9 @@ public class MainView {
 
     public BorderPane getView() {
         return root;
+    }
+
+    public void shutdown() {
+        if (workflowView != null) workflowView.shutdown();
     }
 }

@@ -301,7 +301,8 @@ Im Tab **Custom Projects (StrategyQuant)** können Sie komplexe, mehrstufige Tes
     5. *Diversitäts-Clustering*: Unkorrelierte Top-Strategien selektieren.
     6. *Robustness Test (CV)*: Parameter-Sensitivity Sweeps & Stresstests.
     7. *KI-Bewertung*: LLM-gestützte Stabilitätsanalyse via OpenRouter.
-    8. *Portfolio Export*: Finale `.set`-Dateien & PDF-Berichte speichern.
+    8. *OOS-Validierung*: Finale Kandidaten auf einem unberührten Zeitfenster prüfen; nur bestandene Strategien werden weitergereicht.
+    9. *Portfolio Export*: Erst nach den Validierungsgates finale `.set`-Dateien & PDF-Berichte speichern.
 
 * **Flexible Databank-Architektur (Results, Portfolio & Custom Databanks)**:
   - Jedes Projekttask liest Strategien aus einer Quell-Databank (z.B. `Results`) und schreibt gefilterte/geprüfte Strategien in eine Ziel-Databank (z.B. `data1` oder `Final`).
@@ -313,7 +314,8 @@ Im Tab **Custom Projects (StrategyQuant)** können Sie komplexe, mehrstufige Tes
     - **`Entf`-Taste (Delete Key)**: Markierte Strategien direkt aus der Databank löschen.
     - **Rechtsklick-Kontextmenü**: Menüeintrag `🗑 Selektierte Strategie(n) löschen`.
     - **Toolbar-Button**: `🗑 Selektierte Strategien löschen`.
-  - **Persistenz**: Über die Checkbox `💾 Databanken persistent in DB speichern` werden alle Databank-Inhalte dauerhaft in SQLite gesichert.
+  - **Persistenz**: Über die Checkbox `💾 Databanken persistent in DB speichern` werden alle Databank-Inhalte dauerhaft in SQLite gesichert. Ist sie deaktiviert, bleiben die Namen und Tabs eigener Databanken erhalten, ihre Strategieinhalte werden jedoch nicht gespeichert.
+  - **Speichern großer Databanken**: Automatische Änderungen werden kurz gebündelt und anschließend auf einem Hintergrund-Writer gespeichert. Manuelles Speichern, das Verlassen des Projekts, ein Workflow-Start und das Beenden der Anwendung erzwingen einen vollständigen Flush des neuesten Stands.
 
 * **Qualitäts-Ranking & Filtertabelle**:
   - Flexibel anpassbare Filter-Bedingungen (`Active`, `Metric`, `<=>`, `Value`).

@@ -661,7 +661,7 @@ public class BacktestRunner {
             writer.write("Period: " + result.getPeriod() + "\n");
             writer.write("From: " + btConfig.getFromDate() + "\n");
             writer.write("To: " + btConfig.getToDate() + "\n");
-            writer.write("Model: " + BacktestConfig.MODEL_NAMES[btConfig.getModel()] + "\n");
+            writer.write("Model: " + btConfig.getModelName() + "\n");
             writer.write("Deposit: " + btConfig.getDeposit() + " " + btConfig.getCurrency() + "\n");
             writer.write("Leverage: " + btConfig.getLeverage() + "\n");
             writer.write("ExpertParameters: " + (btConfig.getExpertParameters() != null && !btConfig.getExpertParameters().isEmpty() ? btConfig.getExpertParameters() : "none (compiled defaults)") + "\n");

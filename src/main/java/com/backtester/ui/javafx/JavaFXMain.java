@@ -9,9 +9,11 @@ import java.net.URL;
 
 public class JavaFXMain extends Application {
 
+    private MainView mainView;
+
     @Override
     public void start(Stage primaryStage) {
-        MainView mainView = new MainView();
+        mainView = new MainView();
         Scene scene = new Scene(mainView.getView(), 1700, 1050);
 
         URL cssUrl = getClass().getResource("/css/antigravity.css");
@@ -31,5 +33,10 @@ public class JavaFXMain extends Application {
 
         primaryStage.setScene(scene);
         primaryStage.show();
+    }
+
+    @Override
+    public void stop() {
+        if (mainView != null) mainView.shutdown();
     }
 }

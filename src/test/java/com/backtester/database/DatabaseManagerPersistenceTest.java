@@ -531,4 +531,25 @@ public class DatabaseManagerPersistenceTest {
         assertEquals("Period MA", DatabaseManager.translatePortugueseParameter("Inp_Periodo_Media"));
         assertEquals("Enable Buy", DatabaseManager.translatePortugueseParameter("Inp_Habilitar_Compra"));
     }
+
+    @Test
+    public void testCustomProjectRoundTripPreservesDatabanksAndSpecialMetrics() {
+        com.backtester.report.OptimizationResult.Pass bt = new com.backtester.report.OptimizationResult.Pass();
+        bt.setPassNumber(42);
+        bt.setProfit(123.45);
+        bt.setProfitFactor(Double.NaN);
+        com.backtester.report.OptimizationResult.CombinedPass combined =
+                new com.backtester.report.OptimizationResult.CombinedPass(bt, null, 10.0, 1.0, "test");
+
+        com.backtester.workflow.CustomProject project =
+                new com.backtester.workflow.CustomProject("Databank persistence", "EA.ex5", "EURUSD", "H1");
+        project.getDatabanks().put("data1", java.util.List.of(combined));
+        db.saveCustomProject(project);
+
+        java.util.List<com.backtester.workflow.CustomProject> loaded = db.getAllCustomProjects();
+        assertEquals(1, loaded.size());
+        assertTrue(loaded.get(0).getDatabanks().containsKey("data1"));
+        assertEquals(1, loaded.get(0).getDatabanks().get("data1").size());
+        assertTrue(Double.isNaN(loaded.get(0).getDatabanks().get("data1").get(0).getBtPf()));
+    }
 }

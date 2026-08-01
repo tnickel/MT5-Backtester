@@ -1436,8 +1436,8 @@ public class DatabaseManager {
 
     // ─── CUSTOM PROJECTS PERSISTENCE ──────────────────────────────────────────
 
-    public void saveCustomProject(com.backtester.workflow.CustomProject project) {
-        if (project == null || project.getId() == null) return;
+    public boolean saveCustomProject(com.backtester.workflow.CustomProject project) {
+        if (project == null || project.getId() == null) return false;
         String sql = "INSERT INTO CUSTOM_PROJECTS (id, name, expert, symbol, period, created_timestamp, last_run_timestamp, project_json) " +
                 "VALUES (?, ?, ?, ?, ?, ?, ?, ?) " +
                 "ON CONFLICT(id) DO UPDATE SET " +
@@ -1449,7 +1449,7 @@ public class DatabaseManager {
                 "last_run_timestamp = excluded.last_run_timestamp, " +
                 "project_json = excluded.project_json;";
         try (Connection conn = connect(); PreparedStatement pstmt = conn.prepareStatement(sql)) {
-            com.google.gson.Gson gson = new com.google.gson.GsonBuilder().setPrettyPrinting().create();
+            com.google.gson.Gson gson = createCustomProjectGson();
             String json = gson.toJson(project);
 
             pstmt.setString(1, project.getId());
@@ -1462,8 +1462,10 @@ public class DatabaseManager {
             pstmt.setString(8, json);
             pstmt.executeUpdate();
             log.info("Saved custom project: {} ({})", project.getName(), project.getId());
-        } catch (SQLException e) {
+            return true;
+        } catch (SQLException | RuntimeException e) {
             log.error("Failed to save custom project: " + project.getName(), e);
+            return false;
         }
     }
 
@@ -1471,7 +1473,7 @@ public class DatabaseManager {
         List<com.backtester.workflow.CustomProject> list = new ArrayList<>();
         String sql = "SELECT project_json FROM CUSTOM_PROJECTS ORDER BY last_run_timestamp DESC, created_timestamp DESC;";
         try (Connection conn = connect(); Statement stmt = conn.createStatement(); ResultSet rs = stmt.executeQuery(sql)) {
-            com.google.gson.Gson gson = new com.google.gson.Gson();
+            com.google.gson.Gson gson = createCustomProjectGson();
             while (rs.next()) {
                 String json = rs.getString("project_json");
                 if (json != null && !json.isEmpty()) {
@@ -1487,6 +1489,16 @@ public class DatabaseManager {
             log.error("Failed to load custom projects", e);
         }
         return list;
+    }
+
+    private static com.google.gson.Gson createCustomProjectGson() {
+        return new com.google.gson.GsonBuilder()
+                // MT5 reports may legitimately contain missing/undefined metrics.
+                // Gson otherwise throws and silently prevents the whole project
+                // (including custom databanks) from being persisted.
+                .serializeSpecialFloatingPointValues()
+                .setPrettyPrinting()
+                .create();
     }
 
     public void deleteCustomProject(String id) {

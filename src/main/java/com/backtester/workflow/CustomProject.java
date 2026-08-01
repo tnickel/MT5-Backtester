@@ -3,6 +3,7 @@ package com.backtester.workflow;
 import com.backtester.report.OptimizationResult.CombinedPass;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -61,8 +62,14 @@ public class CustomProject {
     public long getLastRunTimestamp() { return lastRunTimestamp; }
     public void setLastRunTimestamp(long lastRunTimestamp) { this.lastRunTimestamp = lastRunTimestamp; }
 
-    public List<WorkflowTask> getTasks() { return tasks != null ? tasks : new ArrayList<>(); }
-    public void setTasks(List<WorkflowTask> tasks) { this.tasks = tasks; }
+    public List<WorkflowTask> getTasks() {
+        if (tasks == null) tasks = new ArrayList<>();
+        tasks.removeIf(task -> task == null);
+        return tasks;
+    }
+    public void setTasks(List<WorkflowTask> tasks) {
+        this.tasks = tasks != null ? new ArrayList<>(tasks) : new ArrayList<>();
+    }
 
     public boolean isSaveDatabanksPersistently() { return saveDatabanksPersistently; }
     public void setSaveDatabanksPersistently(boolean saveDatabanksPersistently) { this.saveDatabanksPersistently = saveDatabanksPersistently; }
@@ -104,9 +111,33 @@ public class CustomProject {
         if (tasks == null) return 0;
         int count = 0;
         for (WorkflowTask t : tasks) {
-            if (t.isEnabled()) count++;
+            if (t != null && t.isEnabled()) count++;
         }
         return count;
+    }
+
+    /**
+     * Copies the small mutable project metadata on the caller thread. Databank
+     * contents are intentionally attached later by the asynchronous writer.
+     */
+    public CustomProject copyMetadataForPersistence() {
+        CustomProject copy = new CustomProject();
+        copy.setId(id);
+        copy.setName(name);
+        copy.setExpert(expert);
+        copy.setSymbol(symbol);
+        copy.setPeriod(period);
+        copy.setCreatedTimestamp(createdTimestamp);
+        copy.setLastRunTimestamp(lastRunTimestamp);
+        copy.setSaveDatabanksPersistently(saveDatabanksPersistently);
+
+        List<WorkflowTask> taskCopies = new ArrayList<>();
+        for (WorkflowTask task : getTasks()) {
+            taskCopies.add(task.copyForPersistence());
+        }
+        copy.setTasks(taskCopies);
+        copy.setDatabanks(new LinkedHashMap<>());
+        return copy;
     }
 
     /**
@@ -122,8 +153,19 @@ public class CustomProject {
         WorkflowTask t5 = new WorkflowTask("5. Dual- & Diversitäts-Filter", WorkflowTask.TaskType.DIVERSITY_FILTER);
         WorkflowTask t6 = new WorkflowTask("6. Robustness Test (CV)", WorkflowTask.TaskType.ROBUSTNESS_CV);
         WorkflowTask t7 = new WorkflowTask("7. KI-Bewertung", WorkflowTask.TaskType.KI_EVALUATION);
-        WorkflowTask t8 = new WorkflowTask("8. Portfolio Export", WorkflowTask.TaskType.PORTFOLIO_EXPORT);
-        WorkflowTask t9 = new WorkflowTask("9. Validierung (OOS)", WorkflowTask.TaskType.OOS_VALIDATION);
+        WorkflowTask t8 = new WorkflowTask("8. Validierung (OOS)", WorkflowTask.TaskType.OOS_VALIDATION);
+        WorkflowTask t9 = new WorkflowTask("9. Portfolio Export", WorkflowTask.TaskType.PORTFOLIO_EXPORT);
+        java.time.LocalDate validationCutoff = java.time.LocalDate.now().minusMonths(3);
+        t2.setStartDate(java.time.LocalDate.now().minusYears(2).toString());
+        t2.setEndDate(validationCutoff.toString());
+        t3.setStartDate(java.time.LocalDate.now().minusYears(7).toString());
+        t3.setEndDate(validationCutoff.toString());
+        t6.setStartDate(java.time.LocalDate.now().minusYears(2).toString());
+        t6.setEndDate(validationCutoff.toString());
+        t8.setStartDate(validationCutoff.plusDays(1).toString());
+        t8.setEndDate(java.time.LocalDate.now().toString());
+        t9.setSourceDatabank("Results");
+        t9.setTargetDatabank("Final");
 
         proj.addTask(t1);
         proj.addTask(t2);

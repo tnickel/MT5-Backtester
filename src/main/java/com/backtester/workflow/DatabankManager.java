@@ -4,9 +4,10 @@ import com.backtester.report.OptimizationResult.CombinedPass;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import java.util.ArrayList;
+import java.util.Collection;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Manages strategy Databanks for Custom Projects (e.g. "Results", "Portfolio", "Final").
@@ -14,38 +15,56 @@ import java.util.concurrent.ConcurrentHashMap;
 public class DatabankManager {
 
     private static final Logger logger = LoggerFactory.getLogger(DatabankManager.class);
+    public static final String RESULTS = "Results";
+    public static final String EXISTING_PORTFOLIO = "Existing portfolio";
+    public static final String FINAL = "Final";
 
-    private final Map<String, List<CombinedPass>> databanks = new ConcurrentHashMap<>();
+    /** Guarded by this instance's monitor; values are never exposed directly. */
+    private final Map<String, List<CombinedPass>> databanks = new LinkedHashMap<>();
 
     public DatabankManager() {
-        // Pre-create standard default databanks
-        databanks.put("Results", new ArrayList<>());
-        databanks.put("Existing portfolio", new ArrayList<>());
-        databanks.put("Final", new ArrayList<>());
+        resetToDefaults();
     }
 
-    public void loadFromProject(CustomProject project) {
+    public synchronized void loadFromProject(CustomProject project) {
+        resetToDefaults();
         if (project == null) return;
         Map<String, List<CombinedPass>> saved = project.getDatabanks();
         if (saved != null && !saved.isEmpty()) {
             for (Map.Entry<String, List<CombinedPass>> entry : saved.entrySet()) {
-                databanks.put(entry.getKey(), new ArrayList<>(entry.getValue()));
+                String name = canonicalName(entry.getKey());
+                if (name != null) {
+                    databanks.put(name, copyValidPasses(entry.getValue()));
+                }
             }
         }
     }
 
-    public void saveToProject(CustomProject project) {
-        if (project == null) return;
-        project.setDatabanks(new ConcurrentHashMap<>(databanks));
+    public synchronized void saveToProject(CustomProject project) {
+        saveToProject(project, true);
     }
 
-    public List<String> getDatabankNames() {
+    /**
+     * Persists a stable snapshot. When contents are disabled, custom databank
+     * names are still retained so their tabs do not disappear after restart.
+     */
+    public synchronized void saveToProject(CustomProject project, boolean includeContents) {
+        if (project == null) return;
+        Map<String, List<CombinedPass>> snapshot = new LinkedHashMap<>();
+        for (Map.Entry<String, List<CombinedPass>> entry : databanks.entrySet()) {
+            snapshot.put(entry.getKey(), includeContents
+                    ? new ArrayList<>(entry.getValue()) : new ArrayList<>());
+        }
+        project.setDatabanks(snapshot);
+    }
+
+    public synchronized List<String> getDatabankNames() {
         return new ArrayList<>(databanks.keySet());
     }
 
-    public boolean createDatabank(String name) {
-        if (name == null || name.trim().isEmpty()) return false;
-        String cleanName = name.trim();
+    public synchronized boolean createDatabank(String name) {
+        String cleanName = canonicalName(name);
+        if (cleanName == null || findStoredName(cleanName) != null) return false;
         if (!databanks.containsKey(cleanName)) {
             databanks.put(cleanName, new ArrayList<>());
             return true;
@@ -53,69 +72,75 @@ public class DatabankManager {
         return false;
     }
 
-    public void removeDatabank(String name) {
-        if (name != null && !name.equals("Results") && !name.equals("Existing portfolio") && !name.equals("Final")) {
-            databanks.remove(name);
-        }
+    public synchronized void removeDatabank(String name) {
+        String storedName = findStoredName(name);
+        if (storedName != null && !isStandard(storedName)) databanks.remove(storedName);
     }
 
-    public List<CombinedPass> getDatabank(String name) {
-        if (name == null || name.isEmpty()) name = "Results";
-        return databanks.computeIfAbsent(name, k -> new ArrayList<>());
+    /** Returns a snapshot so callers cannot mutate an ArrayList during a worker run. */
+    public synchronized List<CombinedPass> getDatabank(String name) {
+        String storedName = ensureDatabank(name);
+        return new ArrayList<>(databanks.get(storedName));
     }
 
-    public void setDatabankContent(String name, List<CombinedPass> passes) {
-        if (name == null || name.isEmpty()) name = "Results";
-        databanks.put(name, passes != null ? new ArrayList<>(passes) : new ArrayList<>());
+    public synchronized void setDatabankContent(String name, List<CombinedPass> passes) {
+        databanks.put(ensureDatabank(name), copyValidPasses(passes));
     }
 
-    public void addPassesToDatabank(String name, List<CombinedPass> passes) {
+    public synchronized void addPassesToDatabank(String name, List<CombinedPass> passes) {
         if (passes == null || passes.isEmpty()) return;
-        List<CombinedPass> target = getDatabank(name);
-        target.addAll(passes);
+        String storedName = ensureDatabank(name);
+        databanks.put(storedName, mergeByIdentity(databanks.get(storedName), passes));
     }
 
-    public void clearDatabank(String name) {
-        if (name != null && databanks.containsKey(name)) {
-            databanks.get(name).clear();
+    public synchronized void removePassesFromDatabank(String name, Collection<CombinedPass> passes) {
+        if (passes == null || passes.isEmpty()) return;
+        String storedName = findStoredName(name);
+        if (storedName == null) return;
+        List<CombinedPass> remaining = new ArrayList<>(databanks.get(storedName));
+        for (CombinedPass pass : passes) {
+            String identity = passIdentity(pass);
+            remaining.removeIf(candidate -> passIdentity(candidate).equals(identity));
         }
+        databanks.put(storedName, remaining);
     }
 
-    public void clearAll() {
-        databanks.clear();
-        databanks.put("Results", new ArrayList<>());
-        databanks.put("Existing portfolio", new ArrayList<>());
-        databanks.put("Final", new ArrayList<>());
+    public synchronized void clearDatabank(String name) {
+        String storedName = findStoredName(name);
+        if (storedName != null) databanks.get(storedName).clear();
+    }
+
+    public synchronized void clearAll() {
+        resetToDefaults();
     }
 
     /**
      * Executes Databank transfer & filter condition evaluation for a given task.
      */
-    public List<CombinedPass> processTaskDatabanks(WorkflowTask task, List<CombinedPass> inputPasses) {
-        if (task == null) return inputPasses;
+    public synchronized List<CombinedPass> processTaskDatabanks(WorkflowTask task, List<CombinedPass> inputPasses) {
+        if (task == null) return copyValidPasses(inputPasses);
 
-        String sourceName = task.getSourceDatabank();
-        String targetName = task.getTargetDatabank();
+        String sourceName = ensureDatabank(task.getSourceDatabank());
+        String targetName = ensureDatabank(task.getTargetDatabank());
 
-        // 1. Get input passes from source databank (or provided input)
-        List<CombinedPass> sourceList = getDatabank(sourceName);
-        if (sourceList.isEmpty() && inputPasses != null && !inputPasses.isEmpty()) {
-            sourceList = new ArrayList<>(inputPasses);
-            setDatabankContent(sourceName, sourceList);
-        }
+        // Explicit task output always wins, including an explicit empty result.
+        // A null input is the only signal to read the source databank directly.
+        List<CombinedPass> sourceSnapshot = new ArrayList<>(databanks.get(sourceName));
+        List<CombinedPass> candidates = inputPasses != null
+                ? copyValidPasses(inputPasses) : sourceSnapshot;
 
         logger.info("DATABANK ROUTING START: Task '{}' ({}) | Source: '{}' ({} passes) --> Target: '{}'",
-            task.getName(), task.getType(), sourceName, sourceList.size(), targetName);
+            task.getName(), task.getType(), sourceName, candidates.size(), targetName);
 
         List<CombinedPass> filteredOutput = new ArrayList<>();
-        List<FilterCondition> conditions = task.getFilterConditions();
+        List<FilterCondition> conditions = new ArrayList<>(task.getFilterConditions());
 
         // 2. Evaluate filter conditions
-        for (CombinedPass pass : sourceList) {
+        for (CombinedPass pass : candidates) {
             boolean passAll = true;
             if (conditions != null && !conditions.isEmpty()) {
                 for (FilterCondition cond : conditions) {
-                    if (!cond.evaluate(pass)) {
+                    if (cond == null || !cond.evaluate(pass)) {
                         passAll = false;
                         break;
                     }
@@ -127,12 +152,88 @@ public class DatabankManager {
             }
         }
 
-        // 3. Write results to target databank
-        setDatabankContent(targetName, filteredOutput);
+        // A separate target is a copy. With an in-place route, deleteFailed
+        // controls whether rejected strategies are removed or merely retained.
+        if (!sourceName.equalsIgnoreCase(targetName) || task.isDeleteFailed()) {
+            databanks.put(targetName, new ArrayList<>(filteredOutput));
+        } else {
+            databanks.put(targetName, mergeByIdentity(sourceSnapshot, filteredOutput));
+        }
 
-        logger.info("DATABANK ROUTING SUCCESS: Task '{}' copied {} / {} passes into Databank '{}'.",
-            task.getName(), filteredOutput.size(), sourceList.size(), targetName);
+        logger.info("DATABANK ROUTING SUCCESS: Task '{}' routed {} / {} passes into Databank '{}'.",
+            task.getName(), filteredOutput.size(), candidates.size(), targetName);
 
-        return filteredOutput;
+        return new ArrayList<>(filteredOutput);
+    }
+
+    private void resetToDefaults() {
+        databanks.clear();
+        databanks.put(RESULTS, new ArrayList<>());
+        databanks.put(EXISTING_PORTFOLIO, new ArrayList<>());
+        databanks.put(FINAL, new ArrayList<>());
+    }
+
+    private String ensureDatabank(String name) {
+        String cleanName = canonicalName(name);
+        if (cleanName == null) cleanName = RESULTS;
+        String storedName = findStoredName(cleanName);
+        if (storedName != null) return storedName;
+        databanks.put(cleanName, new ArrayList<>());
+        return cleanName;
+    }
+
+    private String findStoredName(String name) {
+        String cleanName = canonicalName(name);
+        if (cleanName == null) return null;
+        for (String storedName : databanks.keySet()) {
+            if (storedName.equalsIgnoreCase(cleanName)) return storedName;
+        }
+        return null;
+    }
+
+    private static String canonicalName(String name) {
+        if (name == null || name.trim().isEmpty()) return RESULTS;
+        String cleanName = name.trim();
+        if (RESULTS.equalsIgnoreCase(cleanName)) return RESULTS;
+        if (EXISTING_PORTFOLIO.equalsIgnoreCase(cleanName)) return EXISTING_PORTFOLIO;
+        if (FINAL.equalsIgnoreCase(cleanName)) return FINAL;
+        return cleanName;
+    }
+
+    private static boolean isStandard(String name) {
+        return RESULTS.equalsIgnoreCase(name)
+                || EXISTING_PORTFOLIO.equalsIgnoreCase(name)
+                || FINAL.equalsIgnoreCase(name);
+    }
+
+    private static List<CombinedPass> copyValidPasses(Collection<CombinedPass> passes) {
+        Map<String, CombinedPass> unique = new LinkedHashMap<>();
+        if (passes != null) {
+            for (CombinedPass pass : passes) {
+                if (pass != null && pass.getBacktestPass() != null) unique.put(passIdentity(pass), pass);
+            }
+        }
+        return new ArrayList<>(unique.values());
+    }
+
+    private static List<CombinedPass> mergeByIdentity(Collection<CombinedPass> existing,
+                                                       Collection<CombinedPass> updates) {
+        Map<String, CombinedPass> merged = new LinkedHashMap<>();
+        if (existing != null) {
+            for (CombinedPass pass : existing) {
+                if (pass != null && pass.getBacktestPass() != null) merged.put(passIdentity(pass), pass);
+            }
+        }
+        if (updates != null) {
+            for (CombinedPass pass : updates) {
+                if (pass != null && pass.getBacktestPass() != null) merged.put(passIdentity(pass), pass);
+            }
+        }
+        return new ArrayList<>(merged.values());
+    }
+
+    private static String passIdentity(CombinedPass pass) {
+        if (pass == null) return "<null>";
+        return pass.getPassNumber() + "\u0000" + pass.getStrategyName();
     }
 }

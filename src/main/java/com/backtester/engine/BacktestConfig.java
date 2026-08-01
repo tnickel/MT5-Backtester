@@ -7,6 +7,12 @@ import java.time.LocalDate;
  */
 public class BacktestConfig {
 
+    public static final int MODEL_EVERY_TICK = 0;
+    public static final int MODEL_OHLC_M1 = 1;
+    public static final int MODEL_OPEN_PRICES = 2;
+    public static final int MODEL_MATH_CALCULATIONS = 3;
+    public static final int MODEL_REAL_TICKS = 4;
+
     /** The Expert Advisor path relative to MQL5/Experts/ */
     private String expert = "";
 
@@ -27,7 +33,7 @@ public class BacktestConfig {
      * 3 = Math calculations
      * 4 = Every tick based on real ticks
      */
-    private int model = 1;
+    private int model = MODEL_OHLC_M1;
 
     /** Execution mode: 0=Normal, -1=Random delay, >0=delay ms */
     private int executionMode = 0;
@@ -86,7 +92,16 @@ public class BacktestConfig {
     public void setPeriod(String period) { this.period = period; }
 
     public int getModel() { return model; }
-    public void setModel(int model) { this.model = model; }
+    public void setModel(int model) {
+        if (model < MODEL_EVERY_TICK || model > MODEL_REAL_TICKS) {
+            throw new IllegalArgumentException("Unsupported MT5 model: " + model);
+        }
+        this.model = model;
+    }
+
+    public String getModelName() {
+        return model >= 0 && model < MODEL_NAMES.length ? MODEL_NAMES[model] : "Unknown (" + model + ")";
+    }
 
     public int getExecutionMode() { return executionMode; }
     public void setExecutionMode(int executionMode) { this.executionMode = executionMode; }
@@ -129,7 +144,7 @@ public class BacktestConfig {
      * Format: Expert_Period_Symbol_FromDate
      */
     public String toDirectoryName() {
-        String expertName = expert;
+        String expertName = expert != null ? expert : "";
         // Extract just the filename without path
         if (expertName.contains("\\")) {
             expertName = expertName.substring(expertName.lastIndexOf('\\') + 1);
@@ -141,8 +156,10 @@ public class BacktestConfig {
         if (expertName.toLowerCase().endsWith(".ex5") || expertName.toLowerCase().endsWith(".ex4")) {
             expertName = expertName.substring(0, expertName.length() - 4);
         }
-        return String.format("%s_%s_%s_%s", expertName, period, symbol,
-                fromDate.toString().replace("-", ""));
+        String safePeriod = period != null ? period : "";
+        String safeSymbol = symbol != null ? symbol : "";
+        String safeFromDate = fromDate != null ? fromDate.toString().replace("-", "") : "undated";
+        return String.format("%s_%s_%s_%s", expertName, safePeriod, safeSymbol, safeFromDate);
     }
 
     /** Available timeframes */

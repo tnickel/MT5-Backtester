@@ -23,6 +23,9 @@ public class CustomProjectTest {
         assertEquals("EURUSD", proj.getSymbol());
         assertEquals(9, proj.getTasks().size());
         assertEquals(9, proj.getEnabledTaskCount());
+        assertEquals(WorkflowTask.TaskType.OOS_VALIDATION, proj.getTasks().get(7).getType());
+        assertEquals(WorkflowTask.TaskType.PORTFOLIO_EXPORT, proj.getTasks().get(8).getType());
+        assertEquals("Final", proj.getTasks().get(8).getTargetDatabank());
     }
 
     @Test
@@ -66,5 +69,19 @@ public class CustomProjectTest {
 
         // Clean up test project
         DatabaseManager.getInstance().deleteCustomProject(proj.getId());
+    }
+
+    @Test
+    public void workflowModesMapToRawMt5Models() {
+        WorkflowTask task = new WorkflowTask("Retest", WorkflowTask.TaskType.LONGTERM_RETEST);
+
+        task.setExecutionMode(WorkflowTask.MODE_EVERY_TICK);
+        assertEquals(0, task.getMt5Model());
+        task.setExecutionMode(WorkflowTask.MODE_OHLC_M1);
+        assertEquals(1, task.getMt5Model());
+        task.setExecutionMode(WorkflowTask.MODE_REAL_TICKS);
+        assertEquals(4, task.getMt5Model());
+        task.setExecutionMode(WorkflowTask.MODE_OPEN_PRICES);
+        assertEquals(2, task.getMt5Model());
     }
 }
