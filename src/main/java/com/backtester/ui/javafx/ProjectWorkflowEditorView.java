@@ -1473,13 +1473,21 @@ public class ProjectWorkflowEditorView {
             throw new IllegalArgumentException("Task-Typ fehlt oder ist ungültig.");
         }
 
-        String taskExpert = (project != null && project.getExpert() != null && !project.getExpert().isBlank())
-                ? project.getExpert().trim()
-                : engine.getExpert();
-        if (taskExpert != null && !taskExpert.isBlank()) {
-            engine.setExpert(taskExpert);
-        } else if (engine.getExpert() == null || engine.getExpert().isBlank()) {
-            throw new IllegalArgumentException("Kein Expert Advisor im Projekt festgelegt. Bitte wähle in Task 1 eine .ex5-Datei aus.");
+        boolean requiresExpert = (task.getType() == WorkflowTask.TaskType.STRATEGY_SELECTION ||
+                                  task.getType() == WorkflowTask.TaskType.OPTIMIZER ||
+                                  task.getType() == WorkflowTask.TaskType.LONGTERM_RETEST ||
+                                  task.getType() == WorkflowTask.TaskType.ROBUSTNESS_CV ||
+                                  task.getType() == WorkflowTask.TaskType.OOS_VALIDATION);
+
+        if (requiresExpert) {
+            String taskExpert = (project != null && project.getExpert() != null && !project.getExpert().isBlank())
+                    ? project.getExpert().trim()
+                    : engine.getExpert();
+            if (taskExpert != null && !taskExpert.isBlank()) {
+                engine.setExpert(taskExpert);
+            } else if (engine.getExpert() == null || engine.getExpert().isBlank()) {
+                throw new IllegalArgumentException("Kein Expert Advisor im Projekt festgelegt. Bitte wähle in Task 1 eine .ex5-Datei aus.");
+            }
         }
 
         engine.setTickModel(task.getMt5Model());
