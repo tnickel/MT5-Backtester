@@ -98,6 +98,10 @@ public class WorkflowConfigDialogs {
 
     // ─── Step 1: Strategy Selector & Ranges ─────────────────────────────────────
 
+    public static void showStep1Dialog(WorkflowEngine engine, Window owner) {
+        showStep1Dialog(engine, owner, null);
+    }
+
     public static void showStep1Dialog(WorkflowEngine engine, Window owner, Runnable onSave) {
         Stage stage = new Stage();
         stage.setTitle("Schritt 1: Strategie-Auswahl & Suchräume");
@@ -1224,28 +1228,67 @@ public class WorkflowConfigDialogs {
         TextField maxFwDdField = new TextField(String.valueOf(engine.getMaxFwDd()));
         grid.add(maxFwDdField, 3, 3);
 
+        // Longterm section header
+        Label ltSepLabel = new Label("LANGZEITTEST & DUAL-FILTER EINSTELLUNGEN (5-10 JAHRE)");
+        ltSepLabel.setFont(Font.font("Segoe UI", FontWeight.BOLD, 12));
+        ltSepLabel.setTextFill(Color.web("#00e5ff"));
+        grid.add(ltSepLabel, 0, 4, 4, 1);
+
+        grid.add(new Label("Langzeit Von:"), 0, 5);
+        DatePicker ltFromPicker = new DatePicker(engine.getEffectiveLongtermFromDate());
+        ltFromPicker.setConverter(createDateConverter());
+        grid.add(ltFromPicker, 1, 5);
+
+        grid.add(new Label("Langzeit Bis:"), 2, 5);
+        DatePicker ltToPicker = new DatePicker(engine.getEffectiveLongtermToDate());
+        ltToPicker.setConverter(createDateConverter());
+        grid.add(ltToPicker, 3, 5);
+
+        grid.add(new Label("Max. LT Kandidaten:"), 0, 6);
+        Spinner<Integer> maxLtCandSpin = new Spinner<>(1, 100, engine.getMaxLongtermCandidates(), 1);
+        grid.add(maxLtCandSpin, 1, 6);
+
+        grid.add(new Label("Min. LT Profit Factor:"), 2, 6);
+        TextField minLtPfField = new TextField(String.valueOf(engine.getMinLtPf()));
+        grid.add(minLtPfField, 3, 6);
+
+        grid.add(new Label("Min. LT Profit:"), 0, 7);
+        TextField minLtProfitField = new TextField(String.valueOf(engine.getMinLtProfit()));
+        grid.add(minLtProfitField, 1, 7);
+
+        grid.add(new Label("Min. LT Trades:"), 2, 7);
+        TextField minLtTradesField = new TextField(String.valueOf(engine.getMinLtTrades()));
+        grid.add(minLtTradesField, 3, 7);
+
+        grid.add(new Label("Min. LT Recovery:"), 0, 8);
+        TextField minLtRecoveryField = new TextField(String.valueOf(engine.getMinLtRecovery()));
+        grid.add(minLtRecoveryField, 1, 8);
+
+        grid.add(new Label("Max. LT DD %:"), 2, 8);
+        TextField maxLtDdField = new TextField(String.valueOf(engine.getMaxLtDd()));
+        grid.add(maxLtDdField, 3, 8);
+
         // Diversity delta thresholds
-        grid.add(new Label("Param Differenz %:"), 0, 5);
-        TextField paramDiffField = new TextField(String.format(Locale.US, "%.0f", engine.getParamDiffPct() * 100));
-        grid.add(paramDiffField, 1, 5);
-
-        grid.add(new Label("Trades Differenz %:"), 2, 5);
-        TextField tradeDiffField = new TextField(String.format(Locale.US, "%.0f", engine.getTradeDiffPct() * 100));
-        grid.add(tradeDiffField, 3, 5);
-
-        grid.add(new Label("Min. differente Params:"), 0, 6);
-        Spinner<Integer> minDiffParamsSpin = new Spinner<>(1, 10, engine.getMinDifferentParams(), 1);
-        grid.add(minDiffParamsSpin, 1, 6);
-
-        grid.add(new Label("Max. Strategien (Ziel):"), 2, 6);
-        Spinner<Integer> maxStratsSpin = new Spinner<>(1, 20, engine.getMaxStrategiesToSelect(), 1);
-        grid.add(maxStratsSpin, 3, 6);
-
-        // Set row stylings for separator
         Label sepLabel = new Label("DIVERSITÄTS-METRIKEN (ÄHNLICHKEITS-SCHWELLWERTE)");
         sepLabel.setFont(Font.font("Segoe UI", FontWeight.BOLD, 12));
         sepLabel.setTextFill(Color.web("#ffd740"));
-        grid.add(sepLabel, 0, 4, 4, 1);
+        grid.add(sepLabel, 0, 9, 4, 1);
+
+        grid.add(new Label("Param Differenz %:"), 0, 10);
+        TextField paramDiffField = new TextField(String.format(Locale.US, "%.0f", engine.getParamDiffPct() * 100));
+        grid.add(paramDiffField, 1, 10);
+
+        grid.add(new Label("Trades Differenz %:"), 2, 10);
+        TextField tradeDiffField = new TextField(String.format(Locale.US, "%.0f", engine.getTradeDiffPct() * 100));
+        grid.add(tradeDiffField, 3, 10);
+
+        grid.add(new Label("Min. differente Params:"), 0, 11);
+        Spinner<Integer> minDiffParamsSpin = new Spinner<>(1, 10, engine.getMinDifferentParams(), 1);
+        grid.add(minDiffParamsSpin, 1, 11);
+
+        grid.add(new Label("Max. Strategien (Ziel):"), 2, 11);
+        Spinner<Integer> maxStratsSpin = new Spinner<>(1, 20, engine.getMaxStrategiesToSelect(), 1);
+        grid.add(maxStratsSpin, 3, 11);
 
         layout.getChildren().add(grid);
 
@@ -1379,6 +1422,11 @@ public class WorkflowConfigDialogs {
             final double minFwRecovery;
             final double maxBtDd;
             final double maxFwDd;
+            final double minLtProfit;
+            final int minLtTrades;
+            final double minLtRecovery;
+            final double maxLtDd;
+            final double minLtPf;
             final double paramDiffPct;
             final double tradeDiffPct;
             try {
@@ -1390,6 +1438,13 @@ public class WorkflowConfigDialogs {
                 minFwRecovery = parseFiniteDecimal(minFwRecoveryField.getText(), "Min. Forward Recovery", 0.0, Double.MAX_VALUE);
                 maxBtDd = parseFiniteDecimal(maxBtDdField.getText(), "Max. Backtest DD", 0.0, 100.0);
                 maxFwDd = parseFiniteDecimal(maxFwDdField.getText(), "Max. Forward DD", 0.0, 100.0);
+
+                minLtProfit = parseFiniteDecimal(minLtProfitField.getText(), "Min. Langzeit Profit", 0.0, Double.MAX_VALUE);
+                minLtTrades = parsePositiveInteger(minLtTradesField.getText(), "Min. Langzeit Trades");
+                minLtRecovery = parseFiniteDecimal(minLtRecoveryField.getText(), "Min. Langzeit Recovery", 0.0, Double.MAX_VALUE);
+                maxLtDd = parseFiniteDecimal(maxLtDdField.getText(), "Max. Langzeit DD", 0.0, 100.0);
+                minLtPf = parseFiniteDecimal(minLtPfField.getText(), "Min. Langzeit Profit Factor", 0.0, Double.MAX_VALUE);
+
                 paramDiffPct = parseFiniteDecimal(paramDiffField.getText(), "Parameter-Differenz", 0.0, 100.0) / 100.0;
                 tradeDiffPct = parseFiniteDecimal(tradeDiffField.getText(), "Trade-Differenz", 0.0, 100.0) / 100.0;
             } catch (IllegalArgumentException ex) {
@@ -1410,6 +1465,16 @@ public class WorkflowConfigDialogs {
             engine.setMinFwRecovery(minFwRecovery);
             engine.setMaxBtDd(maxBtDd);
             engine.setMaxFwDd(maxFwDd);
+
+            engine.setLongtermFromDate(ltFromPicker.getValue());
+            engine.setLongtermToDate(ltToPicker.getValue());
+            engine.setMaxLongtermCandidates(maxLtCandSpin.getValue());
+            engine.setMinLtProfit(minLtProfit);
+            engine.setMinLtTrades(minLtTrades);
+            engine.setMinLtRecovery(minLtRecovery);
+            engine.setMaxLtDd(maxLtDd);
+            engine.setMinLtPf(minLtPf);
+
             engine.setParamDiffPct(paramDiffPct);
             engine.setTradeDiffPct(tradeDiffPct);
             engine.setMinDifferentParams(minDiffParamsSpin.getValue());

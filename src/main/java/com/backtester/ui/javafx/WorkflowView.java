@@ -122,7 +122,34 @@ public class WorkflowView {
         header.getChildren().addAll(title, desc);
         root.setTop(header);
 
-        // Center visual flowchart and controls
+        TabPane mainWorkflowTabPane = new TabPane();
+        VBox.setVgrow(mainWorkflowTabPane, Priority.ALWAYS);
+
+        // --- TAB 1: Custom Projects (StrategyQuant Style) ---
+        Tab customProjectsTab = new Tab("📁 Custom Projects (StrategyQuant)");
+        customProjectsTab.setClosable(false);
+
+        StackPane customProjectsStack = new StackPane();
+        CustomProjectsOverviewView overviewView = new CustomProjectsOverviewView();
+        ProjectWorkflowEditorView editorView = new ProjectWorkflowEditorView();
+
+        overviewView.setOnOpenProjectCallback(proj -> {
+            editorView.loadProject(proj);
+            customProjectsStack.getChildren().setAll(editorView.getView());
+        });
+
+        editorView.setOnBackToOverviewCallback(() -> {
+            overviewView.reloadProjects();
+            customProjectsStack.getChildren().setAll(overviewView.getView());
+        });
+
+        customProjectsStack.getChildren().setAll(overviewView.getView());
+        customProjectsTab.setContent(customProjectsStack);
+
+        // --- TAB 2: Standard Express Workflow ---
+        Tab expressWorkflowTab = new Tab("⚡ Express Workflow");
+        expressWorkflowTab.setClosable(false);
+
         VBox mainContent = new VBox(15);
         mainContent.setAlignment(Pos.TOP_CENTER);
         VBox.setVgrow(mainContent, Priority.ALWAYS);
@@ -139,7 +166,10 @@ public class WorkflowView {
         tabPane = createBottomTabPane();
         mainContent.getChildren().add(tabPane);
 
-        root.setCenter(mainContent);
+        expressWorkflowTab.setContent(mainContent);
+
+        mainWorkflowTabPane.getTabs().addAll(customProjectsTab, expressWorkflowTab);
+        root.setCenter(mainWorkflowTabPane);
 
         // Load saved state or default to step 1
         int activeStep = engine.getLastActiveStep();
@@ -902,6 +932,101 @@ public class WorkflowView {
             }
         });
 
+        TableColumn<CombinedPass, Double> ltProf = new TableColumn<>("LT Profit (5-10J)");
+        ltProf.setCellValueFactory(c -> new javafx.beans.property.SimpleObjectProperty<>(c.getValue().getLtProfit()));
+        ltProf.setPrefWidth(115);
+        ltProf.setCellFactory(col -> new TableCell<CombinedPass, Double>() {
+            @Override
+            protected void updateItem(Double item, boolean empty) {
+                super.updateItem(item, empty);
+                if (empty || item == null || Double.isNaN(item)) {
+                    setText("-");
+                    setStyle("-fx-alignment: CENTER;");
+                } else {
+                    setText(String.format(Locale.US, "%.2f", item));
+                    if (item >= 0) {
+                        setStyle("-fx-alignment: CENTER; -fx-text-fill: #00e676; -fx-font-weight: bold;");
+                    } else {
+                        setStyle("-fx-alignment: CENTER; -fx-text-fill: #ff5252; -fx-font-weight: bold;");
+                    }
+                }
+            }
+        });
+
+        TableColumn<CombinedPass, Integer> ltTr = new TableColumn<>("LT Trades");
+        ltTr.setCellValueFactory(c -> new javafx.beans.property.SimpleObjectProperty<>(c.getValue().getLtTrades()));
+        ltTr.setPrefWidth(85);
+        ltTr.setCellFactory(col -> new TableCell<CombinedPass, Integer>() {
+            @Override
+            protected void updateItem(Integer item, boolean empty) {
+                super.updateItem(item, empty);
+                if (empty || item == null || item == 0) {
+                    setText("-");
+                    setStyle("-fx-alignment: CENTER;");
+                } else {
+                    setText(String.valueOf(item));
+                    setStyle("-fx-alignment: CENTER;");
+                }
+            }
+        });
+
+        TableColumn<CombinedPass, Double> ltPf = new TableColumn<>("LT PF");
+        ltPf.setCellValueFactory(c -> new javafx.beans.property.SimpleObjectProperty<>(c.getValue().getLtPf()));
+        ltPf.setPrefWidth(75);
+        ltPf.setCellFactory(col -> new TableCell<CombinedPass, Double>() {
+            @Override
+            protected void updateItem(Double item, boolean empty) {
+                super.updateItem(item, empty);
+                if (empty || item == null || Double.isNaN(item)) {
+                    setText("-");
+                    setStyle("-fx-alignment: CENTER;");
+                } else {
+                    setText(String.format(Locale.US, "%.2f", item));
+                    setStyle("-fx-alignment: CENTER;");
+                }
+            }
+        });
+
+        TableColumn<CombinedPass, Double> ltDd = new TableColumn<>("LT DD%");
+        ltDd.setCellValueFactory(c -> new javafx.beans.property.SimpleObjectProperty<>(c.getValue().getLtDd()));
+        ltDd.setPrefWidth(85);
+        ltDd.setCellFactory(col -> new TableCell<CombinedPass, Double>() {
+            @Override
+            protected void updateItem(Double item, boolean empty) {
+                super.updateItem(item, empty);
+                if (empty || item == null || Double.isNaN(item)) {
+                    setText("-");
+                    setStyle("-fx-alignment: CENTER;");
+                } else {
+                    setText(String.format(Locale.US, "%.2f %%", item));
+                    if (item > 35) {
+                        setStyle("-fx-alignment: CENTER; -fx-text-fill: #ff5252;");
+                    } else if (item > 20) {
+                        setStyle("-fx-alignment: CENTER; -fx-text-fill: #ffd740;");
+                    } else {
+                        setStyle("-fx-alignment: CENTER; -fx-text-fill: #00e676;");
+                    }
+                }
+            }
+        });
+
+        TableColumn<CombinedPass, Double> ltRec = new TableColumn<>("LT RF");
+        ltRec.setCellValueFactory(c -> new javafx.beans.property.SimpleObjectProperty<>(c.getValue().getLtRecovery()));
+        ltRec.setPrefWidth(75);
+        ltRec.setCellFactory(col -> new TableCell<CombinedPass, Double>() {
+            @Override
+            protected void updateItem(Double item, boolean empty) {
+                super.updateItem(item, empty);
+                if (empty || item == null || Double.isNaN(item)) {
+                    setText("-");
+                    setStyle("-fx-alignment: CENTER;");
+                } else {
+                    setText(String.format(Locale.US, "%.2f", item));
+                    setStyle("-fx-alignment: CENTER;");
+                }
+            }
+        });
+
         TableColumn<CombinedPass, String> btCvCol = new TableColumn<>("Worst BT CV");
         btCvCol.setCellValueFactory(cellData -> {
             CombinedPass cp = cellData.getValue();
@@ -963,7 +1088,7 @@ public class WorkflowView {
         });
         paramsCol.setPrefWidth(300);
 
-        resultsTable.getColumns().addAll(passCol, scoreCol, robScoreCol, btProf, btTr, btPf, btDd, btRec, fwProf, fwTr, fwPf, fwDd, fwRec, btCvCol, fwCvCol, kiRatingCol, paramsCol);
+        resultsTable.getColumns().addAll(passCol, scoreCol, robScoreCol, btProf, btTr, btPf, btDd, btRec, fwProf, fwTr, fwPf, fwDd, fwRec, ltProf, ltTr, ltPf, ltDd, ltRec, btCvCol, fwCvCol, kiRatingCol, paramsCol);
 
         noDataLabel = new Label("Klicke auf ein abgeschlossenes Workflow-Element oben, um dessen Strategieliste anzuzeigen.");
         noDataLabel.setStyle("-fx-text-fill: #7e889a; -fx-font-size: 13px;");
@@ -1512,10 +1637,15 @@ public class WorkflowView {
                     });
                     if (isCancelled()) return null;
 
-                    // Step 3: Diverse Strategy Filter
+                    // Step 3: Langzeittest (5-10 J.) & Dual-Filter / Diversität
                     setRunningStep(3);
-                    updateProgressUI(baseProgress + (0.55 / symbols.length), "[" + currentSym + "] Schritt 3: Filtere diverse Strategien...");
-                    logToConsole("WORKFLOW", "[" + currentSym + "] Schritt 3: Wende Ähnlichkeits-Clustering auf Ergebnisse an...");
+                    updateProgressUI(baseProgress + (0.55 / symbols.length), "[" + currentSym + "] Schritt 3: Starte Langzeittest (5-10 Jahre)...");
+                    logToConsole("WORKFLOW", "[" + currentSym + "] Schritt 3: Führe sequentiellen Langzeittest für Top-Kandidaten aus...");
+                    engine.runLongtermTest(
+                        logMsg -> logToConsole("LANGZEITTEST [" + symPrefix + "]", logMsg),
+                        pct -> updateProgressUI(baseProgress + (0.55 / symbols.length) + (0.05 / symbols.length) * ((double) pct / 100.0), "[" + symPrefix + "] Langzeittest: " + pct + "% abgeschlossen")
+                    );
+                    logToConsole("WORKFLOW", "[" + currentSym + "] Schritt 3: Wende Dual-Filter & Ähnlichkeits-Clustering auf Ergebnisse an...");
                     engine.runStep3();
                     Platform.runLater(() -> {
                         updateVisualStates();
@@ -1755,7 +1885,12 @@ public class WorkflowView {
                         );
                         break;
                     case 3:
-                        updateProgressUI(0.20, "Führe Schritt 3: Diversitäts-Filter aus...");
+                        updateProgressUI(0.15, "Führe Langzeittest (5-10 Jahre) aus...");
+                        engine.runLongtermTest(
+                            logMsg -> logToConsole("LANGZEITTEST", logMsg),
+                            pct -> updateProgressUI(0.15 + 0.15 * ((double) pct / 100.0), "Langzeittest: " + pct + "%")
+                        );
+                        updateProgressUI(0.30, "Führe Dual-Filter & Diversitäts-Selektion aus...");
                         engine.runStep3();
                         break;
                     case 4:

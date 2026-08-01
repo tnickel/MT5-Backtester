@@ -288,33 +288,71 @@ Der MCP-Server ist vorkonfiguriert und muss in der Claude Desktop Konfigurations
 ### 12. Bereich: Workflow Automator (🔄 Workflow Automator)
 Der **Workflow Automator** ist ein mächtiges, geführtes Assistenz-System, das den gesamten Lebenszyklus einer Trading-Strategie von der ersten Optimierung bis hin zur Portfolio-Auswahl strukturiert und automatisiert. Jede Phase des Prozesses wird durch eine eigene Box visualisiert, die sich per Klick konfigurieren lässt und den aktuellen Status anzeigt.
 
-Der Zustand des gesamten Workflows wird kontinuierlich in der SQLite-Datenbank gesichert. Dabei unterscheidet die Anwendung zwischen zwei Speicher-Modellen:
+#### 12.1 Custom Projects & StrategyQuant Workflow Pipeline
+Im Tab **Custom Projects (StrategyQuant)** können Sie komplexe, mehrstufige Test-Pipelines aufbauen, verwalten und ausführen:
 
-* **Aktiver Zwischenstand (`WORKFLOW_STATE`-Tabelle):** Nach jedem erfolgreich abgeschlossenen Schritt (Schritt 1 bis 5) wird der aktuelle Zustand der Pipeline automatisch in der Tabelle `WORKFLOW_STATE` unter der festen `id = 1` überschrieben. Dies dient ausschließlich dazu, dass der laufende Workflow einen Neustart der Anwendung übersteht und Sie ihn genau an der letzten Stelle fortsetzen können. Da dieser Zustand flüchtig ist und beim Start eines neuen Workflows überschrieben wird, erscheint er **nicht** in der Historien-Liste im Tab **Database**.
-* **Dauerhafte Historie (`HISTORY_RUNS`-Tabelle):** Ein eigenständiger, dauerhafter Eintrag in der Datenbank-Historie wird für Workflows erst erzeugt, wenn **Schritt 6 (Portfolio-Auswahl & Export) erfolgreich abgeschlossen** wurde. Zu diesem Zeitpunkt wird der fertige Durchlauf mit dem Typ `"Workflow"` in `HISTORY_RUNS` abgelegt und ist im Tab **Database** sichtbar.
+* **Modularer Task-Ketten-Editor**:
+  - Hinzufügen, Deaktivieren, Verschieben (▲/▼) und Löschen von Tasks.
+  - **Task-Typen**:
+    1. *Strategie-Auswahl*: EA, Symbol, Timeframe & Parameterbereich.
+    2. *MT5 Optimizer*: Evolutionäre/Genetische Parametersuche.
+    3. *Kurzzeit-Vorauswahl & Filter*: Schnelle Performance-Vorfilterung auf Kurzzeit-Daten.
+    4. *Langzeittest (5-10 Jahre / Retest)*: Langzeit-Backtest / Out-of-Sample Validierung über mehrjährige historische Marktdaten.
+    5. *Diversitäts-Clustering*: Unkorrelierte Top-Strategien selektieren.
+    6. *Robustness Test (CV)*: Parameter-Sensitivity Sweeps & Stresstests.
+    7. *KI-Bewertung*: LLM-gestützte Stabilitätsanalyse via OpenRouter.
+    8. *Portfolio Export*: Finale `.set`-Dateien & PDF-Berichte speichern.
 
-#### Wiederherstellen von Workflows aus der Datenbank:
-Wenn ein Workflow erfolgreich abgeschlossen wurde und in der Historie (Tab **Database**) unter der Kategorie **Workflow** aufgeführt ist, können Sie ihn reaktivieren. Klicken Sie dazu mit der **rechten Maustaste** auf den entsprechenden Workflow-Eintrag im Baum und wählen Sie **"🔄 Workflow wiederherstellen (Restore)"**. Dadurch wird der gesamte Zustand des Workflows (inklusive aller Zwischenergebnisse aus Optimierung, Stress-Tests und KI-Berichten) wieder in die Live-Ansicht des Workflow Automators geladen.
+* **Flexible Databank-Architektur (Results, Portfolio & Custom Databanks)**:
+  - Jedes Projekttask liest Strategien aus einer Quell-Databank (z.B. `Results`) und schreibt gefilterte/geprüfte Strategien in eine Ziel-Databank (z.B. `data1` oder `Final`).
+  - **Custom Databanks anlegen**: Über den Button `+ New databank` können beliebig benannte Databanken (wie `data1`) angelegt werden.
+  - **Strategien leeren (ohne Tab zu löschen)**: Über den Button **`🧹 Strategien in Databank leeren`** werden alle Strategien in der aktuell geöffneten Databank gelöscht, während der Tab (z.B. `data1 (0)`) erhalten bleibt.
+  - **Custom Databank schließen**: Über das kleine **`x`** auf dem Reiter kann ein benutzerdefinierter Tab vollständig gelöscht werden. Standard-Databanken (`Results`, `Existing portfolio`, `Final`) sind geschützt.
+  - **Strategien in Tabellen löschen**:
+    - **Mehrfachauswahl**: Zeilen mit `Strg` oder `Shift` markieren.
+    - **`Entf`-Taste (Delete Key)**: Markierte Strategien direkt aus der Databank löschen.
+    - **Rechtsklick-Kontextmenü**: Menüeintrag `🗑 Selektierte Strategie(n) löschen`.
+    - **Toolbar-Button**: `🗑 Selektierte Strategien löschen`.
+  - **Persistenz**: Über die Checkbox `💾 Databanken persistent in DB speichern` werden alle Databank-Inhalte dauerhaft in SQLite gesichert.
 
-#### Die 6 Phasen des Workflows:
-1. **Schritt 1: Konfiguration (Config)**: Auswählen des Expert Advisors, Handelssymbols, der Periode, des Datumsbereichs sowie des Startkapitals und Hebels. Zudem werden die Parameter definiert, die in Schritt 2 optimiert werden sollen.
-2. **Schritt 2: MT5 Optimierung (Optimizer)**: Startet die Metatrader-Optimierung direkt aus der Java-App. Hierbei kann zwischen dem schnellen genetischen Algorithmus ("Fast Genetic Algorithm") und der vollständigen Suche ("Slow Complete Algorithm") gewählt werden.
-3. **Schritt 3: Diversitäts-Filter (Diversity Filter)**: Wählt vollautomatisch aus allen Optimierungsdurchläufen die 5 besten, aber gleichzeitig **diversesten** Strategien aus (sodass sich Parameterwerte und Tradeanzahlen unterscheiden, um Klumpenrisiken zu vermeiden).
-4. **Schritt 4: Stresstest (CV / Robustheit)**: Führt eine automatische Sensitivitätsanalyse (Verschiebungen um ±10 %) für alle Parameter der Top-Strategien über zeitlich verschobene Marktphasen hinweg aus. Es wird der Variationskoeffizient (CV%) berechnet.
-5. **Schritt 5: KI-Bewertung (AI Evaluation)**: Die Backtest- und Stresstest-Ergebnisse werden via OpenRouter an ein Large Language Model übertragen. Die KI erstellt einen detaillierten Textbericht (HTML Markdown) und vergibt einen normalisierten **Stabilitäts-Score (0-100)**.
-6. **Schritt 6: Portfolio-Auswahl**: Ermöglicht die finale Staging-Auswahl von 3-5 hochgradig robusten Strategien.
+* **Qualitäts-Ranking & Filtertabelle**:
+  - Flexibel anpassbare Filter-Bedingungen (`Active`, `Metric`, `<=>`, `Value`).
+  - **Delete-Kreuz (❌)**: Am rechten Ende jeder Filterzeile befindet sich ein rotes **`❌`**, um einzelne Filterbedingungen mit einem Klick zu entfernen.
+  - **Dynamische Layout-Anpassung**: Die Filtertabelle passt sich automatisch über die volle Breite an (`100 %`) und bietet reichlich Vertikalraum für viele Filterzeilen ohne Abschneiden.
+
+* **Backtest-Daten & Modellierung (Execution Mode)**:
+  - Im Unter-Tab **Data** des Tasks lassen sich für Retests und Langzeittests folgende Datenparameter konfigurieren:
+    - **Symbol**: Handelsinstrument (z. B. `AUDCAD`, `EURUSD`).
+    - **Timeframe**: Periode (z. B. `M5`, `H1`).
+    - **Execution Mode (Modellierung)**:
+      - `OHLC M1 (Every tick based on OHLC M1)` (Schnell & präzise für M1-OHLC)
+      - `Every Tick (Ticksimulation)` (Echte Tick-für-Tick Simulation)
+      - `Every Tick based on Real Ticks (Realtick)` (Verwendung echter Broker-Ticks)
+      - `Open Prices Only` (Nur Eröffnungspreise)
+    - **Start day (OOS From) & End day (OOS To)**: Datumsbereich für den Test.
+
+---
+
+#### 12.2 Standard-Workflow (6-Schritte-Assistent)
+Der klassische, geführte 6-Schritte-Workflow wird kontinuierlich in der SQLite-Datenbank gesichert. Dabei unterscheidet die Anwendung zwischen zwei Speicher-Modellen:
+
+* **Aktiver Zwischenstand (`WORKFLOW_STATE`-Tabelle):** Nach jedem erfolgreich abgeschlossenen Schritt (Schritt 1 bis 5) wird der aktuelle Zustand der Pipeline automatisch in der Tabelle `WORKFLOW_STATE` unter der festen `id = 1` überschrieben.
+* **Dauerhafte Historie (`HISTORY_RUNS`-Tabelle):** Ein eigenständiger, dauerhafter Eintrag in der Datenbank-Historie wird für Workflows erst erzeugt, wenn **Schritt 6 (Portfolio-Auswahl & Export) erfolgreich abgeschlossen** wurde.
+
+#### Die 6 Phasen des Standard-Workflows:
+1. **Schritt 1: Konfiguration (Config)**: EA, Symbol, Periode, Datumsbereich, Deposit, Leverage & Parameterbereiche.
+2. **Schritt 2: MT5 Optimierung (Optimizer)**: Startet die Metatrader-Optimierung (Fast Genetic / Slow Complete).
+3. **Schritt 3: Diversitäts-Filter (Diversity Filter)**: Wählt vollautomatisch die 5 besten, unkorrelierten Top-Strategien aus.
+4. **Schritt 4: Stresstest (CV / Robustheit)**: Sensitivitätsanalyse (±10 %) für alle Parameter mit CV%-Berechnung.
+5. **Schritt 5: KI-Bewertung (AI Evaluation)**: LLM-Stabilitätsanalyse & normalisierter Stabilitäts-Score (0-100).
+6. **Schritt 6: Portfolio-Auswahl**: Finale Staging-Auswahl & Export.
 
 #### Unified Strategy Details Dialog (Mega-Report)
-Wenn Sie im Results-Table auf eine Strategie doppelklicken, öffnet sich der neue, umfassende Details-Dialog:
-- **KPI-Metrik-Karten**: Direkter, nebeneinander liegender Vergleich von Backtest- und Forward-Metriken (Profit, Trades, Drawdown, Profit Factor, Sharpe, etc.) sowie der KI-Bewertung.
-- **Kombinierter Equity-Chart**: Renders eine zusammenhängende Linie für Backtest (In-Sample) und Forward (Out-of-Sample), um den Performance-Verlauf visuell zu erfassen.
-- **CV-Breakdown-Tabelle & Sparklines**: Listet den Schwankungskoeffizienten (CV%) für jeden einzelnen Parameter auf. In jeder Zeile wird direkt in die Tabellenzelle ein kleiner, organischer Parameter-Verlaufschart (Sparkline) gerendert, der die Sensitivitätskurve darstellt, wobei der genutzte Basiswert als roter Punkt hervorgehoben ist.
-- **Fazit-Box**: Farblich kodiertes (Grün, Gelb, Rot) Stabilitäts-Feedback basierend auf dem schlechtesten berechneten CV%.
-
-#### Interaktiver KI-Bericht & WebView-Bridge
-Der in Schritt 5 generierte KI-Bericht wird in einem eigenen WebView-Tab visualisiert. Über eine integrierte Java-zu-JavaScript-Brücke (`JavaBridge`) sind die HTML-Tabellen interaktiv:
-- Wenn Sie mit der Maus über die Zeilen einer Strategietabelle im Bericht fahren, ändert sich der Cursor in eine Hand (Pointer) und die Zeile wird farblich hervorgehoben (`clickable-row`).
-- **Ein einfacher Klick** auf eine solche Zeile ruft intern `window.app.showPass(passNumber)` auf. Der Backtester sucht den passenden Durchlauf und öffnet sofort den oben beschriebenen detaillierten Mega-Report für diesen Pass.
+Wenn Sie im Results-Table auf eine Strategie doppelklicken, öffnet sich der umfassende Details-Dialog:
+- **KPI-Metrik-Karten**: Vergleichende Karten aller Backtest- & Forward-Metriken.
+- **Kombinierter Equity-Chart**: Zusammenhängende Linie für In-Sample und Out-of-Sample.
+- **CV-Breakdown-Tabelle & Sparklines**: Listet den Schwankungskoeffizienten (CV%) für jeden einzelnen Parameter mit integrierten Sparkline-Grafiken auf.
+- **Fazit-Box**: Farblich kodiertes Stabilitäts-Feedback.
 
 ---
 

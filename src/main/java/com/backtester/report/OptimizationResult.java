@@ -82,10 +82,29 @@ public class OptimizationResult {
         private String cachedFromDate = null;
         private String cachedToDate = null;
 
+        private Pass longtermPass;
+        private String strategyName;
+
+        public String getStrategyName() {
+            if (strategyName == null || strategyName.trim().isEmpty()) {
+                strategyName = "Strat " + passNumber;
+            }
+            return strategyName;
+        }
+
+        public void setStrategyName(String strategyName) {
+            this.strategyName = strategyName;
+        }
+
         public CombinedPass(Pass backtestPass, Pass forwardPass, double score, double consistency, String scoreDetails) {
+            this(backtestPass, forwardPass, null, score, consistency, scoreDetails);
+        }
+
+        public CombinedPass(Pass backtestPass, Pass forwardPass, Pass longtermPass, double score, double consistency, String scoreDetails) {
             this.passNumber  = backtestPass.getPassNumber();
             this.backtestPass  = backtestPass;
             this.forwardPass   = forwardPass;
+            this.longtermPass  = longtermPass;
             this.score         = score;
             this.consistency   = consistency;
             this.scoreDetails  = scoreDetails;
@@ -106,6 +125,9 @@ public class OptimizationResult {
         public int    getPassNumber()   { return passNumber; }
         public Pass   getBacktestPass() { return backtestPass; }
         public Pass   getForwardPass()  { return forwardPass; }
+        public Pass   getLongtermPass() { return longtermPass; }
+        public void   setLongtermPass(Pass longtermPass) { this.longtermPass = longtermPass; }
+
         public double getScore()        { return score; }
         public double getConsistency()  { return consistency; }
         public String getScoreDetails() { return scoreDetails; }
@@ -129,6 +151,13 @@ public class OptimizationResult {
         public double getFwRecovery()     { return forwardPass != null ? forwardPass.getRecoveryFactor()  : Double.NaN; }
         public double getBtExpectedPayoff() { return backtestPass.getExpectedPayoff(); }
         public double getFwExpectedPayoff() { return forwardPass != null ? forwardPass.getExpectedPayoff() : Double.NaN; }
+        public double getLtProfit()       { return longtermPass != null ? longtermPass.getProfit()          : Double.NaN; }
+        public int    getLtTrades()       { return longtermPass != null ? longtermPass.getTotalTrades()     : 0; }
+        public double getLtPf()           { return longtermPass != null ? longtermPass.getProfitFactor()    : Double.NaN; }
+        public double getLtDd()           { return longtermPass != null ? longtermPass.getDrawdownPercent() : Double.NaN; }
+        public double getLtSharpe()       { return longtermPass != null ? longtermPass.getSharpeRatio()     : Double.NaN; }
+        public double getLtRecovery()     { return longtermPass != null ? longtermPass.getRecoveryFactor()  : Double.NaN; }
+        public double getLtExpectedPayoff() { return longtermPass != null ? longtermPass.getExpectedPayoff() : Double.NaN; }
     }
 
     private List<Pass> passes = new ArrayList<>();
