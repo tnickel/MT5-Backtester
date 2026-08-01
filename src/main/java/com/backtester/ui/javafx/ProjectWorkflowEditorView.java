@@ -997,25 +997,35 @@ public class ProjectWorkflowEditorView {
 
     private void updateDatabankComboBoxes() {
         List<String> names = databankManager.getDatabankNames();
+        if (selectedTask != null) {
+            String taskSrc = selectedTask.getSourceDatabank();
+            String taskTgt = selectedTask.getTargetDatabank();
+            if (taskSrc != null && !taskSrc.isBlank() && !names.contains(taskSrc)) names.add(taskSrc);
+            if (taskTgt != null && !taskTgt.isBlank() && !names.contains(taskTgt)) names.add(taskTgt);
+        }
         if (sourceDatabankCombo != null) {
-            String currSrc = sourceDatabankCombo.getValue();
+            String currSrc = selectedTask != null ? selectedTask.getSourceDatabank() : sourceDatabankCombo.getValue();
             sourceDatabankCombo.getItems().setAll(names);
-            sourceDatabankCombo.setValue(currSrc != null && names.contains(currSrc) ? currSrc : (names.isEmpty() ? "Results" : names.get(0)));
+            if (currSrc != null && names.contains(currSrc)) sourceDatabankCombo.setValue(currSrc);
+            else if (!names.isEmpty()) sourceDatabankCombo.setValue(names.get(0));
         }
         if (targetDatabankCombo != null) {
-            String currTgt = targetDatabankCombo.getValue();
+            String currTgt = selectedTask != null ? selectedTask.getTargetDatabank() : targetDatabankCombo.getValue();
             targetDatabankCombo.getItems().setAll(names);
-            targetDatabankCombo.setValue(currTgt != null && names.contains(currTgt) ? currTgt : (names.isEmpty() ? "Results" : names.get(0)));
+            if (currTgt != null && names.contains(currTgt)) targetDatabankCombo.setValue(currTgt);
+            else if (!names.isEmpty()) targetDatabankCombo.setValue(names.get(0));
         }
         if (rankingSourceCombo != null) {
-            String currSrc = rankingSourceCombo.getValue();
+            String currSrc = selectedTask != null ? selectedTask.getSourceDatabank() : rankingSourceCombo.getValue();
             rankingSourceCombo.getItems().setAll(names);
-            rankingSourceCombo.setValue(currSrc != null && names.contains(currSrc) ? currSrc : (names.isEmpty() ? "Results" : names.get(0)));
+            if (currSrc != null && names.contains(currSrc)) rankingSourceCombo.setValue(currSrc);
+            else if (!names.isEmpty()) rankingSourceCombo.setValue(names.get(0));
         }
         if (rankingTargetCombo != null) {
-            String currTgt = rankingTargetCombo.getValue();
+            String currTgt = selectedTask != null ? selectedTask.getTargetDatabank() : rankingTargetCombo.getValue();
             rankingTargetCombo.getItems().setAll(names);
-            rankingTargetCombo.setValue(currTgt != null && names.contains(currTgt) ? currTgt : (names.isEmpty() ? "Results" : names.get(0)));
+            if (currTgt != null && names.contains(currTgt)) rankingTargetCombo.setValue(currTgt);
+            else if (!names.isEmpty()) rankingTargetCombo.setValue(names.get(0));
         }
     }
 
@@ -1461,6 +1471,15 @@ public class ProjectWorkflowEditorView {
     private void applyTaskExecutionConfig(WorkflowTask task) {
         if (task == null || task.getType() == null) {
             throw new IllegalArgumentException("Task-Typ fehlt oder ist ungültig.");
+        }
+
+        String taskExpert = (project != null && project.getExpert() != null && !project.getExpert().isBlank())
+                ? project.getExpert().trim()
+                : engine.getExpert();
+        if (taskExpert != null && !taskExpert.isBlank()) {
+            engine.setExpert(taskExpert);
+        } else if (engine.getExpert() == null || engine.getExpert().isBlank()) {
+            throw new IllegalArgumentException("Kein Expert Advisor im Projekt festgelegt. Bitte wähle in Task 1 eine .ex5-Datei aus.");
         }
 
         engine.setTickModel(task.getMt5Model());
