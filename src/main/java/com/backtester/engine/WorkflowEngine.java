@@ -63,6 +63,17 @@ public class WorkflowEngine {
     private double tradeDiffPct = 0.15;
     private int minDifferentParams = 2;
     private int maxStrategiesToSelect = 5;
+
+    // Long-Term Test State & Dual-Filter Kriterien
+    private LocalDate longtermFromDate = LocalDate.now().minusYears(7);
+    private LocalDate longtermToDate = LocalDate.now();
+    private int maxLongtermCandidates = 20;
+    private double minLtProfit = MIN_POSITIVE_PROFIT;
+    private int minLtTrades = 30;
+    private double minLtRecovery = 1.0;
+    private double maxLtDd = 35.0;
+    private double minLtPf = 1.10;
+
     private List<CombinedPass> selectedDiversePasses = new ArrayList<>();
 
     // Step 4 State
@@ -209,6 +220,14 @@ public class WorkflowEngine {
         public String openRouterPrompt;
         public String validationFromDate;
         public String validationToDate;
+        public String longtermFromDate;
+        public String longtermToDate;
+        public int maxLongtermCandidates;
+        public double minLtProfit;
+        public int minLtTrades;
+        public double minLtRecovery;
+        public double maxLtDd;
+        public double minLtPf;
     }
 
     public void changeExpert(String newExpert) {
@@ -288,10 +307,19 @@ public class WorkflowEngine {
             sc.openRouterPrompt = this.openRouterPrompt;
             sc.validationFromDate = this.validationFromDate != null ? this.validationFromDate.toString() : null;
             sc.validationToDate = this.validationToDate != null ? this.validationToDate.toString() : null;
+            sc.longtermFromDate = this.longtermFromDate != null ? this.longtermFromDate.toString() : null;
+            sc.longtermToDate = this.longtermToDate != null ? this.longtermToDate.toString() : null;
+            sc.maxLongtermCandidates = this.maxLongtermCandidates;
+            sc.minLtProfit = this.minLtProfit;
+            sc.minLtTrades = this.minLtTrades;
+            sc.minLtRecovery = this.minLtRecovery;
+            sc.maxLtDd = this.maxLtDd;
+            sc.minLtPf = this.minLtPf;
 
             com.google.gson.Gson gson = buildGson();
             String json = gson.toJson(sc);
             DatabaseManager.getInstance().saveWorkflowStrategyConfig(expertName, json);
+            log.info("Successfully saved strategy configuration for: {}", expertName);
         } catch (Exception e) {
             log.error("Failed to save strategy configuration for " + expertName, e);
         }
@@ -343,6 +371,14 @@ public class WorkflowEngine {
             this.openRouterPrompt = sc.openRouterPrompt != null ? sc.openRouterPrompt : LlmAnalysisService.DEFAULT_PROMPT;
             this.validationFromDate = sc.validationFromDate != null ? LocalDate.parse(sc.validationFromDate) : null;
             this.validationToDate = sc.validationToDate != null ? LocalDate.parse(sc.validationToDate) : null;
+            if (sc.longtermFromDate != null) this.longtermFromDate = LocalDate.parse(sc.longtermFromDate);
+            if (sc.longtermToDate != null) this.longtermToDate = LocalDate.parse(sc.longtermToDate);
+            this.maxLongtermCandidates = sc.maxLongtermCandidates > 0 ? sc.maxLongtermCandidates : 20;
+            this.minLtProfit = finiteAtLeast(sc.minLtProfit, MIN_POSITIVE_PROFIT);
+            this.minLtTrades = sc.minLtTrades > 0 ? sc.minLtTrades : 30;
+            this.minLtRecovery = finiteAtLeast(sc.minLtRecovery, 0.0);
+            this.maxLtDd = sc.maxLtDd > 0 ? sc.maxLtDd : 35.0;
+            this.minLtPf = finiteAtLeast(sc.minLtPf, 1.10);
 
             if (migrateSelectionProfile) {
                 saveStrategyConfig(expertName);
@@ -619,6 +655,148 @@ public class WorkflowEngine {
             }
         }
         return anyEnabled ? total : 1;
+    }
+
+    public LocalDate getLongtermFromDate() { return longtermFromDate; }
+    public void setLongtermFromDate(LocalDate date) { this.longtermFromDate = date; }
+
+    public LocalDate getLongtermToDate() { return longtermToDate; }
+    public void setLongtermToDate(LocalDate date) { this.longtermToDate = date; }
+
+    public LocalDate getEffectiveLongtermFromDate() {
+        return longtermFromDate != null ? longtermFromDate : LocalDate.now().minusYears(7);
+    }
+
+    public LocalDate getEffectiveLongtermToDate() {
+        return longtermToDate != null ? longtermToDate : LocalDate.now();
+    }
+
+    public int getMaxLongtermCandidates() { return maxLongtermCandidates; }
+    public void setMaxLongtermCandidates(int max) { this.maxLongtermCandidates = max; }
+
+    public double getMinLtProfit() { return minLtProfit; }
+    public void setMinLtProfit(double v) { this.minLtProfit = v; }
+
+    public int getMinLtTrades() { return minLtTrades; }
+    public void setMinLtTrades(int v) { this.minLtTrades = v; }
+
+    public double getMinLtRecovery() { return minLtRecovery; }
+    public void setMinLtRecovery(double v) { this.minLtRecovery = v; }
+
+    public double getMaxLtDd() { return maxLtDd; }
+    public void setMaxLtDd(double v) { this.maxLtDd = v; }
+
+    public double getMinLtPf() { return minLtPf; }
+    public void setMinLtPf(double v) { this.minLtPf = v; }
+
+    public List<CombinedPass> runLongtermTest(Consumer<String> logCallback, Consumer<Integer> progressCallback) throws Exception {
+        if (optResult == null) {
+            throw new IllegalStateException("Kein Optimierungsergebnis vorhanden. Bitte führe zuerst Schritt 2 aus.");
+        }
+
+        List<CombinedPass> allPasses = optResult.buildCombinedPasses(forwardMode > 0, loadScoreWeightsFromDb());
+        if (allPasses.isEmpty()) {
+            log.warn("Langzeittest: 0 Pässe vorhanden.");
+            return new ArrayList<>();
+        }
+
+        // 1. Pre-filter candidates using strict short-term criteria
+        List<CombinedPass> candidates = new ArrayList<>();
+        for (CombinedPass cp : allPasses) {
+            if (!isPositiveFinite(cp.getBtProfit()) || cp.getBtProfit() < minBtProfit) continue;
+            if (cp.getBtTrades() < minBtTrades) continue;
+            if (!meetsMinimum(cp.getBtRecovery(), minBtRecovery)) continue;
+            if (cp.getBtDd() > maxBtDd) continue;
+            if (forwardMode > 0) {
+                if (!isPositiveFinite(cp.getFwProfit()) || cp.getFwProfit() < minFwProfit) continue;
+                if (cp.getFwTrades() < minFwTrades) continue;
+                if (!meetsMinimum(cp.getFwRecovery(), minFwRecovery)) continue;
+                if (cp.getFwDd() > maxFwDd) continue;
+            }
+            candidates.add(cp);
+        }
+
+        // Sort candidates by combined score descending
+        candidates.sort((cp1, cp2) -> Double.compare(cp2.getScore(), cp1.getScore()));
+
+        // Limit to maxLongtermCandidates
+        if (candidates.size() > maxLongtermCandidates) {
+            candidates = new ArrayList<>(candidates.subList(0, maxLongtermCandidates));
+        }
+
+        if (candidates.isEmpty()) {
+            if (logCallback != null) logCallback.accept("WARNUNG: Keine Kandidaten haben die Kurzzeit-Vorauswahl bestanden!");
+            return new ArrayList<>();
+        }
+
+        if (logCallback != null) {
+            logCallback.accept(String.format("Starte Langzeittest für %d Kandidaten (%s bis %s)...",
+                    candidates.size(), getEffectiveLongtermFromDate(), getEffectiveLongtermToDate()));
+        }
+
+        java.nio.file.Path presetsDir = config.getTesterProfilesDir(expert);
+        java.nio.file.Files.createDirectories(presetsDir);
+
+        BacktestRunner runner = new BacktestRunner();
+        runner.setLogCallback(logCallback);
+
+        int total = candidates.size();
+        for (int i = 0; i < total; i++) {
+            CombinedPass cp = candidates.get(i);
+            if (progressCallback != null) {
+                progressCallback.accept((i * 100) / total);
+            }
+
+            String presetFileName = "Longterm_Pass" + cp.getPassNumber() + ".set";
+            java.nio.file.Path presetFile = presetsDir.resolve(presetFileName);
+            List<EaParameter> finalParams = buildFinalParams(cp);
+            eaParamManager.writeSetFile(presetFile, finalParams, expert);
+
+            BacktestConfig btConfig = new BacktestConfig();
+            btConfig.setExpert(expert);
+            btConfig.setExpertParameters(presetFileName);
+            btConfig.setSymbol(symbol);
+            btConfig.setPeriod(period);
+            btConfig.setFromDate(getEffectiveLongtermFromDate());
+            btConfig.setToDate(getEffectiveLongtermToDate());
+            btConfig.setDeposit(deposit);
+            btConfig.setCurrency(currency);
+            btConfig.setLeverage(leverage);
+            btConfig.setModel(tickModel);
+            btConfig.setShutdownTerminal(true);
+            btConfig.setAutoKillMt5(true);
+            btConfig.setReportFileName("LongtermReport_Pass" + cp.getPassNumber());
+
+            if (logCallback != null) {
+                logCallback.accept(String.format("[%d/%d] Führe Langzeittest für Pass %d aus...", (i + 1), total, cp.getPassNumber()));
+            }
+
+            BacktestResult btRes = runner.runBacktest(btConfig);
+            if (btRes != null) {
+                OptimizationResult.Pass ltPass = new OptimizationResult.Pass();
+                ltPass.setPassNumber(cp.getPassNumber());
+                ltPass.setProfit(btRes.getTotalProfit());
+                ltPass.setTotalTrades(btRes.getTotalTrades());
+                ltPass.setProfitFactor(btRes.getProfitFactor());
+                ltPass.setDrawdownPercent(btRes.getMaxDrawdownPercent());
+                ltPass.setRecoveryFactor(btRes.getRecoveryFactor());
+                ltPass.setSharpeRatio(btRes.getSharpeRatio());
+                ltPass.setExpectedPayoff(btRes.getExpectedPayoff());
+                ltPass.setParameterValues(cp.getBacktestPass().getParameterValues());
+                cp.setLongtermPass(ltPass);
+            } else {
+                if (logCallback != null) {
+                    logCallback.accept(String.format("WARNUNG: Pass %d Langzeittest schlug fehl.", cp.getPassNumber()));
+                }
+            }
+        }
+
+        if (progressCallback != null) {
+            progressCallback.accept(100);
+        }
+
+        saveState();
+        return candidates;
     }
 
     public List<CombinedPass> runStep3() {
@@ -1422,6 +1600,13 @@ public class WorkflowEngine {
                 if (cp.getFwTrades() < minFwTrades) continue;
                 if (!meetsMinimum(cp.getFwRecovery(), minFwRecovery)) continue;
                 if (cp.getFwDd() > maxFwDd) continue;
+            }
+            if (cp.getLongtermPass() != null) {
+                if (!isPositiveFinite(cp.getLtProfit()) || cp.getLtProfit() < minLtProfit) continue;
+                if (cp.getLtTrades() < minLtTrades) continue;
+                if (!meetsMinimum(cp.getLtRecovery(), minLtRecovery)) continue;
+                if (cp.getLtDd() > maxLtDd) continue;
+                if (!meetsMinimum(cp.getLtPf(), minLtPf)) continue;
             }
             filtered.add(cp);
         }

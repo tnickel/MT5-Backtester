@@ -1,0 +1,60 @@
+System-Rolle: Du bist ein hochqualifizierter Technical Writer, Data Scientist und Experte für algorithmischen Handel. Deine Aufgabe ist es, ein umfassendes, 50-seitiges Benutzerhandbuch im Stil eines Lehrbuchs für das Projekt "Backtester" zu erstellen und als professionell formatiertes PDF auszugeben.
+
+Ziele & Zielgruppe:
+Das Buch richtet sich an Nutzer, die keine Experten im algorithmischen Handel oder in der Datenanalyse sind. Es soll sie schrittweise an die komplexe Problematik der Strategie-Optimierung heranführen, das Tool "Backtester" im Detail erklären und als echtes Standardwerk dienen.
+
+Schritt 1: Informationsbeschaffung (Tool-Nutzung erforderlich!)
+Bevor du schreibst, musst du zwingend folgende Recherchen durchführen:
+
+Google Workspace / Docs: Suche in Google Drive/Docs nach allen bestehenden Dokumentationen zum Projekt "Backtester". Extrahiere die Texte und notiere dir die Referenzen zu vorhandenen Bildern.
+
+GitHub: Analysiere das Repository des "Backtester"-Projekts (lies die README, Wiki-Einträge und Code-Kommentare). Lade relevante Architektur- oder UI-Bilder herunter oder merke dir die Pfade, um sie später ins PDF einzubauen.
+
+Web-Research (Curve Fitting): Recherchiere aktuelle, fundierte Erklärungen zur "Curve Fitting"-Problematik (Overfitting) beim Backtesting von Trading-Strategien. Sammle Best Practices, wie man dies vermeidet (z. B. In-Sample/Out-of-Sample Testing, Walk-Forward-Optimization, Monte-Carlo-Simulationen).
+
+Schritt 2: Inhaltsanforderungen & Struktur
+Das Buch muss folgende Struktur und Tiefe aufweisen:
+
+Titelblatt: Professioneller Titel (z.B. "Mastering the Backtester: Ein Leitfaden zur robusten Strategieoptimierung"), Untertitel, Version und Datum.
+
+Vorwort: Einführung in die Bedeutung von systematischem Testen im Trading und die Philosophie hinter diesem Tool.
+
+Inhaltsverzeichnis
+
+Kapitel 1: Grundlagen des Backtestings: Einsteigerfreundliche Erklärung, warum wir historische Daten testen und welche Fallstricke es gibt.
+
+Kapitel 2: Die Gefahr des Curve Fittings: Ein ausführliches Lehr-Kapitel. Was ist Overfitting? Warum sehen Ergebnisse in der Vergangenheit oft perfekt aus, versagen aber im Live-Handel? Anschauliche Beispiele.
+
+Kapitel 3: Das "Backtester" Projekt: Übersicht über die Architektur und die konkreten Features dieses Tools. Integration von Systembildern/Diagrammen aus GitHub/Docs.
+
+Kapitel 4: Der KI-Ansatz: Detaillierte Erklärung, wie Künstliche Intelligenz in diesem Backtester eingesetzt wird. Wie hilft uns die KI konkret bei der Auswertung, Parameterfindung oder Marktanalyse?
+
+Kapitel 5: Parameter-Referenz (Deep Dive): Erkläre absolut jeden Parameter des Backtesters ausführlich. Was bewirkt er? Was sind typische Werte?
+
+Kapitel 6: Robustheit & Optimierung in der Praxis: Wie nutzt man das Tool (und seine Parameter) konkret, um das im Web recherchierte Curve Fitting auf ein Minimum zu reduzieren? Schritt-für-Schritt-Anleitung für eine saubere Optimierungs-Pipeline.
+
+Fazit: Zusammenfassung der wichtigsten Erkenntnisse.
+
+Anhang: Glossar der Fachbegriffe, Quellenverzeichnis und Bildnachweis.
+
+Schritt 3: Methodik der Texterstellung
+
+Schreibe nicht nur kurze Zusammenfassungen! Jedes Thema muss tiefgründig, mit Beispielen, Analogien und theoretischem Hintergrundwissen (Lehrbuch-Stil) ausformuliert werden, um den Umfang von ca. 50 Seiten zu rechtfertigen.
+
+Binde die gefundenen Bilder aus den bestehenden Docs und GitHub an den passenden Stellen sinnvoll ein (mit Bildunterschriften).
+
+Schritt 4: PDF-Generierung (Zwingend über Code-Execution!)
+
+Generiere den Text nicht einfach nur in den Chat.
+
+Schreibe ein Python-Skript, das den generierten, extrem ausführlichen Text in ein professionelles PDF-Dokument umwandelt.
+
+Nutze dafür bevorzugt Markdown-to-PDF-Bibliotheken, WeasyPrint (mit sauberem CSS für ein Buchlayout inkl. Seitenumbrüchen, Rändern und Inhaltsverzeichnis) oder pdflatex für ein wissenschaftliches Layout.
+
+Stelle sicher, dass die Bilder im Code korrekt referenziert und in das finale PDF eingebettet werden.
+
+Führe den Python-Code aus, generiere das PDF und stelle mir den Download-Link / File-Tag zur Verfügung.
+
+Starte jetzt mit Schritt 1 und gib mir ein kurzes Update, sobald du die Daten aus Docs und GitHub analysiert hast, bevor du mit der Buchgenerierung beginnst.
+
+Tipp für die Ausführung: Wenn der Agent Probleme mit der Dateigröße hat (50 Seiten sind massiv auf einen Schlag), kannst du ihn anweisen, das Buch in z. B. drei Etappen als Markdown-Dateien lokal abzuspeichern und im allerletzten Schritt ein Skript zu schreiben, das alle drei Dateien kombiniert und daraus das finale PDF rendert.

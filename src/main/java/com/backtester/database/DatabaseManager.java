@@ -180,6 +180,17 @@ public class DatabaseManager {
                 "PRIMARY KEY (expert_name, symbol, period, run_timestamp, pass_number)" +
                 ");";
 
+        String sqlCustomProjects = "CREATE TABLE IF NOT EXISTS CUSTOM_PROJECTS (" +
+                "id TEXT PRIMARY KEY," +
+                "name TEXT," +
+                "expert TEXT," +
+                "symbol TEXT," +
+                "period TEXT," +
+                "created_timestamp INTEGER," +
+                "last_run_timestamp INTEGER," +
+                "project_json TEXT" +
+                ");";
+
         String sqlParamTranslations = "CREATE TABLE IF NOT EXISTS EA_PARAMETER_TRANSLATIONS (" +
                 "expert_name TEXT," +
                 "parameter_name TEXT," +
@@ -195,6 +206,7 @@ public class DatabaseManager {
             stmt.execute(sqlWorkflowStrategyConfigs);
             stmt.execute(sqlStrategyReviews);
             stmt.execute(sqlStrategyAutomaticReviews);
+            stmt.execute(sqlCustomProjects);
             stmt.execute(sqlParamTranslations);
 
             // Check if OPTIMIZATION_STATE has the sensitivity_results_json column, otherwise recreate it
@@ -1420,5 +1432,72 @@ public class DatabaseManager {
             joined = "■ " + joined + " ■";
         }
         return joined;
+    }
+
+    // ─── CUSTOM PROJECTS PERSISTENCE ──────────────────────────────────────────
+
+    public void saveCustomProject(com.backtester.workflow.CustomProject project) {
+        if (project == null || project.getId() == null) return;
+        String sql = "INSERT INTO CUSTOM_PROJECTS (id, name, expert, symbol, period, created_timestamp, last_run_timestamp, project_json) " +
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?) " +
+                "ON CONFLICT(id) DO UPDATE SET " +
+                "name = excluded.name, " +
+                "expert = excluded.expert, " +
+                "symbol = excluded.symbol, " +
+                "period = excluded.period, " +
+                "created_timestamp = excluded.created_timestamp, " +
+                "last_run_timestamp = excluded.last_run_timestamp, " +
+                "project_json = excluded.project_json;";
+        try (Connection conn = connect(); PreparedStatement pstmt = conn.prepareStatement(sql)) {
+            com.google.gson.Gson gson = new com.google.gson.GsonBuilder().setPrettyPrinting().create();
+            String json = gson.toJson(project);
+
+            pstmt.setString(1, project.getId());
+            pstmt.setString(2, project.getName());
+            pstmt.setString(3, project.getExpert());
+            pstmt.setString(4, project.getSymbol());
+            pstmt.setString(5, project.getPeriod());
+            pstmt.setLong(6, project.getCreatedTimestamp());
+            pstmt.setLong(7, project.getLastRunTimestamp());
+            pstmt.setString(8, json);
+            pstmt.executeUpdate();
+            log.info("Saved custom project: {} ({})", project.getName(), project.getId());
+        } catch (SQLException e) {
+            log.error("Failed to save custom project: " + project.getName(), e);
+        }
+    }
+
+    public List<com.backtester.workflow.CustomProject> getAllCustomProjects() {
+        List<com.backtester.workflow.CustomProject> list = new ArrayList<>();
+        String sql = "SELECT project_json FROM CUSTOM_PROJECTS ORDER BY last_run_timestamp DESC, created_timestamp DESC;";
+        try (Connection conn = connect(); Statement stmt = conn.createStatement(); ResultSet rs = stmt.executeQuery(sql)) {
+            com.google.gson.Gson gson = new com.google.gson.Gson();
+            while (rs.next()) {
+                String json = rs.getString("project_json");
+                if (json != null && !json.isEmpty()) {
+                    try {
+                        com.backtester.workflow.CustomProject proj = gson.fromJson(json, com.backtester.workflow.CustomProject.class);
+                        if (proj != null) list.add(proj);
+                    } catch (Exception ex) {
+                        log.warn("Failed to parse CustomProject JSON: " + ex.getMessage());
+                    }
+                }
+            }
+        } catch (SQLException e) {
+            log.error("Failed to load custom projects", e);
+        }
+        return list;
+    }
+
+    public void deleteCustomProject(String id) {
+        if (id == null || id.isEmpty()) return;
+        String sql = "DELETE FROM CUSTOM_PROJECTS WHERE id = ?;";
+        try (Connection conn = connect(); PreparedStatement pstmt = conn.prepareStatement(sql)) {
+            pstmt.setString(1, id);
+            pstmt.executeUpdate();
+            log.info("Deleted custom project with id: {}", id);
+        } catch (SQLException e) {
+            log.error("Failed to delete custom project: " + id, e);
+        }
     }
 }
