@@ -78,6 +78,7 @@ public class WorkflowEngine {
 
     // Step 4 State
     private List<SensitivityResult> sensitivityResults = new ArrayList<>();
+    private long sensitivityRunTimestamp;
 
     // Step 5 State
     private String openRouterApiKey = "";
@@ -268,6 +269,7 @@ public class WorkflowEngine {
         this.optResult = null;
         this.selectedDiversePasses = new ArrayList<>();
         this.sensitivityResults = new ArrayList<>();
+        this.sensitivityRunTimestamp = 0L;
         this.kiReportText = "";
         this.finalSelectedPasses = new ArrayList<>();
         this.lastActiveStep = 0;
@@ -486,6 +488,7 @@ public class WorkflowEngine {
             String sensitivityJson = (String) data[12];
             if (sensitivityJson != null && !sensitivityJson.isEmpty()) {
                 this.sensitivityResults = gson.fromJson(sensitivityJson, sensitivityType);
+                this.sensitivityRunTimestamp = sensitivityTimestampFrom(this.sensitivityResults);
             }
 
             this.kiReportText = (String) data[13];
@@ -525,6 +528,7 @@ public class WorkflowEngine {
         this.optResult = null;
         this.selectedDiversePasses = new ArrayList<>();
         this.sensitivityResults = new ArrayList<>();
+        this.sensitivityRunTimestamp = 0L;
         this.kiReportText = "";
         this.finalSelectedPasses = new ArrayList<>();
         this.lastActiveStep = 0;
@@ -571,6 +575,14 @@ public class WorkflowEngine {
                                        java.nio.file.Path outputBaseDirectory) throws Exception {
         runStep1(); // Ensure step 1 parameters are saved
         requireValidDateRange(fromDate, toDate, "Optimierungszeitraum");
+        if (optimizationMode != 1 && optimizationMode != 2) {
+            throw new IllegalArgumentException("Ungültiger Optimizer-Modus: " + optimizationMode);
+        }
+        if (forwardMode == 4 && (forwardDate == null
+                || !forwardDate.isAfter(fromDate) || !forwardDate.isBefore(toDate))) {
+            throw new IllegalArgumentException(
+                    "Das benutzerdefinierte Forward-Datum muss innerhalb des Optimierungszeitraums liegen.");
+        }
 
         OptimizationConfig optConfig = new OptimizationConfig();
         optConfig.setExpert(expert);
@@ -619,6 +631,12 @@ public class WorkflowEngine {
         optResult = currentOptRunner.runOptimization(optConfig);
         if (optResult == null || !optResult.isSuccess()) {
             throw new RuntimeException("Optimierungs-Run fehlgeschlagen: " + (optResult != null ? optResult.getMessage() : "Unbekannter Fehler"));
+        }
+        if (optResult.getPasses() == null || optResult.getPasses().isEmpty()) {
+            throw new RuntimeException("Optimierungs-Run lieferte keine Strategien; die Ziel-Databank bleibt unverändert.");
+        }
+        if (forwardMode > 0 && (optResult.getForwardPasses() == null || optResult.getForwardPasses().isEmpty())) {
+            throw new RuntimeException("Forward-Test ist aktiviert, aber MT5 lieferte keine Forward-Ergebnisse.");
         }
         this.lastActiveStep = Math.max(this.lastActiveStep, 2);
         saveState();
@@ -834,7 +852,7 @@ public class WorkflowEngine {
                     ltPass.setRecoveryFactor(btRes.getRecoveryFactor());
                     ltPass.setSharpeRatio(btRes.getSharpeRatio());
                     ltPass.setExpectedPayoff(btRes.getExpectedPayoff());
-                    ltPass.setParameterValues(cp.getBacktestPass().getParameterValues());
+                    ltPass.setParameterValues(new LinkedHashMap<>(cp.getBacktestPass().getParameterValues()));
                     cp.setLongtermPass(ltPass);
                     successfulCandidates.add(cp);
                 } else if (logCallback != null) {
@@ -931,6 +949,7 @@ public class WorkflowEngine {
 
     private void finishDiversitySelection() {
         sensitivityResults = new ArrayList<>();
+        sensitivityRunTimestamp = 0L;
         kiReportText = "";
         finalSelectedPasses = new ArrayList<>();
         validationResults = new ArrayList<>();
@@ -970,7 +989,19 @@ public class WorkflowEngine {
 
         // We run sweeps based on the current state's EA parameters
         currentSensitivityRunner.runSensitivityScan(targets, baseConfig, eaParameters);
-        
+
+        if (currentSensitivityRunner.isCancelled()) {
+            throw new java.util.concurrent.CancellationException("Sensitivitätsanalyse wurde abgebrochen.");
+        }
+        boolean hasSensitivityMetrics = targets.stream().anyMatch(result ->
+                result != null && (!result.getParameterCVs().isEmpty()
+                        || !result.getParameterCVsFw().isEmpty()));
+        if (!hasSensitivityMetrics) {
+            throw new IllegalStateException(
+                    "Der Robustness-Lauf lieferte keine Sensitivitätsdaten. Prüfe die optimierten EA-Parameter und MT5-Berichte.");
+        }
+
+        sensitivityRunTimestamp = currentSensitivityRunner.getLastRunTimestamp();
         sensitivityResults = targets;
         this.lastActiveStep = Math.max(this.lastActiveStep, 4);
         saveState();
@@ -979,11 +1010,12 @@ public class WorkflowEngine {
 
     /** Prevents an AI task from analysing stale sensitivity rows from another databank route, fallback creating items if missing. */
     public void retainSensitivityResultsForPasses(List<CombinedPass> passes) {
-        Map<Integer, SensitivityResult> existingMap = new HashMap<>();
+        Map<String, SensitivityResult> existingMap = new HashMap<>();
         if (sensitivityResults != null) {
             for (SensitivityResult result : sensitivityResults) {
-                if (result != null && result.getOriginalPass() != null) {
-                    existingMap.put(result.getOriginalPass().getPassNumber(), result);
+                if (result != null && result.getOriginalPass() != null
+                        && result.getRunTimestamp() == sensitivityRunTimestamp) {
+                    existingMap.put(combinedPassIdentity(result.getOriginalPass()), result);
                 }
             }
         }
@@ -991,9 +1023,10 @@ public class WorkflowEngine {
         if (passes != null) {
             for (CombinedPass pass : passes) {
                 if (pass != null) {
-                    SensitivityResult sr = existingMap.get(pass.getPassNumber());
+                    SensitivityResult sr = existingMap.get(combinedPassIdentity(pass));
                     if (sr == null) {
                         sr = new SensitivityResult(pass);
+                        sr.setRunTimestamp(sensitivityRunTimestamp);
                     }
                     retained.add(sr);
                 }
@@ -1002,12 +1035,32 @@ public class WorkflowEngine {
         sensitivityResults = retained;
     }
 
+    private static String combinedPassIdentity(CombinedPass pass) {
+        return pass.getPassNumber() + "\u0000" + pass.getStrategyName();
+    }
+
+    private static long sensitivityTimestampFrom(List<SensitivityResult> results) {
+        long timestamp = 0L;
+        if (results != null) {
+            for (SensitivityResult result : results) {
+                if (result != null) timestamp = Math.max(timestamp, result.getRunTimestamp());
+            }
+        }
+        return timestamp;
+    }
+
     public String runStep5(Consumer<String> logCallback) throws Exception {
         if ((sensitivityResults == null || sensitivityResults.isEmpty()) && selectedDiversePasses != null && !selectedDiversePasses.isEmpty()) {
             retainSensitivityResultsForPasses(selectedDiversePasses);
         }
         if (sensitivityResults == null || sensitivityResults.isEmpty()) {
             throw new IllegalStateException("Keine Strategien in der Databank für die KI-Bewertung vorhanden.");
+        }
+        if (sensitivityRunTimestamp <= 0L) {
+            sensitivityRunTimestamp = sensitivityTimestampFrom(sensitivityResults);
+        }
+        if (sensitivityRunTimestamp <= 0L) {
+            throw new IllegalStateException("Kein zugehöriger Robustness-Lauf vorhanden. Bitte führe zuerst den passenden Robustness-Task aus.");
         }
 
         List<Integer> activePasses = new ArrayList<>();
@@ -1029,7 +1082,8 @@ public class WorkflowEngine {
         }
 
         LlmAnalysisService llmService = new LlmAnalysisService();
-        kiReportText = llmService.analyzeStrategies(activePasses, expert, symbol, performanceData);
+        kiReportText = llmService.analyzeStrategies(
+                activePasses, expert, symbol, performanceData, sensitivityRunTimestamp);
 
         if (kiReportText.startsWith("ERROR")) {
             throw new RuntimeException(kiReportText);
@@ -1604,6 +1658,7 @@ public class WorkflowEngine {
             } else {
                 this.sensitivityResults = new ArrayList<>();
             }
+            this.sensitivityRunTimestamp = sensitivityTimestampFrom(this.sensitivityResults);
 
             this.kiReportText = (String) stateMap.get("ki_report_text");
             if (this.kiReportText == null) this.kiReportText = "";
@@ -2034,7 +2089,15 @@ public class WorkflowEngine {
     }
 
     public List<SensitivityResult> getSensitivityResults() { return sensitivityResults; }
-    public void setSensitivityResults(List<SensitivityResult> sensitivityResults) { this.sensitivityResults = sensitivityResults; }
+    public void setSensitivityResults(List<SensitivityResult> sensitivityResults) {
+        this.sensitivityResults = sensitivityResults != null ? sensitivityResults : new ArrayList<>();
+        this.sensitivityRunTimestamp = sensitivityTimestampFrom(this.sensitivityResults);
+    }
+
+    public long getSensitivityRunTimestamp() { return sensitivityRunTimestamp; }
+    public void setSensitivityRunTimestamp(long sensitivityRunTimestamp) {
+        this.sensitivityRunTimestamp = Math.max(0L, sensitivityRunTimestamp);
+    }
 
     public String getOpenRouterApiKey() { return openRouterApiKey; }
     public void setOpenRouterApiKey(String openRouterApiKey) { this.openRouterApiKey = openRouterApiKey; }

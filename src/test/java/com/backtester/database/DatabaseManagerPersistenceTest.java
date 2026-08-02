@@ -384,6 +384,9 @@ public class DatabaseManagerPersistenceTest {
                 "TrailingStop", "15", "BT", 100.5, 95.0, 5.0, 5.26,
                 80.0, 110.0, 11, "10", "1", "20", "{}", "ROBUST"
         );
+        assertTrue(db.hasSensitivityDetails(timestamp, 5, "pass5"));
+        assertFalse(db.hasSensitivityDetails(timestamp, 5, "other-pass"));
+        assertFalse(db.hasSensitivityDetails(timestamp + 1, 5, "pass5"));
 
         // Verify it was written using direct SQL
         try (java.sql.Connection conn = db.getConnection();
@@ -401,6 +404,7 @@ public class DatabaseManagerPersistenceTest {
 
         // Test clearSensitivityDetails (single run)
         db.clearSensitivityDetails(timestamp);
+        assertFalse(db.hasSensitivityDetails(timestamp, 5, "pass5"));
         try (java.sql.Connection conn = db.getConnection();
              java.sql.Statement stmt = conn.createStatement();
              java.sql.ResultSet rs = stmt.executeQuery("SELECT count(*) FROM SENSITIVITY_DETAIL WHERE run_timestamp = " + timestamp)) {

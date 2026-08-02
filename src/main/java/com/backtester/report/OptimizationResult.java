@@ -64,6 +64,24 @@ public class OptimizationResult {
 
         public void setParameter(String name, String value) { parameterValues.put(name, value); }
         public String getParameter(String name) { return parameterValues.getOrDefault(name, ""); }
+
+        public Pass copy() {
+            Pass copy = new Pass();
+            copy.setPassNumber(passNumber);
+            copy.setProfit(profit);
+            copy.setTotalTrades(totalTrades);
+            copy.setProfitFactor(profitFactor);
+            copy.setExpectedPayoff(expectedPayoff);
+            copy.setDrawdown(drawdown);
+            copy.setDrawdownPercent(drawdownPercent);
+            copy.setRecoveryFactor(recoveryFactor);
+            copy.setSharpeRatio(sharpeRatio);
+            copy.setCustomCriterion(customCriterion);
+            copy.setBalance(balance);
+            copy.setParameterValues(parameterValues != null
+                    ? new LinkedHashMap<>(parameterValues) : new LinkedHashMap<>());
+            return copy;
+        }
     }
 
     /**
@@ -158,6 +176,17 @@ public class OptimizationResult {
         public double getLtSharpe()       { return longtermPass != null ? longtermPass.getSharpeRatio()     : Double.NaN; }
         public double getLtRecovery()     { return longtermPass != null ? longtermPass.getRecoveryFactor()  : Double.NaN; }
         public double getLtExpectedPayoff() { return longtermPass != null ? longtermPass.getExpectedPayoff() : Double.NaN; }
+
+        /** Returns an object-isolated copy suitable for another workflow databank. */
+        public CombinedPass copy() {
+            CombinedPass copy = new CombinedPass(
+                    backtestPass.copy(),
+                    forwardPass != null ? forwardPass.copy() : null,
+                    longtermPass != null ? longtermPass.copy() : null,
+                    score, consistency, scoreDetails);
+            copy.strategyName = strategyName;
+            return copy;
+        }
     }
 
     private List<Pass> passes = new ArrayList<>();

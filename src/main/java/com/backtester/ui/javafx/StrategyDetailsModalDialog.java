@@ -33,10 +33,14 @@ public class StrategyDetailsModalDialog {
     private static final Logger log = LoggerFactory.getLogger(StrategyDetailsModalDialog.class);
 
     public static void show(CombinedPass pass, Window owner) {
-        show(pass, owner, 0);
+        show(pass, owner, 0, 0L);
     }
 
     public static void show(CombinedPass pass, Window owner, int selectTab) {
+        show(pass, owner, selectTab, 0L);
+    }
+
+    public static void show(CombinedPass pass, Window owner, int selectTab, long sensitivityRunTimestamp) {
         if (pass == null) return;
         Stage stage = new Stage();
         stage.initModality(Modality.APPLICATION_MODAL);
@@ -87,11 +91,14 @@ public class StrategyDetailsModalDialog {
         chartTab.setClosable(false);
         chartTab.setContent(createEquityChartTabContent(pass));
 
-        Tab sensitivityTab = new Tab("Sensitivitäts-Kennlinien");
-        sensitivityTab.setClosable(false);
-        sensitivityTab.setContent(createSensitivityTabContent(pass));
-
-        tabPane.getTabs().addAll(overviewTab, paramsTab, chartTab, sensitivityTab);
+        tabPane.getTabs().addAll(overviewTab, paramsTab, chartTab);
+        if (com.backtester.database.DatabaseManager.getInstance().hasSensitivityDetails(
+                sensitivityRunTimestamp, pass.getPassNumber(), pass.getStrategyName())) {
+            Tab sensitivityTab = new Tab("Sensitivitäts-Kennlinien");
+            sensitivityTab.setClosable(false);
+            sensitivityTab.setContent(createSensitivityTabContent(pass, sensitivityRunTimestamp));
+            tabPane.getTabs().add(sensitivityTab);
+        }
         if (selectTab >= 0 && selectTab < tabPane.getTabs().size()) {
             tabPane.getSelectionModel().select(selectTab);
         }
@@ -248,7 +255,7 @@ public class StrategyDetailsModalDialog {
         return panel;
     }
 
-    private static VBox createSensitivityTabContent(CombinedPass pass) {
+    private static VBox createSensitivityTabContent(CombinedPass pass, long sensitivityRunTimestamp) {
         VBox panel = new VBox(12);
         panel.setPadding(new Insets(12));
 
@@ -264,7 +271,7 @@ public class StrategyDetailsModalDialog {
 
         Button openHtmlReportBtn = new Button("🌐 HTML Scanner Report im Browser öffnen");
         openHtmlReportBtn.setStyle("-fx-background-color: #00e5ff; -fx-text-fill: #0b0d13; -fx-font-weight: bold; -fx-cursor: hand; -fx-padding: 6 14; -fx-background-radius: 4;");
-        openHtmlReportBtn.setOnAction(e -> openRobustnessHtmlReport(pass));
+        openHtmlReportBtn.setOnAction(e -> openRobustnessHtmlReport(pass, sensitivityRunTimestamp));
 
         topBar.getChildren().addAll(heading, flexSpacer, openHtmlReportBtn);
 
@@ -305,10 +312,13 @@ public class StrategyDetailsModalDialog {
         try {
             com.backtester.database.DatabaseManager db = com.backtester.database.DatabaseManager.getInstance();
             String sql = "SELECT parameter_name, period, cv, verdict, base_value, base_profit, mean_profit, min_profit, max_profit, curve_json " +
-                         "FROM SENSITIVITY_DETAIL WHERE pass_number = ? ORDER BY parameter_name, period";
+                         "FROM SENSITIVITY_DETAIL WHERE run_timestamp = ? AND pass_number = ? AND pass_name = ? " +
+                         "ORDER BY parameter_name, period";
             try (java.sql.Connection conn = db.getConnection();
                  java.sql.PreparedStatement pstmt = conn.prepareStatement(sql)) {
-                pstmt.setInt(1, pass.getPassNumber());
+                pstmt.setLong(1, sensitivityRunTimestamp);
+                pstmt.setInt(2, pass.getPassNumber());
+                pstmt.setString(3, pass.getStrategyName());
                 try (java.sql.ResultSet rs = pstmt.executeQuery()) {
                     while (rs.next()) {
                         rows.add(new SensitivityRow(
@@ -341,7 +351,7 @@ public class StrategyDetailsModalDialog {
         table.setItems(FXCollections.observableArrayList(rows));
 
         NumberAxis xAxis = new NumberAxis();
-        xAxis.setLabel("Variation Step (%)");
+        xAxis.setLabel("Parameterwert");
         xAxis.setTickLabelFill(Color.web("#7e889a"));
 
         NumberAxis yAxis = new NumberAxis();
@@ -361,9 +371,11 @@ public class StrategyDetailsModalDialog {
                     series.setName(sr.parameterName + " (" + sr.period + ")");
                     for (int i = 0; i < arr.size(); i++) {
                         com.google.gson.JsonObject obj = arr.get(i).getAsJsonObject();
-                        double stepPct = obj.has("percent") ? obj.get("percent").getAsDouble() : (i * 10 - 20);
+                        double parameterValue = obj.has("paramValue")
+                                ? obj.get("paramValue").getAsDouble()
+                                : (obj.has("percent") ? obj.get("percent").getAsDouble() : i);
                         double profit = obj.has("profit") ? obj.get("profit").getAsDouble() : 0.0;
-                        series.getData().add(new XYChart.Data<>(stepPct, profit));
+                        series.getData().add(new XYChart.Data<>(parameterValue, profit));
                     }
                     chart.getData().add(series);
                 } catch (Exception ignored) {}
@@ -375,33 +387,18 @@ public class StrategyDetailsModalDialog {
         return panel;
     }
 
-    public static void openRobustnessHtmlReport(CombinedPass pass) {
+    public static void openRobustnessHtmlReport(CombinedPass pass, long sensitivityRunTimestamp) {
         try {
-            java.nio.file.Path reportsDir = java.nio.file.Paths.get("backtest_reports");
-            java.nio.file.Path targetFile = null;
-
-            if (java.nio.file.Files.exists(reportsDir)) {
-                try (java.util.stream.Stream<java.nio.file.Path> stream = java.nio.file.Files.walk(reportsDir)) {
-                    java.util.List<java.nio.file.Path> matches = stream
-                        .filter(p -> p.getFileName().toString().toLowerCase().contains("robustness_report") && p.toString().endsWith(".html"))
-                        .sorted((p1, p2) -> {
-                            try {
-                                return Long.compare(java.nio.file.Files.getLastModifiedTime(p2).toMillis(),
-                                                    java.nio.file.Files.getLastModifiedTime(p1).toMillis());
-                            } catch (Exception e) { return 0; }
-                        })
-                        .collect(java.util.stream.Collectors.toList());
-
-                    if (!matches.isEmpty()) {
-                        targetFile = matches.get(0);
-                    }
-                } catch (Exception ignored) {}
+            if (pass == null || !com.backtester.database.DatabaseManager.getInstance().hasSensitivityDetails(
+                    sensitivityRunTimestamp, pass.getPassNumber(), pass.getStrategyName())) {
+                return;
             }
 
-            if (targetFile == null) {
-                java.nio.file.Files.createDirectories(reportsDir);
-                String passNum = pass != null ? String.valueOf(pass.getPassNumber()) : "1";
-                targetFile = reportsDir.resolve("robustness_report_Pass" + passNum + ".html");
+            java.nio.file.Path reportsDir = java.nio.file.Paths.get("backtest_reports");
+            java.nio.file.Files.createDirectories(reportsDir);
+            java.nio.file.Path targetFile = reportsDir.resolve(
+                    "robustness_report_" + sensitivityRunTimestamp + "_Pass" + pass.getPassNumber() + ".html");
+            if (!java.nio.file.Files.exists(targetFile)) {
                 String htmlContent = buildStandaloneRobustnessHtml(pass);
                 java.nio.file.Files.writeString(targetFile, htmlContent, java.nio.charset.StandardCharsets.UTF_8);
             }

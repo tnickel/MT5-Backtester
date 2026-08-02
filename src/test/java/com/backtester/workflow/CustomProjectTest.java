@@ -23,12 +23,17 @@ public class CustomProjectTest {
         assertEquals("EURUSD", proj.getSymbol());
         assertEquals(9, proj.getTasks().size());
         assertEquals(9, proj.getEnabledTaskCount());
-        assertEquals(WorkflowTask.TaskType.RETESTER, proj.getTasks().get(2).getType());
-        assertEquals("Langzeittest (5-10 Jahre)", proj.getTasks().get(2).getName());
+        assertEquals(WorkflowTask.TaskType.PRE_FILTER, proj.getTasks().get(2).getType());
+        assertEquals("Kurzzeit-Vorauswahl", proj.getTasks().get(2).getName());
+        assertEquals(WorkflowTask.TaskType.RETESTER, proj.getTasks().get(3).getType());
+        assertEquals("Langzeittest (5-10 Jahre)", proj.getTasks().get(3).getName());
         assertEquals("Diversitäts-Clustering", proj.getTasks().get(4).getName());
         assertEquals(WorkflowTask.TaskType.RETESTER, proj.getTasks().get(7).getType());
         assertEquals("Validierung (OOS)", proj.getTasks().get(7).getName());
+        assertEquals("Results", proj.getTasks().get(7).getSourceDatabank());
+        assertEquals("Final", proj.getTasks().get(7).getTargetDatabank());
         assertEquals(WorkflowTask.TaskType.PORTFOLIO_EXPORT, proj.getTasks().get(8).getType());
+        assertEquals("Final", proj.getTasks().get(8).getSourceDatabank());
         assertEquals("Final", proj.getTasks().get(8).getTargetDatabank());
     }
 
@@ -140,6 +145,34 @@ public class CustomProjectTest {
 
         assertEquals("D:\\Strategien\\Optimiert", task.getOptimizerOutputDirectory());
         assertEquals(task.getOptimizerOutputDirectory(), copy.getOptimizerOutputDirectory());
+    }
+
+    @Test
+    public void optimizerAndRobustnessRunSettingsAreTaskSpecificAndPersisted() {
+        WorkflowTask task = new WorkflowTask("Mein Optimizer", WorkflowTask.TaskType.OPTIMIZER);
+        task.setOptimizerMode(1);
+        task.setOptimizerCriterion(7);
+        task.setOptimizerForwardMode(4);
+        task.setOptimizerForwardDate("2026-05-01");
+        task.setSensitivityRunTimestamp(123456789L);
+
+        WorkflowTask copy = task.copyForPersistence();
+
+        assertEquals(1, copy.getOptimizerMode());
+        assertEquals(7, copy.getOptimizerCriterion());
+        assertEquals(4, copy.getOptimizerForwardMode());
+        assertEquals("2026-05-01", copy.getOptimizerForwardDate());
+        assertEquals(123456789L, copy.getSensitivityRunTimestamp());
+    }
+
+    @Test
+    public void legacyOptimizerTaskUsesCanonicalSafeDefaults() {
+        WorkflowTask task = new com.google.gson.Gson().fromJson(
+                "{\"name\":\"Legacy Optimizer\",\"type\":\"OPTIMIZER\"}", WorkflowTask.class);
+
+        assertEquals(WorkflowTask.DEFAULT_OPTIMIZER_MODE, task.getOptimizerMode());
+        assertEquals(WorkflowTask.DEFAULT_OPTIMIZER_CRITERION, task.getOptimizerCriterion());
+        assertEquals(WorkflowTask.DEFAULT_OPTIMIZER_FORWARD_MODE, task.getOptimizerForwardMode());
     }
 
     @Test

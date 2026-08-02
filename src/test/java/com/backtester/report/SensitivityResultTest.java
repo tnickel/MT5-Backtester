@@ -93,6 +93,7 @@ public class SensitivityResultTest {
         result.addParameterCV("Param1", 0.12);
         result.addParameterCVFw("Param1", 0.18);
         result.setKiResult("95");
+        result.setRunTimestamp(123456789L);
         
         com.google.gson.Gson gson = new com.google.gson.GsonBuilder()
             .registerTypeHierarchyAdapter(javafx.beans.property.StringProperty.class,
@@ -115,12 +116,14 @@ public class SensitivityResultTest {
         assertTrue(json.contains("\"overallCV\":0.12"));
         assertTrue(json.contains("\"overallCVFw\":0.18"));
         assertTrue(json.contains("\"kiResult\":\"95\""));
+        assertTrue(json.contains("\"runTimestamp\":123456789"));
         
         SensitivityResult deserialized = gson.fromJson(json, SensitivityResult.class);
         assertNotNull(deserialized);
         assertEquals("95", deserialized.getKiResult());
         assertEquals(0.12, deserialized.getOverallCV(), 0.0001);
         assertEquals(0.18, deserialized.getOverallCVFw(), 0.0001);
+        assertEquals(123456789L, deserialized.getRunTimestamp());
         assertNotNull(deserialized.getOriginalPass());
         assertEquals(42, deserialized.getOriginalPass().getPassNumber());
         assertEquals(1000.0, deserialized.getOriginalPass().getBtProfit(), 0.001);

@@ -1277,6 +1277,10 @@ public class WorkflowConfigDialogs {
     // ─── Step 2: Optimizer Settings ───────────────────────────────────────────
 
     public static void showStep2Dialog(WorkflowEngine engine, Window owner) {
+        showStep2Dialog(engine, owner, null);
+    }
+
+    public static void showStep2Dialog(WorkflowEngine engine, Window owner, Runnable onSave) {
         Stage stage = new Stage();
         stage.setTitle("Schritt 2: Optimizer-Konfiguration");
 
@@ -1346,6 +1350,7 @@ public class WorkflowConfigDialogs {
             engine.setForwardMode(forwardCombo.getSelectionModel().getSelectedIndex());
             engine.setForwardDate(forwardDatePicker.getValue());
             engine.saveState();
+            if (onSave != null) onSave.run();
             stage.close();
         });
 

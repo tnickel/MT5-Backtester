@@ -197,8 +197,8 @@ public class CustomProject {
         
         WorkflowTask t1 = new WorkflowTask("Strategie-Auswahl", WorkflowTask.TaskType.STRATEGY_SELECTION);
         WorkflowTask t2 = new WorkflowTask("MT5 Optimizer", WorkflowTask.TaskType.OPTIMIZER);
-        WorkflowTask t3 = new WorkflowTask("Langzeittest (5-10 Jahre)", WorkflowTask.TaskType.RETESTER);
-        WorkflowTask t4 = new WorkflowTask("Kurzzeit-Vorauswahl", WorkflowTask.TaskType.PRE_FILTER);
+        WorkflowTask t3 = new WorkflowTask("Kurzzeit-Vorauswahl", WorkflowTask.TaskType.PRE_FILTER);
+        WorkflowTask t4 = new WorkflowTask("Langzeittest (5-10 Jahre)", WorkflowTask.TaskType.RETESTER);
         WorkflowTask t5 = new WorkflowTask("Diversitäts-Clustering", WorkflowTask.TaskType.DIVERSITY_FILTER);
         WorkflowTask t6 = new WorkflowTask("Robustness Test (CV)", WorkflowTask.TaskType.ROBUSTNESS_CV);
         WorkflowTask t7 = new WorkflowTask("KI-Bewertung", WorkflowTask.TaskType.KI_EVALUATION);
@@ -207,13 +207,15 @@ public class CustomProject {
         java.time.LocalDate validationCutoff = java.time.LocalDate.now().minusMonths(3);
         t2.setStartDate(java.time.LocalDate.now().minusYears(2).toString());
         t2.setEndDate(validationCutoff.toString());
-        t3.setStartDate(java.time.LocalDate.now().minusYears(7).toString());
-        t3.setEndDate(validationCutoff.toString());
+        t4.setStartDate(java.time.LocalDate.now().minusYears(7).toString());
+        t4.setEndDate(validationCutoff.toString());
         t6.setStartDate(java.time.LocalDate.now().minusYears(2).toString());
         t6.setEndDate(validationCutoff.toString());
         t8.setStartDate(validationCutoff.plusDays(1).toString());
         t8.setEndDate(java.time.LocalDate.now().toString());
-        t9.setSourceDatabank("Results");
+        t8.setSourceDatabank("Results");
+        t8.setTargetDatabank("Final");
+        t9.setSourceDatabank("Final");
         t9.setTargetDatabank("Final");
 
         proj.addTask(t1);

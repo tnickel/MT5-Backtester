@@ -33,6 +33,8 @@ public class SensitivityResult {
 
     private String status = "Pending";
     private final StringProperty kiResult = new SimpleStringProperty("");
+    /** Exact SENSITIVITY_DETAIL run this result belongs to. */
+    private long runTimestamp;
 
     public SensitivityResult(OptimizationResult.CombinedPass originalPass) {
         this.originalPass = originalPass;
@@ -121,6 +123,9 @@ public class SensitivityResult {
     public StringProperty kiResultProperty() {
         return kiResult;
     }
+
+    public long getRunTimestamp() { return runTimestamp; }
+    public void setRunTimestamp(long runTimestamp) { this.runTimestamp = Math.max(0L, runTimestamp); }
 
     /**
      * Returns the worst-case (max) CV across all parameters. A strategy is

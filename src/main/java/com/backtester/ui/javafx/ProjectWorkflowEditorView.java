@@ -3,6 +3,7 @@ package com.backtester.ui.javafx;
 import com.backtester.config.AppConfig;
 import com.backtester.database.CustomProjectSaveCoordinator;
 import com.backtester.database.DatabaseManager;
+import com.backtester.engine.OptimizationConfig;
 import com.backtester.engine.WorkflowEngine;
 import com.backtester.report.OptimizationResult.CombinedPass;
 import com.backtester.report.ValidationResult;
@@ -105,6 +106,11 @@ public class ProjectWorkflowEditorView {
     private Label dataSettingsHeading;
     private HBox optimizerOutputDirectoryRow;
     private TextField optimizerOutputDirectoryField;
+    private ComboBox<String> optimizerAlgorithmCombo;
+    private ComboBox<String> optimizerCriterionCombo;
+    private ComboBox<String> optimizerForwardModeCombo;
+    private DatePicker optimizerForwardDatePicker;
+    private boolean updatingOptimizerControls;
     private CheckBox deleteFailedCheckBox;
     private TableView<FilterCondition> filterConditionsTable;
     private TextField expertField;
@@ -905,36 +911,33 @@ public class ProjectWorkflowEditorView {
         grid.setVgap(15);
 
         grid.add(new Label("Algorithmus:"), 0, 0);
-        ComboBox<String> algoCombo = new ComboBox<>(FXCollections.observableArrayList(
-            "Slow Complete Algorithm", "Fast Genetic Algorithm", "All symbols in Market Watch"
-        ));
+        optimizerAlgorithmCombo = new ComboBox<>(FXCollections.observableArrayList(OptimizationConfig.OPTIMIZATION_MODES));
         int currAlgo = engine.getOptimizationMode();
-        algoCombo.setValue(currAlgo >= 0 && currAlgo < algoCombo.getItems().size() ? algoCombo.getItems().get(currAlgo) : "Fast Genetic Algorithm");
-        algoCombo.setOnAction(e -> engine.setOptimizationMode(algoCombo.getSelectionModel().getSelectedIndex()));
-        grid.add(algoCombo, 1, 0);
+        optimizerAlgorithmCombo.getSelectionModel().select(currAlgo == 1 ? 0 : 1);
+        optimizerAlgorithmCombo.setOnAction(e -> saveSelectedOptimizerSettings());
+        grid.add(optimizerAlgorithmCombo, 1, 0);
 
         grid.add(new Label("Optimierungsziel:"), 0, 1);
-        ComboBox<String> critCombo = new ComboBox<>(FXCollections.observableArrayList(
-            "Balance max", "Profit Factor max", "Expected Payoff max", "Drawdown min", "Recovery Factor max", "Sharpe Ratio max", "Custom max"
-        ));
+        optimizerCriterionCombo = new ComboBox<>(FXCollections.observableArrayList(OptimizationConfig.OPTIMIZATION_CRITERIA));
         int currCrit = engine.getOptimizationCriterion();
-        critCombo.setValue(currCrit >= 0 && currCrit < critCombo.getItems().size() ? critCombo.getItems().get(currCrit) : "Recovery Factor max");
-        critCombo.setOnAction(e -> engine.setOptimizationCriterion(critCombo.getSelectionModel().getSelectedIndex()));
-        grid.add(critCombo, 1, 1);
+        optimizerCriterionCombo.getSelectionModel().select(
+                currCrit >= 0 && currCrit < optimizerCriterionCombo.getItems().size() ? currCrit : 4);
+        optimizerCriterionCombo.setOnAction(e -> saveSelectedOptimizerSettings());
+        grid.add(optimizerCriterionCombo, 1, 1);
 
         grid.add(new Label("Forward-Test:"), 0, 2);
-        ComboBox<String> fwdCombo = new ComboBox<>(FXCollections.observableArrayList(
-            "No", "1/2 period", "1/3 period", "1/4 period", "Custom Date"
-        ));
+        optimizerForwardModeCombo = new ComboBox<>(FXCollections.observableArrayList(OptimizationConfig.FORWARD_MODES));
         int currFwd = engine.getForwardMode();
-        fwdCombo.setValue(currFwd >= 0 && currFwd < fwdCombo.getItems().size() ? fwdCombo.getItems().get(currFwd) : "1/2 period");
-        fwdCombo.setOnAction(e -> engine.setForwardMode(fwdCombo.getSelectionModel().getSelectedIndex()));
-        grid.add(fwdCombo, 1, 2);
+        optimizerForwardModeCombo.getSelectionModel().select(
+                currFwd >= 0 && currFwd < optimizerForwardModeCombo.getItems().size() ? currFwd : 1);
+        optimizerForwardModeCombo.setOnAction(e -> saveSelectedOptimizerSettings());
+        grid.add(optimizerForwardModeCombo, 1, 2);
 
         grid.add(new Label("Forward Datum:"), 0, 3);
-        DatePicker fwdDatePicker = new DatePicker(engine.getForwardDate() != null ? engine.getForwardDate() : LocalDate.now().minusMonths(2));
-        fwdDatePicker.setOnAction(e -> { if (fwdDatePicker.getValue() != null) engine.setForwardDate(fwdDatePicker.getValue()); });
-        grid.add(fwdDatePicker, 1, 3);
+        optimizerForwardDatePicker = new DatePicker(engine.getForwardDate() != null
+                ? engine.getForwardDate() : LocalDate.now().minusMonths(2));
+        optimizerForwardDatePicker.setOnAction(e -> saveSelectedOptimizerSettings());
+        grid.add(optimizerForwardDatePicker, 1, 3);
 
         HBox btnBox = new HBox(12);
         Button openStep1Btn = new Button("⚙ EA Parameter & Suchräume konfigurieren");
@@ -946,7 +949,17 @@ public class ProjectWorkflowEditorView {
         Button openStep2Btn = new Button("⚙ Vollständigen Optimizer-Dialog öffnen");
         openStep2Btn.getStyleClass().add("button-start");
         openStep2Btn.setOnAction(e -> {
-            WorkflowConfigDialogs.showStep2Dialog(engine, root.getScene().getWindow());
+            WorkflowConfigDialogs.showStep2Dialog(engine, root.getScene().getWindow(), () -> {
+                if (selectedTask != null && selectedTask.getType() == WorkflowTask.TaskType.OPTIMIZER) {
+                    selectedTask.setOptimizerMode(engine.getOptimizationMode());
+                    selectedTask.setOptimizerCriterion(engine.getOptimizationCriterion());
+                    selectedTask.setOptimizerForwardMode(engine.getForwardMode());
+                    selectedTask.setOptimizerForwardDate(engine.getForwardDate() != null
+                            ? engine.getForwardDate().toString() : "");
+                    updateOptimizerControls(selectedTask);
+                    saveProject();
+                }
+            });
         });
 
         btnBox.getChildren().addAll(openStep1Btn, openStep2Btn);
@@ -1331,6 +1344,9 @@ public class ProjectWorkflowEditorView {
                 table.getColumns().add(fwRec);
             }
 
+            // Robustness actions are scoped to the exact run that produced this databank.
+            final long databankSensitivityTimestamp = findSensitivityRunTimestampForDatabank(dbName);
+
             // Context Menu & Row click handlers
             table.setRowFactory(tv -> {
                 TableRow<CombinedPass> row = new TableRow<>();
@@ -1343,18 +1359,31 @@ public class ProjectWorkflowEditorView {
 
                 MenuItem sensitivityItem = new MenuItem("📈 Sensitivitäts-Kennlinien & Stresstest (Rechtsklick)");
                 sensitivityItem.setOnAction(e -> {
-                    if (!row.isEmpty()) StrategyDetailsModalDialog.show(row.getItem(), root.getScene().getWindow(), 3);
+                    if (!row.isEmpty()) StrategyDetailsModalDialog.show(
+                            row.getItem(), root.getScene().getWindow(), 3, databankSensitivityTimestamp);
                 });
 
                 MenuItem htmlReportItem = new MenuItem("🌐 HTML Robustness Scanner Report im Browser öffnen");
                 htmlReportItem.setOnAction(e -> {
-                    if (!row.isEmpty()) StrategyDetailsModalDialog.openRobustnessHtmlReport(row.getItem());
+                    if (!row.isEmpty()) StrategyDetailsModalDialog.openRobustnessHtmlReport(
+                            row.getItem(), databankSensitivityTimestamp);
                 });
 
                 MenuItem deleteItem = new MenuItem("🗑 Selektierte Strategie(n) löschen (Entf)");
                 deleteItem.setOnAction(e -> deleteSelectedRowsFromDatabank(dbName, table));
 
-                contextMenu.getItems().addAll(inspectItem, sensitivityItem, htmlReportItem, new SeparatorMenuItem(), deleteItem);
+                SeparatorMenuItem robustnessSeparator = new SeparatorMenuItem();
+                contextMenu.getItems().addAll(inspectItem, sensitivityItem, htmlReportItem, robustnessSeparator, deleteItem);
+                contextMenu.setOnShowing(e -> {
+                    boolean hasSensitivity = !row.isEmpty()
+                            && DatabaseManager.getInstance().hasSensitivityDetails(
+                                    databankSensitivityTimestamp,
+                                    row.getItem().getPassNumber(),
+                                    row.getItem().getStrategyName());
+                    sensitivityItem.setVisible(hasSensitivity);
+                    htmlReportItem.setVisible(hasSensitivity);
+                    robustnessSeparator.setVisible(hasSensitivity);
+                });
 
                 row.setOnMouseClicked(event -> {
                     if (event.getClickCount() == 2 && (!row.isEmpty())) {
@@ -1521,6 +1550,7 @@ public class ProjectWorkflowEditorView {
                     databankManager.getDatabankNames(),
                     root.getScene() != null ? root.getScene().getWindow() : null,
                     () -> {
+                        databankManager.createDatabank(task.getTargetDatabank());
                         saveProject();
                         selectTask(task);
                         centerMainTabPane.getSelectionModel().select(fullSettingsTab);
@@ -1637,6 +1667,9 @@ public class ProjectWorkflowEditorView {
             if (optimizerOutputDirectoryField != null) {
                 optimizerOutputDirectoryField.setText(effectiveOptimizerOutputDirectory(task));
             }
+            if (optimizerAlgorithmCombo != null && optimizerTask) {
+                updateOptimizerControls(task);
+            }
 
             // Dynamically display only sub-tabs relevant to this task type
             fullSettingsSubTabPane.getTabs().clear();
@@ -1721,6 +1754,48 @@ public class ProjectWorkflowEditorView {
         return AppConfig.getInstance().getReportsDirectory().toAbsolutePath().normalize().toString();
     }
 
+    private void saveSelectedOptimizerSettings() {
+        if (updatingOptimizerControls || selectedTask == null
+                || selectedTask.getType() != WorkflowTask.TaskType.OPTIMIZER) return;
+        int algorithmIndex = optimizerAlgorithmCombo.getSelectionModel().getSelectedIndex();
+        int criterionIndex = optimizerCriterionCombo.getSelectionModel().getSelectedIndex();
+        int forwardIndex = optimizerForwardModeCombo.getSelectionModel().getSelectedIndex();
+        if (algorithmIndex < 0 || criterionIndex < 0 || forwardIndex < 0) return;
+
+        int optimizerMode = OptimizationConfig.OPTIMIZATION_MODE_VALUES[algorithmIndex];
+        LocalDate forwardDate = optimizerForwardDatePicker.getValue();
+        selectedTask.setOptimizerMode(optimizerMode);
+        selectedTask.setOptimizerCriterion(criterionIndex);
+        selectedTask.setOptimizerForwardMode(forwardIndex);
+        selectedTask.setOptimizerForwardDate(forwardDate != null ? forwardDate.toString() : "");
+
+        engine.setOptimizationMode(optimizerMode);
+        engine.setOptimizationCriterion(criterionIndex);
+        engine.setForwardMode(forwardIndex);
+        engine.setForwardDate(forwardDate);
+        saveProject();
+    }
+
+    private void updateOptimizerControls(WorkflowTask task) {
+        if (task == null || task.getType() != WorkflowTask.TaskType.OPTIMIZER) return;
+        if (task.initializeOptimizerSettings(
+                engine.getOptimizationMode(), engine.getOptimizationCriterion(),
+                engine.getForwardMode(), engine.getForwardDate())) {
+            saveProject();
+        }
+
+        updatingOptimizerControls = true;
+        try {
+            optimizerAlgorithmCombo.getSelectionModel().select(task.getOptimizerMode() == 1 ? 0 : 1);
+            optimizerCriterionCombo.getSelectionModel().select(task.getOptimizerCriterion());
+            optimizerForwardModeCombo.getSelectionModel().select(task.getOptimizerForwardMode());
+            LocalDate forwardDate = parseDateOrNull(task.getOptimizerForwardDate());
+            optimizerForwardDatePicker.setValue(forwardDate != null ? forwardDate : engine.getForwardDate());
+        } finally {
+            updatingOptimizerControls = false;
+        }
+    }
+
     private void saveOptimizerOutputDirectory() {
         if (selectedTask == null || selectedTask.getType() != WorkflowTask.TaskType.OPTIMIZER
                 || optimizerOutputDirectoryField == null) return;
@@ -1769,6 +1844,33 @@ public class ProjectWorkflowEditorView {
         }
     }
 
+    private long findSensitivityRunTimestamp(WorkflowTask aiTask) {
+        if (project == null || aiTask == null) return 0L;
+        long matchingTimestamp = 0L;
+        for (WorkflowTask candidate : project.getTasks()) {
+            if (candidate == aiTask) break;
+            if (candidate != null && candidate.isEnabled()
+                    && candidate.getType() == WorkflowTask.TaskType.ROBUSTNESS_CV
+                    && candidate.getTargetDatabank().equalsIgnoreCase(aiTask.getSourceDatabank())) {
+                matchingTimestamp = candidate.getSensitivityRunTimestamp();
+            }
+        }
+        return matchingTimestamp;
+    }
+
+    private long findSensitivityRunTimestampForDatabank(String databankName) {
+        if (project == null || databankName == null) return 0L;
+        long matchingTimestamp = 0L;
+        for (WorkflowTask task : project.getTasks()) {
+            if (task != null && task.isEnabled()
+                    && task.getType() == WorkflowTask.TaskType.ROBUSTNESS_CV
+                    && task.getTargetDatabank().equalsIgnoreCase(databankName)) {
+                matchingTimestamp = Math.max(matchingTimestamp, task.getSensitivityRunTimestamp());
+            }
+        }
+        return matchingTimestamp;
+    }
+
     /** Applies every task-level override before any runner/config is created. */
     private void applyTaskExecutionConfig(WorkflowTask task) {
         if (task == null || task.getType() == null) {
@@ -1792,6 +1894,12 @@ public class ProjectWorkflowEditorView {
         }
 
         engine.setTickModel(task.getMt5Model());
+        if (task.getType() == WorkflowTask.TaskType.OPTIMIZER) {
+            engine.setOptimizationMode(task.getOptimizerMode());
+            engine.setOptimizationCriterion(task.getOptimizerCriterion());
+            engine.setForwardMode(task.getOptimizerForwardMode());
+            engine.setForwardDate(parseDateOrNull(task.getOptimizerForwardDate()));
+        }
         String taskSymbol = task.getRetestSymbol();
         String taskPeriod = task.getRetestPeriod();
         engine.setSymbol(taskSymbol != null && !taskSymbol.isBlank()
@@ -1811,14 +1919,16 @@ public class ProjectWorkflowEditorView {
             try {
                 start = LocalDate.parse(startText.trim());
             } catch (Exception ex) {
-                System.err.println("Ungültiges Startdatum-Format im Task: " + startText);
+                throw new IllegalArgumentException("Ungültiges Startdatum im Task '"
+                        + task.getName() + "': " + startText, ex);
             }
         }
         if (hasEnd) {
             try {
                 end = LocalDate.parse(endText.trim());
             } catch (Exception ex) {
-                System.err.println("Ungültiges Enddatum-Format im Task: " + endText);
+                throw new IllegalArgumentException("Ungültiges Enddatum im Task '"
+                        + task.getName() + "': " + endText, ex);
             }
         }
 
@@ -1835,7 +1945,8 @@ public class ProjectWorkflowEditorView {
         }
 
         if (start != null && end != null && !start.isBefore(end)) {
-            end = start.plusYears(1);
+            throw new IllegalArgumentException("Der Zeitraum für Task '" + task.getName()
+                    + "' ist ungültig: Das Startdatum muss vor dem Enddatum liegen.");
         }
 
         switch (task.getType()) {
@@ -1880,6 +1991,19 @@ public class ProjectWorkflowEditorView {
         return exportPasses;
     }
 
+    private static boolean taskRequiresInputStrategies(WorkflowTask.TaskType type) {
+        return type != WorkflowTask.TaskType.STRATEGY_SELECTION
+                && type != WorkflowTask.TaskType.OPTIMIZER;
+    }
+
+    private void requireTaskInputStrategies(WorkflowTask task, List<CombinedPass> inputPasses) {
+        if (taskRequiresInputStrategies(task.getType())
+                && (inputPasses == null || inputPasses.isEmpty())) {
+            throw new IllegalStateException("Task '" + task.getName() + "' kann nicht starten: Die Quell-Databank '"
+                    + task.getSourceDatabank() + "' enthält keine Strategien.");
+        }
+    }
+
     // ─── Execution Logic ──────────────────────────────────────────────────────
 
     private void runSingleTask(WorkflowTask task) {
@@ -1912,6 +2036,7 @@ public class ProjectWorkflowEditorView {
 
                 List<CombinedPass> inputPasses = databankManager.getDatabank(task.getSourceDatabank());
                 List<CombinedPass> outputPasses = new ArrayList<>();
+                requireTaskInputStrategies(task, inputPasses);
                 applyTaskExecutionConfig(task);
 
                 switch (task.getType()) {
@@ -1951,20 +2076,24 @@ public class ProjectWorkflowEditorView {
                         break;
                     case ROBUSTNESS_CV:
                         engine.setSelectedDiversePasses(inputPasses);
+                        task.setSensitivityRunTimestamp(0L);
                         engine.runStep4(
                             msg -> logToConsole("STRESS", msg),
                             pct -> updateProgressUI((double) pct / 100.0, "Robustness " + pct + "%")
                         );
+                        task.setSensitivityRunTimestamp(engine.getSensitivityRunTimestamp());
                         outputPasses = new ArrayList<>(inputPasses);
                         break;
                     case KI_EVALUATION:
+                        engine.setSensitivityRunTimestamp(findSensitivityRunTimestamp(task));
                         engine.setSelectedDiversePasses(inputPasses);
                         engine.retainSensitivityResultsForPasses(inputPasses);
                         engine.runStep5(msg -> logToConsole("KI-EVAL", msg));
                         outputPasses = new ArrayList<>(inputPasses);
                         break;
                     case PORTFOLIO_EXPORT:
-                        outputPasses = exportPortfolioCandidates(inputPasses);
+                        outputPasses = exportPortfolioCandidates(
+                                databankManager.filterPasses(task, inputPasses));
                         break;
                     default:
                         outputPasses = new ArrayList<>(inputPasses);
@@ -2062,6 +2191,7 @@ public class ProjectWorkflowEditorView {
                     try {
                         List<CombinedPass> inputPasses = databankManager.getDatabank(task.getSourceDatabank());
                         currentPipelinePasses = new ArrayList<>(inputPasses);
+                        requireTaskInputStrategies(task, inputPasses);
                         applyTaskExecutionConfig(task);
 
                         switch (task.getType()) {
@@ -2100,20 +2230,24 @@ public class ProjectWorkflowEditorView {
                                 break;
                             case ROBUSTNESS_CV:
                                 engine.setSelectedDiversePasses(inputPasses);
+                                task.setSensitivityRunTimestamp(0L);
                                 engine.runStep4(
                                     msg -> logToConsole("STRESS", msg),
                                     pct -> updateProgressUI((double) currentIdx / total, "Robustness " + pct + "%")
                                 );
+                                task.setSensitivityRunTimestamp(engine.getSensitivityRunTimestamp());
                                 currentPipelinePasses = new ArrayList<>(inputPasses);
                                 break;
                             case KI_EVALUATION:
+                                engine.setSensitivityRunTimestamp(findSensitivityRunTimestamp(task));
                                 engine.setSelectedDiversePasses(inputPasses);
                                 engine.retainSensitivityResultsForPasses(inputPasses);
                                 engine.runStep5(msg -> logToConsole("KI-EVAL", msg));
                                 currentPipelinePasses = new ArrayList<>(inputPasses);
                                 break;
                             case PORTFOLIO_EXPORT:
-                                currentPipelinePasses = exportPortfolioCandidates(inputPasses);
+                                currentPipelinePasses = exportPortfolioCandidates(
+                                        databankManager.filterPasses(task, inputPasses));
                                 break;
                             default:
                                 break;
@@ -2176,11 +2310,55 @@ public class ProjectWorkflowEditorView {
     }
 
     private void validateProjectExecutionOrder() {
+        Set<String> robustnessOutputs = new java.util.HashSet<>();
         for (WorkflowTask task : project.getTasks()) {
-            if (task != null && task.isEnabled() && task.getType() == null) {
+            if (task == null || !task.isEnabled()) continue;
+            if (task.getType() == null) {
                 throw new IllegalStateException("Ein aktivierter Task besitzt keinen gültigen Typ.");
             }
+            if (!databankManager.hasDatabank(task.getSourceDatabank())) {
+                throw new IllegalStateException("Task '" + task.getName() + "' verweist auf die nicht vorhandene Quell-Databank '"
+                        + task.getSourceDatabank() + "'.");
+            }
+            if (!databankManager.hasDatabank(task.getTargetDatabank())) {
+                throw new IllegalStateException("Task '" + task.getName() + "' verweist auf die nicht vorhandene Ziel-Databank '"
+                        + task.getTargetDatabank() + "'.");
+            }
+            if (task.getType() == WorkflowTask.TaskType.OPTIMIZER
+                    || task.getType() == WorkflowTask.TaskType.RETESTER
+                    || task.getType() == WorkflowTask.TaskType.ROBUSTNESS_CV) {
+                LocalDate start = parseDateOrNull(task.getStartDate());
+                LocalDate end = parseDateOrNull(task.getEndDate());
+                if (start == null || end == null || !start.isBefore(end)) {
+                    throw new IllegalStateException("Task '" + task.getName()
+                            + "' besitzt keinen gültigen Zeitraum.");
+                }
+            }
+            if (task.getType() == WorkflowTask.TaskType.OPTIMIZER
+                    && task.getOptimizerForwardMode() == 4) {
+                LocalDate forwardDate = parseDateOrNull(task.getOptimizerForwardDate());
+                LocalDate start = parseDateOrNull(task.getStartDate());
+                LocalDate end = parseDateOrNull(task.getEndDate());
+                if (forwardDate == null || !forwardDate.isAfter(start) || !forwardDate.isBefore(end)) {
+                    throw new IllegalStateException("Task '" + task.getName()
+                            + "' besitzt kein gültiges benutzerdefiniertes Forward-Datum.");
+                }
+            }
+            if (task.getType() == WorkflowTask.TaskType.KI_EVALUATION
+                    && !robustnessOutputs.contains(normalizedDatabankName(task.getSourceDatabank()))) {
+                throw new IllegalStateException("Task '" + task.getName()
+                        + "' benötigt davor einen aktivierten Robustness-Task, dessen Ziel-Databank '"
+                        + task.getSourceDatabank() + "' ist.");
+            }
+            if (task.getType() == WorkflowTask.TaskType.ROBUSTNESS_CV) {
+                robustnessOutputs.add(normalizedDatabankName(task.getTargetDatabank()));
+            }
         }
+    }
+
+    private static String normalizedDatabankName(String name) {
+        String cleanName = name == null || name.isBlank() ? DatabankManager.RESULTS : name.trim();
+        return cleanName.toLowerCase(Locale.ROOT);
     }
 
     private void stopProjectExecution() {

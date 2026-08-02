@@ -20,6 +20,9 @@ public class WorkflowTask {
     public static final double DEFAULT_DIVERSITY_TRADE_DIFF_PCT = 0.15;
     public static final int DEFAULT_DIVERSITY_MIN_DIFFERENT_PARAMS = 2;
     public static final int DEFAULT_DIVERSITY_MAX_STRATEGIES = 5;
+    public static final int DEFAULT_OPTIMIZER_MODE = 2;
+    public static final int DEFAULT_OPTIMIZER_CRITERION = 4;
+    public static final int DEFAULT_OPTIMIZER_FORWARD_MODE = 1;
 
     public enum TaskType {
         STRATEGY_SELECTION("Strategie-Auswahl", "EA, Symbol, Timeframe & Parameterbereiche festlegen", true),
@@ -92,6 +95,11 @@ public class WorkflowTask {
     private String retestSymbol = "";
     private String retestPeriod = "";
     private String optimizerOutputDirectory = "";
+    private Integer optimizerMode;
+    private Integer optimizerCriterion;
+    private Integer optimizerForwardMode;
+    private String optimizerForwardDate = "";
+    private long sensitivityRunTimestamp;
     /**
      * UI-level modelling mode. This is deliberately not the raw MT5 model
      * number: MT5 uses 4 for real ticks and 2 for open prices.
@@ -191,6 +199,61 @@ public class WorkflowTask {
     public void setOptimizerOutputDirectory(String optimizerOutputDirectory) {
         this.optimizerOutputDirectory = optimizerOutputDirectory != null
                 ? optimizerOutputDirectory.trim() : "";
+    }
+
+    public long getSensitivityRunTimestamp() { return Math.max(0L, sensitivityRunTimestamp); }
+    public void setSensitivityRunTimestamp(long sensitivityRunTimestamp) {
+        this.sensitivityRunTimestamp = Math.max(0L, sensitivityRunTimestamp);
+    }
+
+    public int getOptimizerMode() {
+        return optimizerMode != null && (optimizerMode == 1 || optimizerMode == 2)
+                ? optimizerMode : DEFAULT_OPTIMIZER_MODE;
+    }
+    public void setOptimizerMode(int optimizerMode) {
+        if (optimizerMode != 1 && optimizerMode != 2) {
+            throw new IllegalArgumentException("Optimizer-Modus muss 1 (Complete) oder 2 (Genetic) sein.");
+        }
+        this.optimizerMode = optimizerMode;
+    }
+
+    public int getOptimizerCriterion() {
+        return optimizerCriterion != null && optimizerCriterion >= 0 && optimizerCriterion <= 7
+                ? optimizerCriterion : DEFAULT_OPTIMIZER_CRITERION;
+    }
+    public void setOptimizerCriterion(int optimizerCriterion) {
+        if (optimizerCriterion < 0 || optimizerCriterion > 7) {
+            throw new IllegalArgumentException("Optimierungskriterium muss zwischen 0 und 7 liegen.");
+        }
+        this.optimizerCriterion = optimizerCriterion;
+    }
+
+    public int getOptimizerForwardMode() {
+        return optimizerForwardMode != null && optimizerForwardMode >= 0 && optimizerForwardMode <= 4
+                ? optimizerForwardMode : DEFAULT_OPTIMIZER_FORWARD_MODE;
+    }
+    public void setOptimizerForwardMode(int optimizerForwardMode) {
+        if (optimizerForwardMode < 0 || optimizerForwardMode > 4) {
+            throw new IllegalArgumentException("Forward-Modus muss zwischen 0 und 4 liegen.");
+        }
+        this.optimizerForwardMode = optimizerForwardMode;
+    }
+
+    public String getOptimizerForwardDate() {
+        return optimizerForwardDate != null ? optimizerForwardDate : "";
+    }
+    public void setOptimizerForwardDate(String optimizerForwardDate) {
+        this.optimizerForwardDate = optimizerForwardDate != null ? optimizerForwardDate.trim() : "";
+    }
+
+    public boolean initializeOptimizerSettings(int mode, int criterion, int forwardMode, LocalDate forwardDate) {
+        if (optimizerMode != null && optimizerCriterion != null && optimizerForwardMode != null) return false;
+        setOptimizerMode(mode == 1 ? 1 : 2);
+        setOptimizerCriterion(criterion >= 0 && criterion <= 7 ? criterion : DEFAULT_OPTIMIZER_CRITERION);
+        setOptimizerForwardMode(forwardMode >= 0 && forwardMode <= 4
+                ? forwardMode : DEFAULT_OPTIMIZER_FORWARD_MODE);
+        setOptimizerForwardDate(forwardDate != null ? forwardDate.toString() : "");
+        return true;
     }
 
     public int getExecutionMode() {
@@ -299,6 +362,11 @@ public class WorkflowTask {
         copy.setRetestSymbol(retestSymbol);
         copy.setRetestPeriod(retestPeriod);
         copy.setOptimizerOutputDirectory(optimizerOutputDirectory);
+        copy.optimizerMode = optimizerMode;
+        copy.optimizerCriterion = optimizerCriterion;
+        copy.optimizerForwardMode = optimizerForwardMode;
+        copy.setOptimizerForwardDate(optimizerForwardDate);
+        copy.setSensitivityRunTimestamp(sensitivityRunTimestamp);
         copy.setExecutionMode(getExecutionMode());
         copy.setDeleteFailed(deleteFailed);
         copy.diversityParamDiffPct = diversityParamDiffPct;

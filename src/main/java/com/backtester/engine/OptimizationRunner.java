@@ -296,7 +296,6 @@ public class OptimizationRunner {
             } else {
                 logMessage("Warning: Optimization report not found at " + reportFile + " — no passes produced.");
                 result.setMessage("Keine Daten — Optimierung hat keine Ergebnisse produziert.");
-                result.setSuccess(true); // Treat as success with 0 passes, don't block workflow
             }
 
             // Look for forward test report if enabled (only for MT5)

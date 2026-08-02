@@ -119,6 +119,7 @@ public class WorkflowEngineTest {
         sr.setStatus("Completed");
         sr.addParameterCV("InpLots", 12.5);
         sr.setKiResult("90");
+        sr.setRunTimestamp(987654321L);
         sensitivity.add(sr);
         engine.setSensitivityResults(sensitivity);
 
@@ -178,6 +179,7 @@ public class WorkflowEngineTest {
         assertEquals(1, restoredEngine.getSensitivityResults().size());
         assertEquals("Completed", restoredEngine.getSensitivityResults().get(0).getStatus());
         assertEquals(12.5, restoredEngine.getSensitivityResults().get(0).getOverallCV(), 0.001);
+        assertEquals(987654321L, restoredEngine.getSensitivityRunTimestamp());
 
         assertEquals("# KI Analyse Bericht\nSieht gut aus.", restoredEngine.getKiReportText());
 
@@ -776,6 +778,51 @@ public class WorkflowEngineTest {
             deleteRecursive(tempExportDir);
             deleteRecursive(bestDir);
         }
+    }
+
+    @Test
+    public void aiStepRejectsSensitivityWithoutExactRobustnessRun() throws Exception {
+        WorkflowEngine engine = new WorkflowEngine(null);
+        Pass pass = new Pass();
+        pass.setPassNumber(7);
+        pass.setProfit(100.0);
+        CombinedPass combined = new CombinedPass(pass, null, 80.0, 1.0, "");
+        SensitivityResult sensitivity = new SensitivityResult(combined);
+        sensitivity.setStatus("Completed");
+        engine.setSelectedDiversePasses(List.of(combined));
+        engine.setSensitivityResults(List.of(sensitivity));
+
+        try {
+            engine.runStep5(message -> { });
+            fail("KI analysis must not use sensitivity rows from an unrelated or unknown run");
+        } catch (IllegalStateException expected) {
+            assertTrue(expected.getMessage().contains("Robustness-Lauf"));
+        }
+    }
+
+    @Test
+    public void aiInputDoesNotReuseSensitivityObjectFromAnotherRun() {
+        WorkflowEngine engine = new WorkflowEngine(null);
+        Pass stalePass = new Pass();
+        stalePass.setPassNumber(7);
+        stalePass.setProfit(100.0);
+        CombinedPass staleCombined = new CombinedPass(stalePass, null, 80.0, 1.0, "");
+        staleCombined.setStrategyName("Strategy 7");
+        SensitivityResult staleSensitivity = new SensitivityResult(staleCombined);
+        staleSensitivity.setRunTimestamp(111L);
+        engine.setSensitivityResults(List.of(staleSensitivity));
+
+        Pass currentPass = new Pass();
+        currentPass.setPassNumber(7);
+        currentPass.setProfit(999.0);
+        CombinedPass currentCombined = new CombinedPass(currentPass, null, 80.0, 1.0, "");
+        currentCombined.setStrategyName("Strategy 7");
+        engine.setSensitivityRunTimestamp(222L);
+        engine.retainSensitivityResultsForPasses(List.of(currentCombined));
+
+        SensitivityResult retained = engine.getSensitivityResults().get(0);
+        assertEquals(222L, retained.getRunTimestamp());
+        assertEquals(999.0, retained.getOriginalPass().getBtProfit(), 0.0);
     }
 
     private void deleteRecursive(File f) {

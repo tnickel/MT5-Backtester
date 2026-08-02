@@ -23,6 +23,7 @@ public class SensitivityRunner {
     private Consumer<SensitivityResult> resultUpdateCallback;
     private OptimizationRunner currentOptRunner = null;
     private volatile boolean cancelled = false;
+    private long lastRunTimestamp;
 
     public SensitivityRunner(AppConfig config) {
         this.config = config;
@@ -58,6 +59,8 @@ public class SensitivityRunner {
     public boolean isCancelled() {
         return cancelled;
     }
+
+    public long getLastRunTimestamp() { return lastRunTimestamp; }
 
     /**
      * End date of the backtest portion, mirroring MT5's forward split.
@@ -208,7 +211,7 @@ public class SensitivityRunner {
             com.backtester.database.DatabaseManager.getInstance().saveSensitivityDetail(
                     runTimestamp,
                     target.getOriginalPass().getPassNumber(),
-                    target.getOriginalPass().getName(),
+                    target.getOriginalPass().getStrategyName(),
                     baseConfig.getExpert(),
                     baseConfig.getSymbol(),
                     paramName,
@@ -233,6 +236,7 @@ public class SensitivityRunner {
 
     public void runSensitivityScan(List<SensitivityResult> targets, OptimizationConfig baseConfig, List<EaParameter> allEaParams) {
         cancelled = false;
+        lastRunTimestamp = 0L;
         if (targets.isEmpty()) {
             logMessage("No passes selected for sensitivity analysis.");
             return;
@@ -240,12 +244,14 @@ public class SensitivityRunner {
 
         Path testerDir = config.getTesterProfilesDir(baseConfig.getExpert());
         long runTimestamp = System.currentTimeMillis();
+        lastRunTimestamp = runTimestamp;
 
         int totalPasses = targets.size();
         int currentPassCount = 0;
 
         for (SensitivityResult target : targets) {
             if (cancelled) break;
+            target.setRunTimestamp(runTimestamp);
             currentPassCount++;
             
             target.setStatus("Running...");

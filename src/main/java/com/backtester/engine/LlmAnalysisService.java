@@ -117,6 +117,12 @@ public class LlmAnalysisService {
      */
     public String analyzeStrategies(java.util.List<Integer> activePasses, String expertName, String symbol,
                                     java.util.Map<Integer, PassPerformance> performanceData) {
+        return analyzeStrategies(activePasses, expertName, symbol, performanceData, -1L);
+    }
+
+    public String analyzeStrategies(java.util.List<Integer> activePasses, String expertName, String symbol,
+                                    java.util.Map<Integer, PassPerformance> performanceData,
+                                    long sensitivityRunTimestamp) {
         DatabaseManager db = DatabaseManager.getInstance();
 
         // 1. Check API key
@@ -147,7 +153,8 @@ public class LlmAnalysisService {
         }
 
         // 2. Load sensitivity data from DB (now includes curves + metrics)
-        String sensitivityData = loadSensitivityData(activePasses, expertName, symbol, performanceData);
+        String sensitivityData = loadSensitivityData(
+                activePasses, expertName, symbol, performanceData, sensitivityRunTimestamp);
         if (sensitivityData == null || sensitivityData.isEmpty()) {
             return "ERROR: Keine Sensitivitätsdaten in der Datenbank für die ausgewählten Passes.\n\n" +
                    "Bitte führe zuerst eine Sensitivitätsanalyse im Backtester durch.";
@@ -211,7 +218,8 @@ public class LlmAnalysisService {
     }
 
     private String loadSensitivityData(java.util.List<Integer> activePasses, String expertName, String symbol,
-                                        java.util.Map<Integer, PassPerformance> performanceData) {
+                                        java.util.Map<Integer, PassPerformance> performanceData,
+                                        long requestedRunTimestamp) {
         if (activePasses == null || activePasses.isEmpty()) {
             return null;
         }
@@ -220,15 +228,17 @@ public class LlmAnalysisService {
             DatabaseManager db = DatabaseManager.getInstance();
 
             // Find the most recent run_timestamp for this expert and symbol to target the current run
-            long latestTimestamp = -1;
-            String tsSql = "SELECT MAX(run_timestamp) as max_ts FROM SENSITIVITY_DETAIL WHERE expert_name = ? AND symbol = ?";
-            try (java.sql.Connection conn = db.getConnection();
-                 java.sql.PreparedStatement pstmt = conn.prepareStatement(tsSql)) {
-                pstmt.setString(1, expertName);
-                pstmt.setString(2, symbol);
-                try (ResultSet rs = pstmt.executeQuery()) {
-                    if (rs.next()) {
-                        latestTimestamp = rs.getLong("max_ts");
+            long latestTimestamp = requestedRunTimestamp;
+            if (latestTimestamp <= 0L) {
+                String tsSql = "SELECT MAX(run_timestamp) as max_ts FROM SENSITIVITY_DETAIL WHERE expert_name = ? AND symbol = ?";
+                try (java.sql.Connection conn = db.getConnection();
+                     java.sql.PreparedStatement pstmt = conn.prepareStatement(tsSql)) {
+                    pstmt.setString(1, expertName);
+                    pstmt.setString(2, symbol);
+                    try (ResultSet rs = pstmt.executeQuery()) {
+                        if (rs.next()) {
+                            latestTimestamp = rs.getLong("max_ts");
+                        }
                     }
                 }
             }
@@ -295,6 +305,7 @@ public class LlmAnalysisService {
             try (java.sql.Connection conn = db.getConnection();
                  java.sql.PreparedStatement pstmtOverview = conn.prepareStatement(overviewSql);
                  java.sql.PreparedStatement pstmtDetail = conn.prepareStatement(detailSql)) {
+                int sensitivityRows = 0;
 
                 pstmtOverview.setString(1, expertName);
                 pstmtOverview.setString(2, symbol);
@@ -313,6 +324,7 @@ public class LlmAnalysisService {
                 // Overview
                 try (ResultSet rs = pstmtOverview.executeQuery()) {
                     while (rs.next()) {
+                        sensitivityRows++;
                         sb.append(String.format(java.util.Locale.US,
                                 "Pass %d (%s): avg_cv=%.2f%%, worst_cv=%.2f%%, robust=%d, acceptable=%d, fragile=%d\n",
                                 rs.getInt("pass_number"), rs.getString("pass_name"),
@@ -326,6 +338,7 @@ public class LlmAnalysisService {
                 // Detailed data with curve points
                 try (ResultSet rs = pstmtDetail.executeQuery()) {
                     while (rs.next()) {
+                        sensitivityRows++;
                         int passNum = rs.getInt("pass_number");
                         String paramName = rs.getString("parameter_name");
                         String period = rs.getString("period");
@@ -354,6 +367,9 @@ public class LlmAnalysisService {
                             }
                         }
                     }
+                }
+                if (sensitivityRows == 0) {
+                    return null;
                 }
             }
 

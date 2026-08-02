@@ -575,6 +575,24 @@ public class DatabaseManager {
         }
     }
 
+    /** Returns whether this exact strategy has persisted rows in a specific robustness run. */
+    public boolean hasSensitivityDetails(long runTimestamp, int passNumber, String passName) {
+        if (runTimestamp <= 0L || passName == null || passName.isBlank()) return false;
+        String sql = "SELECT 1 FROM SENSITIVITY_DETAIL " +
+                "WHERE run_timestamp = ? AND pass_number = ? AND pass_name = ? LIMIT 1";
+        try (Connection conn = connect(); PreparedStatement p = conn.prepareStatement(sql)) {
+            p.setLong(1, runTimestamp);
+            p.setInt(2, passNumber);
+            p.setString(3, passName);
+            try (ResultSet rs = p.executeQuery()) {
+                return rs.next();
+            }
+        } catch (SQLException e) {
+            log.error("Failed to check sensitivity details for run {} / pass {}", runTimestamp, passNumber, e);
+            return false;
+        }
+    }
+
     /**
      * Clears all sensitivity detail rows for a specific run timestamp.
      */

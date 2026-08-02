@@ -53,13 +53,17 @@ public class DatabankManager {
         Map<String, List<CombinedPass>> snapshot = new LinkedHashMap<>();
         for (Map.Entry<String, List<CombinedPass>> entry : databanks.entrySet()) {
             snapshot.put(entry.getKey(), includeContents
-                    ? new ArrayList<>(entry.getValue()) : new ArrayList<>());
+                    ? copyValidPasses(entry.getValue()) : new ArrayList<>());
         }
         project.setDatabanks(snapshot);
     }
 
     public synchronized List<String> getDatabankNames() {
         return new ArrayList<>(databanks.keySet());
+    }
+
+    public synchronized boolean hasDatabank(String name) {
+        return findStoredName(name) != null;
     }
 
     public synchronized boolean createDatabank(String name) {
@@ -80,7 +84,7 @@ public class DatabankManager {
     /** Returns a snapshot so callers cannot mutate an ArrayList during a worker run. */
     public synchronized List<CombinedPass> getDatabank(String name) {
         String storedName = ensureDatabank(name);
-        return new ArrayList<>(databanks.get(storedName));
+        return copyValidPasses(databanks.get(storedName));
     }
 
     public synchronized void setDatabankContent(String name, List<CombinedPass> passes) {
@@ -127,37 +131,19 @@ public class DatabankManager {
 
         // Explicit task output always wins, including an explicit empty result.
         // A null input is the only signal to read the source databank directly.
-        List<CombinedPass> sourceSnapshot = new ArrayList<>(databanks.get(sourceName));
+        List<CombinedPass> sourceSnapshot = copyValidPasses(databanks.get(sourceName));
         List<CombinedPass> candidates = inputPasses != null
                 ? copyValidPasses(inputPasses) : sourceSnapshot;
 
         logger.info("DATABANK ROUTING START: Task '{}' ({}) | Source: '{}' ({} passes) --> Target: '{}'",
             task.getName(), task.getType(), sourceName, candidates.size(), targetName);
 
-        List<CombinedPass> filteredOutput = new ArrayList<>();
-        List<FilterCondition> conditions = new ArrayList<>(task.getFilterConditions());
-
-        // 2. Evaluate filter conditions
-        for (CombinedPass pass : candidates) {
-            boolean passAll = true;
-            if (conditions != null && !conditions.isEmpty()) {
-                for (FilterCondition cond : conditions) {
-                    if (cond == null || !cond.evaluate(pass)) {
-                        passAll = false;
-                        break;
-                    }
-                }
-            }
-
-            if (passAll) {
-                filteredOutput.add(pass);
-            }
-        }
+        List<CombinedPass> filteredOutput = filterPasses(task, candidates);
 
         // A separate target is a copy. With an in-place route, deleteFailed
         // controls whether rejected strategies are removed or merely retained.
         if (!sourceName.equalsIgnoreCase(targetName) || task.isDeleteFailed()) {
-            databanks.put(targetName, new ArrayList<>(filteredOutput));
+            databanks.put(targetName, copyValidPasses(filteredOutput));
         } else {
             databanks.put(targetName, mergeByIdentity(sourceSnapshot, filteredOutput));
         }
@@ -165,7 +151,27 @@ public class DatabankManager {
         logger.info("DATABANK ROUTING SUCCESS: Task '{}' routed {} / {} passes into Databank '{}'.",
             task.getName(), filteredOutput.size(), candidates.size(), targetName);
 
-        return new ArrayList<>(filteredOutput);
+        return copyValidPasses(filteredOutput);
+    }
+
+    /** Applies only the task's configured conditions without modifying a databank. */
+    public synchronized List<CombinedPass> filterPasses(WorkflowTask task, List<CombinedPass> passes) {
+        List<CombinedPass> candidates = copyValidPasses(passes);
+        if (task == null || task.getFilterConditions().isEmpty()) return candidates;
+
+        List<FilterCondition> conditions = new ArrayList<>(task.getFilterConditions());
+        List<CombinedPass> filtered = new ArrayList<>();
+        for (CombinedPass pass : candidates) {
+            boolean passAll = true;
+            for (FilterCondition condition : conditions) {
+                if (condition == null || !condition.evaluate(pass)) {
+                    passAll = false;
+                    break;
+                }
+            }
+            if (passAll) filtered.add(pass);
+        }
+        return filtered;
     }
 
     private void resetToDefaults() {
@@ -212,7 +218,7 @@ public class DatabankManager {
         Map<String, CombinedPass> unique = new LinkedHashMap<>();
         if (passes != null) {
             for (CombinedPass pass : passes) {
-                if (pass != null && pass.getBacktestPass() != null) unique.put(passIdentity(pass), pass);
+                if (pass != null && pass.getBacktestPass() != null) unique.put(passIdentity(pass), pass.copy());
             }
         }
         return new ArrayList<>(unique.values());
@@ -223,12 +229,12 @@ public class DatabankManager {
         Map<String, CombinedPass> merged = new LinkedHashMap<>();
         if (existing != null) {
             for (CombinedPass pass : existing) {
-                if (pass != null && pass.getBacktestPass() != null) merged.put(passIdentity(pass), pass);
+                if (pass != null && pass.getBacktestPass() != null) merged.put(passIdentity(pass), pass.copy());
             }
         }
         if (updates != null) {
             for (CombinedPass pass : updates) {
-                if (pass != null && pass.getBacktestPass() != null) merged.put(passIdentity(pass), pass);
+                if (pass != null && pass.getBacktestPass() != null) merged.put(passIdentity(pass), pass.copy());
             }
         }
         return new ArrayList<>(merged.values());

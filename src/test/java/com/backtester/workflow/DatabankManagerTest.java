@@ -82,6 +82,54 @@ public class DatabankManagerTest {
     }
 
     @Test
+    public void databankSnapshotsDeepCopyMutablePasses() {
+        DatabankManager manager = new DatabankManager();
+        manager.setDatabankContent("Results", List.of(pass(1, 100.0)));
+
+        List<CombinedPass> snapshot = manager.getDatabank("Results");
+        snapshot.get(0).getBacktestPass().setProfit(999.0);
+        OptimizationResult.Pass longterm = new OptimizationResult.Pass();
+        longterm.setPassNumber(1);
+        longterm.setProfit(777.0);
+        snapshot.get(0).setLongtermPass(longterm);
+
+        CombinedPass stored = manager.getDatabank("Results").get(0);
+        assertEquals(100.0, stored.getBtProfit(), 0.0);
+        assertNull(stored.getLongtermPass());
+    }
+
+    @Test
+    public void separateTargetAndReturnedOutputAreObjectIsolated() {
+        DatabankManager manager = new DatabankManager();
+        manager.setDatabankContent("Results", List.of(pass(1, 100.0)));
+        WorkflowTask task = new WorkflowTask("Copy", WorkflowTask.TaskType.RETESTER);
+        task.setSourceDatabank("Results");
+        task.setTargetDatabank("Final");
+
+        List<CombinedPass> output = manager.processTaskDatabanks(task, manager.getDatabank("Results"));
+        output.get(0).getBacktestPass().setProfit(555.0);
+
+        assertEquals(100.0, manager.getDatabank("Results").get(0).getBtProfit(), 0.0);
+        assertEquals(100.0, manager.getDatabank("Final").get(0).getBtProfit(), 0.0);
+    }
+
+    @Test
+    public void filterPassesIsPureAndReturnsCopies() {
+        DatabankManager manager = new DatabankManager();
+        manager.setDatabankContent("Results", Arrays.asList(pass(1, 100.0), pass(2, -5.0)));
+        WorkflowTask task = new WorkflowTask("Export filter", WorkflowTask.TaskType.PORTFOLIO_EXPORT);
+        task.addFilterCondition(new FilterCondition(FilterCondition.Metric.BT_NET_PROFIT,
+                FilterCondition.Operator.GREATER_THAN, 0.0));
+
+        List<CombinedPass> filtered = manager.filterPasses(task, manager.getDatabank("Results"));
+        assertEquals(1, filtered.size());
+        filtered.get(0).getBacktestPass().setProfit(999.0);
+
+        assertEquals(2, manager.getDatabank("Results").size());
+        assertEquals(100.0, manager.getDatabank("Results").get(0).getBtProfit(), 0.0);
+    }
+
+    @Test
     public void structureCanPersistWithoutDatabankContents() {
         DatabankManager manager = new DatabankManager();
         manager.createDatabank("data1");
