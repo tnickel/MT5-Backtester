@@ -178,6 +178,10 @@ public class UiComponentsCoverageTest {
             assertNotNull(DocHelper.getConsistencyDocHtml());
             assertNotNull(DocHelper.getAllIndicesDocHtml());
             assertNotNull(DocHelper.getDiversityDocHtml());
+            String customDiversityHelp = DocHelper.getCustomProjectDiversityDocHtml();
+            assertTrue(customDiversityHelp.contains("genau eine Quell-Databank"));
+            assertTrue(customDiversityHelp.contains("keine erneute Sortierung"));
+            assertTrue(customDiversityHelp.contains("Min. differente Parameter"));
             assertNotNull(DocHelper.getControllingDocHtml());
         });
     }
@@ -244,4 +248,3 @@ public class UiComponentsCoverageTest {
         });
     }
 }
-

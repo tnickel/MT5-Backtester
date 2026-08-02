@@ -151,6 +151,14 @@ public class WorkflowConfigDialogs {
         title.setFont(Font.font("Segoe UI", FontWeight.BOLD, 19));
         title.setTextFill(Color.web("#00e5ff"));
 
+        Region titleSpacer = new Region();
+        HBox.setHgrow(titleSpacer, Priority.ALWAYS);
+        Button infoButton = DocHelper.createThickCircularCyanInfoButton(
+                "Ausführliche Erklärung der Diversitätsfilterung",
+                () -> DocHelper.showCustomProjectDiversityDocDialog(stage));
+        HBox titleRow = new HBox(12, title, titleSpacer, infoButton);
+        titleRow.setAlignment(Pos.CENTER_LEFT);
+
         Label explanation = new Label(
                 "Dieses Modul clustert ausschließlich die ausgewählte Quell-Databank. " +
                 "Für Langzeit-Ergebnisse wird ein eigener Clustering-Task hinter dem Retester angelegt."
@@ -254,7 +262,7 @@ public class WorkflowConfigDialogs {
         HBox buttons = new HBox(12, spacer, cancel, save);
         buttons.setAlignment(Pos.CENTER_RIGHT);
 
-        layout.getChildren().addAll(title, explanation, grid, routingHint, new Separator(), buttons);
+        layout.getChildren().addAll(titleRow, explanation, grid, routingHint, new Separator(), buttons);
         stage.setScene(new Scene(layout));
         applyTheme(stage, owner);
         stage.showAndWait();

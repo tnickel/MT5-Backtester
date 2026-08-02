@@ -568,6 +568,96 @@ public class DocHelper {
             + "</body></html>";
     }
 
+    public static void showCustomProjectDiversityDocDialog(javafx.stage.Window owner) {
+        javafx.stage.Stage stage = new javafx.stage.Stage();
+        stage.setTitle("Diversitäts-Clustering – ausführliche Erklärung");
+        stage.initModality(javafx.stage.Modality.NONE);
+        if (owner != null) {
+            stage.initOwner(owner);
+        }
+        stage.setMinWidth(980);
+        stage.setMinHeight(760);
+
+        javafx.scene.layout.VBox mainBox = new javafx.scene.layout.VBox(15);
+        mainBox.setPadding(new javafx.geometry.Insets(20));
+        mainBox.setStyle("-fx-background-color: #0d0f17;");
+
+        Label titleLabel = new Label("Diversitäts-Clustering im Custom Project");
+        titleLabel.setFont(javafx.scene.text.Font.font("Segoe UI", javafx.scene.text.FontWeight.BOLD, 22));
+        titleLabel.setTextFill(javafx.scene.paint.Color.web("#00e5ff"));
+
+        javafx.scene.web.WebView webView = new javafx.scene.web.WebView();
+        webView.setPrefSize(930, 610);
+        webView.setStyle("-fx-background-color: #161821;");
+        webView.getEngine().loadContent(getCustomProjectDiversityDocHtml());
+
+        Button closeBtn = new Button("Schließen");
+        closeBtn.getStyleClass().add("button");
+        closeBtn.setOnAction(e -> stage.close());
+
+        javafx.scene.layout.HBox btnRow = new javafx.scene.layout.HBox(closeBtn);
+        btnRow.setAlignment(javafx.geometry.Pos.CENTER_RIGHT);
+        mainBox.getChildren().addAll(titleLabel, webView, btnRow);
+        javafx.scene.layout.VBox.setVgrow(webView, javafx.scene.layout.Priority.ALWAYS);
+
+        javafx.scene.Scene scene = new javafx.scene.Scene(mainBox, 1020, 800);
+        try {
+            java.net.URL css = DocHelper.class.getResource("/css/antigravity.css");
+            if (css != null) scene.getStylesheets().add(css.toExternalForm());
+        } catch (Exception ignored) {}
+
+        stage.setScene(scene);
+        stage.show();
+    }
+
+    public static String getCustomProjectDiversityDocHtml() {
+        return "<html><head><style>"
+            + "body { background-color:#161821; color:#c8cddc; font-family:'Segoe UI',sans-serif; font-size:16px; line-height:1.65; margin:22px; }"
+            + "h2 { color:#00e5ff; font-size:22px; border-bottom:1px solid #3e4555; padding-bottom:6px; }"
+            + "h3 { color:#ffd740; font-size:18px; margin-top:24px; }"
+            + "code { background:#1f2937; color:#38bdf8; padding:3px 7px; border-radius:4px; font-family:Consolas,monospace; }"
+            + "li { margin-bottom:8px; }"
+            + ".box { background:#1e293b; border-left:4px solid #00e5ff; padding:12px 15px; margin:14px 0; border-radius:4px; }"
+            + ".warn { background:#2b2615; border-left-color:#ffd740; }"
+            + "table { width:100%; border-collapse:collapse; margin:12px 0; }"
+            + "th,td { border:1px solid #3e4555; padding:9px; text-align:left; vertical-align:top; }"
+            + "th { color:#00e5ff; background:#1e2432; }"
+            + "</style></head><body>"
+            + "<h2>Ziel der Diversitätsfilterung</h2>"
+            + "<p>Das Clustering reduziert eine bereits gerankte Databank auf Strategien, die sich in Parametern oder Handelsaktivität ausreichend unterscheiden. So werden nahezu identische Varianten derselben Strategie nicht mehrfach in den nächsten Workflow-Schritt übernommen.</p>"
+            + "<div class='box'><b>Wichtig:</b> Dieser Custom-Project-Task prüft genau eine Quell-Databank. Er führt weder einen Retest noch einen Profit-, Drawdown-, Recovery- oder Forward-/Langzeit-Qualitätsfilter aus. Solche Prüfungen gehören in eigene Workflow-Tasks.</div>"
+            + "<h3>1. Reihenfolge und Priorität</h3>"
+            + "<ol>"
+            + "<li>Ungültige bzw. leere Zeilen werden übersprungen.</li>"
+            + "<li>Die erste gültige Strategie der Quell-Databank wird zuerst übernommen.</li>"
+            + "<li>Danach wird jede weitere Strategie in exakt derselben Databank-Reihenfolge mit allen bereits übernommenen Strategien verglichen.</li>"
+            + "<li>Es findet im Clustering selbst keine erneute Sortierung nach Score oder Profit statt. Deshalb sollte ein Ranking- oder Filter-Task vorher die gewünschte Priorität herstellen.</li>"
+            + "</ol>"
+            + "<h3>2. Wann gelten zwei Strategien als ähnlich?</h3>"
+            + "<p>Ein neuer Kandidat gilt nur dann als <b>zu ähnlich</b>, wenn beide Bedingungen gleichzeitig erfüllt sind:</p>"
+            + "<div class='box'><code>Trades sind ähnlich</code> <b>UND</b> <code>Anzahl deutlich verschiedener Parameter &lt; Mindestzahl</code></div>"
+            + "<p>Ist dagegen der Trade-Abstand groß genug <b>oder</b> unterscheiden sich genügend Parameter, gilt der Kandidat als divers und darf aufgenommen werden.</p>"
+            + "<h3>3. Bedeutung der Einstellungen</h3>"
+            + "<table><tr><th>Einstellung</th><th>Wirkung</th></tr>"
+            + "<tr><td><b>Parameter-Differenz %</b></td><td>Schwelle, ab der ein einzelner Parameter als deutlich verschieden zählt. Mit hinterlegtem EA-Suchraum wird der Abstand auf Start-/Endwert des optimierten Parameters normiert. Ohne Suchraum wird die relative Abweichung der beiden Werte verwendet. Unterschiedliche nichtnumerische Werte zählen als verschieden.</td></tr>"
+            + "<tr><td><b>Trade-Differenz %</b></td><td>Schwelle für unterschiedliches Handelsverhalten. Liegt die relative Abweichung der Trade-Anzahl unter diesem Wert, gelten die Trades als ähnlich. Ab der Schwelle gelten sie als verschieden.</td></tr>"
+            + "<tr><td><b>Min. differente Parameter</b></td><td>So viele Parameter müssen mindestens die Parameter-Differenz-Schwelle erreichen, damit nahe Trade-Zahlen den Kandidaten nicht als Duplikat aussortieren.</td></tr>"
+            + "<tr><td><b>Max. Strategien</b></td><td>Obergrenze der Ausgabemenge. Sobald sie erreicht ist, endet die Prüfung.</td></tr></table>"
+            + "<h3>4. Welche Trade-Zahl wird verwendet?</h3>"
+            + "<p>Enthält jede Zeile der gewählten Databank ein Retester-Ergebnis, vergleicht das Clustering die Trade-Zahlen dieses Retests. Andernfalls verwendet es die normalen Backtest-Trade-Zahlen. Es mischt nicht zeilenweise zwischen beiden Quellen.</p>"
+            + "<h3>5. Beispiel mit den Standardwerten</h3>"
+            + "<p>Bei <code>10 % Parameter-Differenz</code>, <code>15 % Trade-Differenz</code> und <code>2 Mindestparametern</code> gilt:</p>"
+            + "<ul>"
+            + "<li>8 % Trade-Abstand und nur 1 deutlich anderer Parameter: <b>zu ähnlich – wird übersprungen.</b></li>"
+            + "<li>20 % Trade-Abstand bei identischen Parametern: <b>divers – kann aufgenommen werden.</b></li>"
+            + "<li>5 % Trade-Abstand, aber mindestens 2 deutlich andere Parameter: <b>divers – kann aufgenommen werden.</b></li>"
+            + "</ul>"
+            + "<h3>6. Kurzzeit- und Langzeit-Clustering</h3>"
+            + "<p>Für getrennte Auswertungen werden zwei Tasks verwendet: Der erste clustert beispielsweise <code>Results</code>. Ein Retester schreibt anschließend in eine eigene Databank, etwa <code>Langzeit-Retest</code>. Ein zweiter Clustering-Task liest genau diese Retester-Databank und schreibt sein Ergebnis in eine weitere Ziel-Databank.</p>"
+            + "<div class='box warn'><b>Faustregel:</b> Erst filtern und ranken, danach clustern. Niedrigere Schwellen bzw. eine kleinere Mindestzahl lassen mehr Strategien als verschieden gelten. Höhere Schwellen bzw. eine größere Mindestzahl entfernen aggressiver ähnliche Varianten.</div>"
+            + "</body></html>";
+    }
+
     public static void showDiversityDocDialog(javafx.stage.Window owner) {
         javafx.stage.Stage stage = new javafx.stage.Stage();
         stage.setTitle("Strategie-Auswahl & Diversität - Dokumentation");
