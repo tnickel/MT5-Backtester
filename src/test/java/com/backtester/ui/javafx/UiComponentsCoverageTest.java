@@ -214,8 +214,7 @@ public class UiComponentsCoverageTest {
             list.add(cp);
 
             LogView logView = new LogView();
-            OptimizationView parent = new OptimizationView(logView);
-            StrategyEvaluatorDialog dialog = new StrategyEvaluatorDialog(list, parent);
+            StrategyEvaluatorDialog dialog = new StrategyEvaluatorDialog(list, null);
             assertNotNull(dialog);
         });
     }
