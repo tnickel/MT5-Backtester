@@ -11,6 +11,7 @@ import com.backtester.engine.OptimizationConfig;
 import com.backtester.engine.WorkflowEngine;
 import com.backtester.report.OptimizationResult.CombinedPass;
 import com.backtester.report.SensitivityResult;
+import com.backtester.workflow.WorkflowTask;
 import javafx.collections.FXCollections;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
@@ -94,6 +95,169 @@ public class WorkflowConfigDialogs {
             throw new IllegalArgumentException(fieldName + " muss mindestens 1 sein.");
         }
         return value;
+    }
+
+    // ─── Custom Project: Diversity Clustering ───────────────────────────────────
+
+    static void applyDiversityTaskSettings(WorkflowTask task,
+                                            String moduleName,
+                                            String sourceDatabank,
+                                            String targetDatabank,
+                                            String parameterDifferencePercent,
+                                            String tradeDifferencePercent,
+                                            String minimumDifferentParameters,
+                                            String maximumStrategies) {
+        if (task == null) throw new IllegalArgumentException("Kein Clustering-Task ausgewählt.");
+
+        String cleanName = moduleName != null ? moduleName.trim() : "";
+        String cleanSource = sourceDatabank != null ? sourceDatabank.trim() : "";
+        String cleanTarget = targetDatabank != null ? targetDatabank.trim() : "";
+        if (cleanName.isEmpty()) throw new IllegalArgumentException("Der Modulname darf nicht leer sein.");
+        if (cleanSource.isEmpty()) throw new IllegalArgumentException("Eine Quell-Databank muss ausgewählt werden.");
+        if (cleanTarget.isEmpty()) throw new IllegalArgumentException("Eine Ziel-Databank muss ausgewählt werden.");
+
+        double parameterDifference = parseFiniteDecimal(
+                parameterDifferencePercent, "Parameter-Differenz", 0.0, 100.0) / 100.0;
+        double tradeDifference = parseFiniteDecimal(
+                tradeDifferencePercent, "Trade-Differenz", 0.0, 100.0) / 100.0;
+        int differentParameters = parsePositiveInteger(
+                minimumDifferentParameters, "Min. differente Parameter");
+        int strategyLimit = parsePositiveInteger(maximumStrategies, "Max. Strategien");
+
+        task.setName(cleanName);
+        task.setSourceDatabank(cleanSource);
+        task.setTargetDatabank(cleanTarget);
+        task.setDiversityParamDiffPct(parameterDifference);
+        task.setDiversityTradeDiffPct(tradeDifference);
+        task.setDiversityMinDifferentParams(differentParameters);
+        task.setDiversityMaxStrategies(strategyLimit);
+    }
+
+    /** Dedicated, single-databank settings dialog for a custom-project clustering task. */
+    public static void showDiversityClusteringDialog(WorkflowTask task,
+                                                      List<String> databankNames,
+                                                      Window owner,
+                                                      Runnable onSave) {
+        if (task == null) throw new IllegalArgumentException("Kein Clustering-Task ausgewählt.");
+        Stage stage = new Stage();
+        stage.setTitle("Diversitäts-Clustering konfigurieren");
+        stage.setResizable(false);
+
+        VBox layout = new VBox(16);
+        layout.setStyle("-fx-background-color: #0b0d13; -fx-padding: 24;");
+        layout.setPrefWidth(720);
+
+        Label title = new Label("DIVERSITÄTS-CLUSTERING");
+        title.setFont(Font.font("Segoe UI", FontWeight.BOLD, 19));
+        title.setTextFill(Color.web("#00e5ff"));
+
+        Label explanation = new Label(
+                "Dieses Modul clustert ausschließlich die ausgewählte Quell-Databank. " +
+                "Für Langzeit-Ergebnisse wird ein eigener Clustering-Task hinter dem Retester angelegt."
+        );
+        explanation.setWrapText(true);
+        explanation.setStyle("-fx-text-fill: #9aa4b5; -fx-font-size: 12px;");
+
+        LinkedHashSet<String> availableDatabanks = new LinkedHashSet<>();
+        if (databankNames != null) {
+            for (String name : databankNames) {
+                if (name != null && !name.isBlank()) availableDatabanks.add(name.trim());
+            }
+        }
+        availableDatabanks.add(task.getSourceDatabank());
+        availableDatabanks.add(task.getTargetDatabank());
+
+        GridPane grid = new GridPane();
+        grid.setHgap(16);
+        grid.setVgap(14);
+        grid.getStyleClass().add("sci-fi-panel");
+
+        TextField moduleNameField = new TextField(task.getName());
+        moduleNameField.setPrefWidth(480);
+        grid.add(new Label("Modulname:"), 0, 0);
+        grid.add(moduleNameField, 1, 0, 3, 1);
+
+        ComboBox<String> sourceCombo = new ComboBox<>(FXCollections.observableArrayList(availableDatabanks));
+        sourceCombo.setValue(task.getSourceDatabank());
+        sourceCombo.setPrefWidth(230);
+        grid.add(new Label("Quell-Databank:"), 0, 1);
+        grid.add(sourceCombo, 1, 1);
+
+        ComboBox<String> targetCombo = new ComboBox<>(FXCollections.observableArrayList(availableDatabanks));
+        targetCombo.setValue(task.getTargetDatabank());
+        targetCombo.setEditable(true);
+        targetCombo.setPrefWidth(230);
+        grid.add(new Label("Ziel-Databank:"), 2, 1);
+        grid.add(targetCombo, 3, 1);
+
+        TextField parameterDifferenceField = new TextField(
+                String.format(Locale.US, "%.0f", task.getDiversityParamDiffPct() * 100));
+        grid.add(new Label("Parameter-Differenz %:"), 0, 2);
+        grid.add(parameterDifferenceField, 1, 2);
+
+        TextField tradeDifferenceField = new TextField(
+                String.format(Locale.US, "%.0f", task.getDiversityTradeDiffPct() * 100));
+        grid.add(new Label("Trade-Differenz %:"), 2, 2);
+        grid.add(tradeDifferenceField, 3, 2);
+
+        TextField minimumDifferentParametersField = new TextField(
+                String.valueOf(task.getDiversityMinDifferentParams()));
+        grid.add(new Label("Min. differente Parameter:"), 0, 3);
+        grid.add(minimumDifferentParametersField, 1, 3);
+
+        TextField maximumStrategiesField = new TextField(
+                String.valueOf(task.getDiversityMaxStrategies()));
+        grid.add(new Label("Max. Strategien (Ziel):"), 2, 3);
+        grid.add(maximumStrategiesField, 3, 3);
+
+        Label routingHint = new Label(
+                "Die Reihenfolge in der Quell-Databank bestimmt die Priorität. " +
+                "Performance-Filter und Retests werden separat im Workflow konfiguriert."
+        );
+        routingHint.setWrapText(true);
+        routingHint.setStyle("-fx-text-fill: #ffd740; -fx-font-size: 12px;");
+
+        Button cancel = new Button("Abbrechen");
+        cancel.getStyleClass().add("button-cancel");
+        cancel.setOnAction(e -> stage.close());
+
+        Button save = new Button("Speichern");
+        save.getStyleClass().add("button-start");
+        save.setDefaultButton(true);
+        save.setOnAction(e -> {
+            String targetName = targetCombo.isEditable()
+                    ? targetCombo.getEditor().getText() : targetCombo.getValue();
+            try {
+                applyDiversityTaskSettings(
+                        task,
+                        moduleNameField.getText(),
+                        sourceCombo.getValue(),
+                        targetName,
+                        parameterDifferenceField.getText(),
+                        tradeDifferenceField.getText(),
+                        minimumDifferentParametersField.getText(),
+                        maximumStrategiesField.getText());
+                if (onSave != null) onSave.run();
+                stage.close();
+            } catch (IllegalArgumentException ex) {
+                Alert alert = new Alert(Alert.AlertType.ERROR);
+                alert.initOwner(stage);
+                alert.setTitle("Ungültige Clustering-Einstellung");
+                alert.setHeaderText("Die Einstellungen konnten nicht gespeichert werden.");
+                alert.setContentText(ex.getMessage());
+                alert.showAndWait();
+            }
+        });
+
+        Region spacer = new Region();
+        HBox.setHgrow(spacer, Priority.ALWAYS);
+        HBox buttons = new HBox(12, spacer, cancel, save);
+        buttons.setAlignment(Pos.CENTER_RIGHT);
+
+        layout.getChildren().addAll(title, explanation, grid, routingHint, new Separator(), buttons);
+        stage.setScene(new Scene(layout));
+        applyTheme(stage, owner);
+        stage.showAndWait();
     }
 
     // ─── Step 1: Strategy Selector & Ranges ─────────────────────────────────────

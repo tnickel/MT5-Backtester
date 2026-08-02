@@ -1440,19 +1440,15 @@ public class ProjectWorkflowEditorView {
             runSingleTask(task);
         });
 
-        Button configBtn = new Button("⚙");
+        Button configBtn = new Button(task.getType() == WorkflowTask.TaskType.DIVERSITY_FILTER
+                ? "⚙ Einstellungen" : "⚙");
         configBtn.setStyle("-fx-background-color: transparent; -fx-text-fill: #ffd740; -fx-padding: 2; -fx-cursor: hand;");
-        configBtn.setTooltip(new Tooltip("Modulname und Task-Einstellungen öffnen"));
+        configBtn.setTooltip(new Tooltip(task.getType() == WorkflowTask.TaskType.DIVERSITY_FILTER
+                ? "Diversitäts-Clustering konfigurieren"
+                : "Modulname und Task-Einstellungen öffnen"));
         configBtn.setOnAction(e -> {
             e.consume();
-            selectTask(task);
-            centerMainTabPane.getSelectionModel().select(fullSettingsTab);
-            Platform.runLater(() -> {
-                if (taskNameField != null) {
-                    taskNameField.requestFocus();
-                    taskNameField.selectAll();
-                }
-            });
+            openTaskSettings(task);
         });
 
         Button deleteBtn = new Button("🗑");
@@ -1471,6 +1467,37 @@ public class ProjectWorkflowEditorView {
         actionsRow.getChildren().addAll(upBtn, downBtn, runSingleBtn, configBtn, deleteBtn);
         card.getChildren().addAll(topRow, subRow, actionsRow);
         return card;
+    }
+
+    private void openTaskSettings(WorkflowTask task) {
+        selectTask(task);
+        centerMainTabPane.getSelectionModel().select(fullSettingsTab);
+
+        if (task.getType() == WorkflowTask.TaskType.DIVERSITY_FILTER) {
+            if (diversitySubTab != null) {
+                fullSettingsSubTabPane.getSelectionModel().select(diversitySubTab);
+            }
+            WorkflowConfigDialogs.showDiversityClusteringDialog(
+                    task,
+                    databankManager.getDatabankNames(),
+                    root.getScene() != null ? root.getScene().getWindow() : null,
+                    () -> {
+                        saveProject();
+                        selectTask(task);
+                        centerMainTabPane.getSelectionModel().select(fullSettingsTab);
+                        if (diversitySubTab != null) {
+                            fullSettingsSubTabPane.getSelectionModel().select(diversitySubTab);
+                        }
+                    });
+            return;
+        }
+
+        Platform.runLater(() -> {
+            if (taskNameField != null) {
+                taskNameField.requestFocus();
+                taskNameField.selectAll();
+            }
+        });
     }
 
     private void selectTask(WorkflowTask task) {

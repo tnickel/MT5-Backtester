@@ -303,7 +303,7 @@ Im Tab **Custom Projects (StrategyQuant)** können Sie komplexe, mehrstufige Tes
     7. *KI-Bewertung*: LLM-gestützte Stabilitätsanalyse via OpenRouter.
     8. *Portfolio Export*: Finale `.set`-Dateien & PDF-Berichte speichern.
   - **Individueller Modulname**: Über das Zahnrad (`⚙`) lässt sich jeder Task frei benennen. Ein Retester kann dadurch beispielsweise `Langzeittest (5-10 Jahre)`, `Validierung (OOS)` oder `Monte-Carlo-Nachtest` heißen; auf der Kachel bleibt der technische Typ immer `Retester`.
-  - **Getrenntes Diversitäts-Clustering**: Ein Clustering-Task arbeitet ausschließlich auf seiner unter **Databank routing** gewählten Quelle und besitzt keine gekoppelten Kurzzeit-/Langzeit-Performancefilter. Sollen sowohl Kurzzeit- als auch Langzeit-Ergebnisse geclustert werden, werden zwei Clustering-Tasks angelegt. Der zweite liest die Ausgabedatabank des Langzeit-Retesters.
+  - **Getrenntes Diversitäts-Clustering**: Das Zahnrad eines Clustering-Tasks öffnet einen eigenen Konfigurationsdialog für Modulname, Quell-/Ziel-Databank, Parameter- und Trade-Differenz, Mindestzahl unterschiedlicher Parameter sowie die maximale Zielanzahl. Der Task arbeitet ausschließlich auf der gewählten Quelle und besitzt keine gekoppelten Kurzzeit-/Langzeit-Performancefilter. Sollen sowohl Kurzzeit- als auch Langzeit-Ergebnisse geclustert werden, werden zwei Clustering-Tasks angelegt. Der zweite liest die Ausgabedatabank des Langzeit-Retesters.
 
 * **Flexible Databank-Architektur (Results, Portfolio & Custom Databanks)**:
   - Jedes Projekttask liest Strategien aus einer Quell-Databank (z.B. `Results`) und schreibt gefilterte/geprüfte Strategien in eine Ziel-Databank (z.B. `data1` oder `Final`).

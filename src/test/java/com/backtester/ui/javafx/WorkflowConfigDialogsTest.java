@@ -1,5 +1,6 @@
 package com.backtester.ui.javafx;
 
+import com.backtester.workflow.WorkflowTask;
 import org.junit.Test;
 
 import static org.junit.Assert.assertEquals;
@@ -25,6 +26,23 @@ public class WorkflowConfigDialogsTest {
         assertInvalidInteger("0");
         assertInvalidInteger("-5");
         assertEquals(50, WorkflowConfigDialogs.parsePositiveInteger("50", "Trades"));
+    }
+
+    @Test
+    public void appliesDedicatedDiversityTaskSettings() {
+        WorkflowTask task = new WorkflowTask("Cluster", WorkflowTask.TaskType.DIVERSITY_FILTER);
+
+        WorkflowConfigDialogs.applyDiversityTaskSettings(
+                task, "Langzeit-Clustering", "Langzeit-Retest", "Langzeit-Cluster",
+                "22,5", "31", "4", "17");
+
+        assertEquals("Langzeit-Clustering", task.getName());
+        assertEquals("Langzeit-Retest", task.getSourceDatabank());
+        assertEquals("Langzeit-Cluster", task.getTargetDatabank());
+        assertEquals(0.225, task.getDiversityParamDiffPct(), 0.0);
+        assertEquals(0.31, task.getDiversityTradeDiffPct(), 0.0);
+        assertEquals(4, task.getDiversityMinDifferentParams());
+        assertEquals(17, task.getDiversityMaxStrategies());
     }
 
     private static void assertInvalidDecimal(String value) {
