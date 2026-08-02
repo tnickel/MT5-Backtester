@@ -91,6 +91,7 @@ public class WorkflowTask {
     private String endDate = "";
     private String retestSymbol = "";
     private String retestPeriod = "";
+    private String optimizerOutputDirectory = "";
     /**
      * UI-level modelling mode. This is deliberately not the raw MT5 model
      * number: MT5 uses 4 for real ticks and 2 for open prices.
@@ -183,6 +184,14 @@ public class WorkflowTask {
 
     public String getRetestPeriod() { return retestPeriod != null ? retestPeriod : ""; }
     public void setRetestPeriod(String retestPeriod) { this.retestPeriod = retestPeriod; }
+
+    public String getOptimizerOutputDirectory() {
+        return optimizerOutputDirectory != null ? optimizerOutputDirectory : "";
+    }
+    public void setOptimizerOutputDirectory(String optimizerOutputDirectory) {
+        this.optimizerOutputDirectory = optimizerOutputDirectory != null
+                ? optimizerOutputDirectory.trim() : "";
+    }
 
     public int getExecutionMode() {
         return executionMode >= MODE_EVERY_TICK && executionMode <= MODE_OPEN_PRICES
@@ -289,6 +298,7 @@ public class WorkflowTask {
         copy.setEndDate(endDate);
         copy.setRetestSymbol(retestSymbol);
         copy.setRetestPeriod(retestPeriod);
+        copy.setOptimizerOutputDirectory(optimizerOutputDirectory);
         copy.setExecutionMode(getExecutionMode());
         copy.setDeleteFailed(deleteFailed);
         copy.diversityParamDiffPct = diversityParamDiffPct;

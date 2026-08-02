@@ -20,6 +20,8 @@ public class OptimizationConfig {
     private int deposit = 10000;
     private String currency = "USD";
     private String leverage = "1:100";
+    /** Optional base directory for per-run optimization artifacts. */
+    private String outputBaseDirectory = "";
 
     // --- Optimization Settings ---
 
@@ -127,6 +129,11 @@ public class OptimizationConfig {
 
     public String getLeverage() { return leverage; }
     public void setLeverage(String leverage) { this.leverage = leverage; }
+
+    public String getOutputBaseDirectory() { return outputBaseDirectory; }
+    public void setOutputBaseDirectory(String outputBaseDirectory) {
+        this.outputBaseDirectory = outputBaseDirectory != null ? outputBaseDirectory.trim() : "";
+    }
 
     public int getOptimizationMode() { return optimizationMode; }
     public void setOptimizationMode(int optimizationMode) { this.optimizationMode = optimizationMode; }

@@ -86,7 +86,7 @@ public class OptimizationRunner {
             // 1. Setup paths
             String timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss"));
             String outputFolderName = optConfig.toDirectoryName() + "_" + timestamp;
-            Path outputDir = Paths.get("backtest_reports", outputFolderName).toAbsolutePath();
+            Path outputDir = resolveOutputDirectory(optConfig, config.getReportsDirectory(), outputFolderName);
             Files.createDirectories(outputDir);
             result.setOutputDirectory(outputDir.toString());
             logMessage("Created output directory: " + outputDir);
@@ -338,6 +338,18 @@ public class OptimizationRunner {
         }
 
         return result;
+    }
+
+    static Path resolveOutputDirectory(OptimizationConfig optConfig, Path defaultBaseDirectory,
+                                       String outputFolderName) {
+        String configuredBase = optConfig != null ? optConfig.getOutputBaseDirectory() : "";
+        Path baseDirectory = configuredBase != null && !configuredBase.isBlank()
+                ? Paths.get(configuredBase.trim())
+                : defaultBaseDirectory;
+        if (baseDirectory == null) {
+            baseDirectory = Paths.get("backtest_reports");
+        }
+        return baseDirectory.toAbsolutePath().normalize().resolve(outputFolderName).normalize();
     }
 
     private void cleanupOldReports(Path mt5Dir, String reportBaseName) {

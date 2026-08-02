@@ -30,8 +30,13 @@ import javafx.scene.layout.*;
 import javafx.scene.paint.Color;
 import javafx.scene.text.Font;
 import javafx.scene.text.FontWeight;
+import javafx.stage.DirectoryChooser;
 import javafx.util.converter.DoubleStringConverter;
 
+import java.io.File;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.time.LocalDate;
 import java.time.Duration;
 import java.util.Locale;
@@ -97,6 +102,9 @@ public class ProjectWorkflowEditorView {
     private ComboBox<String> timeframeCombo;
     private ComboBox<String> symbolCombo;
     private ComboBox<String> execModeCombo;
+    private Label dataSettingsHeading;
+    private HBox optimizerOutputDirectoryRow;
+    private TextField optimizerOutputDirectoryField;
     private CheckBox deleteFailedCheckBox;
     private TableView<FilterCondition> filterConditionsTable;
     private TextField expertField;
@@ -450,9 +458,9 @@ public class ProjectWorkflowEditorView {
         panel.setPadding(new Insets(20));
         panel.setStyle("-fx-background-color: rgba(26, 30, 40, 0.85); -fx-border-color: #2e3545; -fx-border-radius: 6;");
 
-        Label heading = new Label("Backtest Data Settings (Retester)");
-        heading.setFont(Font.font("Segoe UI", FontWeight.BOLD, 15));
-        heading.setTextFill(Color.web("#00e5ff"));
+        dataSettingsHeading = new Label("Backtest Data Settings (Retester)");
+        dataSettingsHeading.setFont(Font.font("Segoe UI", FontWeight.BOLD, 15));
+        dataSettingsHeading.setTextFill(Color.web("#00e5ff"));
 
         GridPane grid = new GridPane();
         grid.setHgap(15);
@@ -522,7 +530,38 @@ public class ProjectWorkflowEditorView {
         });
         grid.add(endDatePicker, 1, 4);
 
-        panel.getChildren().addAll(heading, grid);
+        Label outputDirectoryLabel = new Label("Optimizer-Ausgabeordner:");
+        optimizerOutputDirectoryField = new TextField();
+        optimizerOutputDirectoryField.setPromptText("Ordner für Optimierungs-Reports");
+        optimizerOutputDirectoryField.setPrefColumnCount(38);
+        optimizerOutputDirectoryField.setOnAction(e -> saveOptimizerOutputDirectory());
+        optimizerOutputDirectoryField.focusedProperty().addListener((obs, wasFocused, isFocused) -> {
+            if (wasFocused && !isFocused) saveOptimizerOutputDirectory();
+        });
+        HBox.setHgrow(optimizerOutputDirectoryField, Priority.ALWAYS);
+
+        Button browseOutputDirectoryButton = new Button("Ordner wählen...");
+        browseOutputDirectoryButton.setOnAction(e -> chooseOptimizerOutputDirectory());
+        optimizerOutputDirectoryRow = new HBox(10, optimizerOutputDirectoryField, browseOutputDirectoryButton);
+        optimizerOutputDirectoryRow.setAlignment(Pos.CENTER_LEFT);
+        grid.add(outputDirectoryLabel, 0, 5);
+        grid.add(optimizerOutputDirectoryRow, 1, 5);
+
+        Label outputDirectoryHelp = new Label(
+                "Für jeden Optimizer-Lauf wird darin ein eigener Zeitstempel-Unterordner mit tester.ini, " +
+                "Optimierungs-Report und optionalem Forward-Report angelegt. Die gefundenen Strategien " +
+                "werden zusätzlich in die unter 'Databank routing' gewählte Ziel-Databank geschrieben.");
+        outputDirectoryHelp.setWrapText(true);
+        outputDirectoryHelp.setStyle("-fx-text-fill: #9aa4b5; -fx-font-size: 12px;");
+        outputDirectoryHelp.setMaxWidth(760);
+        grid.add(outputDirectoryHelp, 0, 6, 2, 1);
+
+        outputDirectoryLabel.visibleProperty().bind(optimizerOutputDirectoryRow.visibleProperty());
+        outputDirectoryLabel.managedProperty().bind(optimizerOutputDirectoryRow.managedProperty());
+        outputDirectoryHelp.visibleProperty().bind(optimizerOutputDirectoryRow.visibleProperty());
+        outputDirectoryHelp.managedProperty().bind(optimizerOutputDirectoryRow.managedProperty());
+
+        panel.getChildren().addAll(dataSettingsHeading, grid);
         return panel;
     }
 
@@ -1503,6 +1542,7 @@ public class ProjectWorkflowEditorView {
     private void selectTask(WorkflowTask task) {
         if (this.selectedTask != null && this.selectedTask != task) {
             applySelectedTaskName();
+            saveOptimizerOutputDirectory();
         }
         this.selectedTask = task;
         refreshTaskChain();
@@ -1584,6 +1624,20 @@ public class ProjectWorkflowEditorView {
                 endDatePicker.setValue(endVal);
             }
 
+            boolean optimizerTask = task.getType() == WorkflowTask.TaskType.OPTIMIZER;
+            if (dataSettingsHeading != null) {
+                dataSettingsHeading.setText(optimizerTask
+                        ? "Optimizer Data & Output Settings"
+                        : "Backtest Data Settings (Retester)");
+            }
+            if (optimizerOutputDirectoryRow != null) {
+                optimizerOutputDirectoryRow.setVisible(optimizerTask);
+                optimizerOutputDirectoryRow.setManaged(optimizerTask);
+            }
+            if (optimizerOutputDirectoryField != null) {
+                optimizerOutputDirectoryField.setText(effectiveOptimizerOutputDirectory(task));
+            }
+
             // Dynamically display only sub-tabs relevant to this task type
             fullSettingsSubTabPane.getTabs().clear();
 
@@ -1656,6 +1710,62 @@ public class ProjectWorkflowEditorView {
             return LocalDate.parse(value.trim());
         } catch (RuntimeException ignored) {
             return null;
+        }
+    }
+
+    private String effectiveOptimizerOutputDirectory(WorkflowTask task) {
+        String configured = task != null ? task.getOptimizerOutputDirectory() : "";
+        if (configured != null && !configured.isBlank()) {
+            return configured.trim();
+        }
+        return AppConfig.getInstance().getReportsDirectory().toAbsolutePath().normalize().toString();
+    }
+
+    private void saveOptimizerOutputDirectory() {
+        if (selectedTask == null || selectedTask.getType() != WorkflowTask.TaskType.OPTIMIZER
+                || optimizerOutputDirectoryField == null) return;
+        String requested = optimizerOutputDirectoryField.getText() != null
+                ? optimizerOutputDirectoryField.getText().trim() : "";
+        if (requested.isEmpty()) {
+            requested = AppConfig.getInstance().getReportsDirectory().toAbsolutePath().normalize().toString();
+            optimizerOutputDirectoryField.setText(requested);
+        }
+        if (!requested.equals(selectedTask.getOptimizerOutputDirectory())) {
+            selectedTask.setOptimizerOutputDirectory(requested);
+            saveProject();
+        }
+    }
+
+    private void chooseOptimizerOutputDirectory() {
+        if (selectedTask == null || selectedTask.getType() != WorkflowTask.TaskType.OPTIMIZER) return;
+
+        DirectoryChooser chooser = new DirectoryChooser();
+        chooser.setTitle("Optimizer-Ausgabeordner wählen");
+        Path initialPath;
+        try {
+            initialPath = Paths.get(effectiveOptimizerOutputDirectory(selectedTask)).toAbsolutePath().normalize();
+        } catch (RuntimeException ex) {
+            initialPath = AppConfig.getInstance().getReportsDirectory().toAbsolutePath().normalize();
+        }
+        while (initialPath != null && !Files.isDirectory(initialPath)) {
+            initialPath = initialPath.getParent();
+        }
+        if (initialPath != null) chooser.setInitialDirectory(initialPath.toFile());
+
+        File selectedDirectory = chooser.showDialog(root.getScene() != null ? root.getScene().getWindow() : null);
+        if (selectedDirectory == null) return;
+        String selectedPath = selectedDirectory.toPath().toAbsolutePath().normalize().toString();
+        optimizerOutputDirectoryField.setText(selectedPath);
+        selectedTask.setOptimizerOutputDirectory(selectedPath);
+        saveProject();
+    }
+
+    private Path optimizerOutputBaseDirectory(WorkflowTask task) {
+        try {
+            return Paths.get(effectiveOptimizerOutputDirectory(task)).toAbsolutePath().normalize();
+        } catch (RuntimeException ex) {
+            throw new IllegalArgumentException("Ungültiger Optimizer-Ausgabeordner: "
+                    + effectiveOptimizerOutputDirectory(task), ex);
         }
     }
 
@@ -1814,7 +1924,8 @@ public class ProjectWorkflowEditorView {
                         engine.runStep1();
                         engine.runStep2(
                             msg -> logToConsole("MT5-OPT", msg),
-                            (curr, totPasses) -> updateProgressUI((double) curr / Math.max(1, totPasses), "Optimizer Pass " + curr + " / " + totPasses)
+                            (curr, totPasses) -> updateProgressUI((double) curr / Math.max(1, totPasses), "Optimizer Pass " + curr + " / " + totPasses),
+                            optimizerOutputBaseDirectory(task)
                         );
                         if (engine.getOptResult() != null) {
                             outputPasses = engine.getOptResult().buildCombinedPasses(engine.getForwardMode() > 0, engine.loadScoreWeightsFromDb());
@@ -1962,7 +2073,8 @@ public class ProjectWorkflowEditorView {
                                 engine.runStep1();
                                 engine.runStep2(
                                     msg -> logToConsole("MT5-OPT", msg),
-                                    (curr, totPasses) -> updateProgressUI((double) currentIdx / total, "Optimizer Pass " + curr + " / " + totPasses)
+                                    (curr, totPasses) -> updateProgressUI((double) currentIdx / total, "Optimizer Pass " + curr + " / " + totPasses),
+                                    optimizerOutputBaseDirectory(task)
                                 );
                                 if (engine.getOptResult() != null) {
                                     currentPipelinePasses = engine.getOptResult().buildCombinedPasses(engine.getForwardMode() > 0, engine.loadScoreWeightsFromDb());

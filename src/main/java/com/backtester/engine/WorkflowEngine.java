@@ -563,6 +563,12 @@ public class WorkflowEngine {
     }
 
     public OptimizationResult runStep2(Consumer<String> logCallback, java.util.function.BiConsumer<Integer, Integer> progressCallback) throws Exception {
+        return runStep2(logCallback, progressCallback, null);
+    }
+
+    public OptimizationResult runStep2(Consumer<String> logCallback,
+                                       java.util.function.BiConsumer<Integer, Integer> progressCallback,
+                                       java.nio.file.Path outputBaseDirectory) throws Exception {
         runStep1(); // Ensure step 1 parameters are saved
         requireValidDateRange(fromDate, toDate, "Optimierungszeitraum");
 
@@ -596,6 +602,9 @@ public class WorkflowEngine {
         optConfig.setForwardDate(forwardDate);
         optConfig.setUseLocal(true);
         optConfig.setShutdownTerminal(true);
+        if (outputBaseDirectory != null) {
+            optConfig.setOutputBaseDirectory(outputBaseDirectory.toAbsolutePath().normalize().toString());
+        }
 
         // Precompute total passes from the parameter search space. Exact for
         // the Complete algorithm; the Genetic algorithm decides its own pass

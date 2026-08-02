@@ -1,6 +1,8 @@
 package com.backtester.engine;
 
 import org.junit.Test;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import static org.junit.Assert.*;
 
 public class OptimizationConfigTest {
@@ -23,11 +25,27 @@ public class OptimizationConfigTest {
         config.setOptimizationMode(1); // Complete
         config.setOptimizationCriterion(4); // Recovery Factor max
         config.setForwardMode(2); // 1/3
+        config.setOutputBaseDirectory("  D:\\Optimizer-Ausgabe  ");
         
         assertEquals(1, config.getOptimizationMode());
         assertEquals(4, config.getOptimizationCriterion());
         assertEquals(2, config.getForwardMode());
         assertTrue(config.isForwardEnabled());
+        assertEquals("D:\\Optimizer-Ausgabe", config.getOutputBaseDirectory());
+    }
+
+    @Test
+    public void outputDirectoryUsesConfiguredOrApplicationDefaultBase() {
+        OptimizationConfig config = new OptimizationConfig();
+        Path defaultBase = Paths.get("build", "default-reports").toAbsolutePath().normalize();
+
+        assertEquals(defaultBase.resolve("run-1"),
+                OptimizationRunner.resolveOutputDirectory(config, defaultBase, "run-1"));
+
+        Path configuredBase = Paths.get("build", "custom-optimizer-reports").toAbsolutePath().normalize();
+        config.setOutputBaseDirectory(configuredBase.toString());
+        assertEquals(configuredBase.resolve("run-2"),
+                OptimizationRunner.resolveOutputDirectory(config, defaultBase, "run-2"));
     }
 
     @Test

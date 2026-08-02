@@ -132,6 +132,25 @@ public class CustomProjectTest {
     }
 
     @Test
+    public void optimizerOutputDirectoryIsTaskSpecificAndCopiedForPersistence() {
+        WorkflowTask task = new WorkflowTask("Mein Optimizer", WorkflowTask.TaskType.OPTIMIZER);
+        task.setOptimizerOutputDirectory("  D:\\Strategien\\Optimiert  ");
+
+        WorkflowTask copy = task.copyForPersistence();
+
+        assertEquals("D:\\Strategien\\Optimiert", task.getOptimizerOutputDirectory());
+        assertEquals(task.getOptimizerOutputDirectory(), copy.getOptimizerOutputDirectory());
+    }
+
+    @Test
+    public void legacyOptimizerTaskHasEmptyOutputDirectoryOverride() {
+        WorkflowTask task = new com.google.gson.Gson().fromJson(
+                "{\"name\":\"Legacy Optimizer\",\"type\":\"OPTIMIZER\"}", WorkflowTask.class);
+
+        assertEquals("", task.getOptimizerOutputDirectory());
+    }
+
+    @Test
     public void legacyDiversityTaskUsesSafeDefaults() {
         WorkflowTask task = new com.google.gson.Gson().fromJson(
                 "{\"name\":\"Legacy Cluster\",\"type\":\"DIVERSITY_FILTER\"}", WorkflowTask.class);
