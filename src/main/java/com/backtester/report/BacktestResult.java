@@ -96,13 +96,16 @@ public class BacktestResult {
     public void setWinRate(double winRate) { this.winRate = winRate; }
 
     public double getMaxDrawdown() { return maxDrawdown; }
-    public void setMaxDrawdown(double maxDrawdown) { this.maxDrawdown = maxDrawdown; }
+    public void setMaxDrawdown(double maxDrawdown) {
+        this.maxDrawdown = maxDrawdown;
+        if (this.maxDrawdownPercent == 0) this.maxDrawdownPercent = maxDrawdown;
+    }
 
     public double getMaxDrawdownAbsolute() { return maxDrawdownAbsolute; }
     public void setMaxDrawdownAbsolute(double v) { this.maxDrawdownAbsolute = v; }
 
-    public double getMaxDrawdownPercent() { return maxDrawdownPercent; }
-    public void setMaxDrawdownPercent(double v) { this.maxDrawdownPercent = v; }
+    public double getMaxDrawdownPercent() { return maxDrawdownPercent > 0 ? maxDrawdownPercent : maxDrawdown; }
+    public void setMaxDrawdownPercent(double v) { this.maxDrawdownPercent = v; if (this.maxDrawdown == 0) this.maxDrawdown = v; }
 
     public double getBalanceDrawdown() { return balanceDrawdown; }
     public void setBalanceDrawdown(double balanceDrawdown) { this.balanceDrawdown = balanceDrawdown; }
