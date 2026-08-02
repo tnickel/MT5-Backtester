@@ -115,6 +115,14 @@ public class AppConfig {
         return Boolean.parseBoolean(properties.getProperty(key, String.valueOf(defaultValue)));
     }
 
+    public boolean isSaveEquityHistoryInDatabank() {
+        return getBoolean("databank.saveEquityHistory", true);
+    }
+
+    public void setSaveEquityHistoryInDatabank(boolean save) {
+        set("databank.saveEquityHistory", String.valueOf(save));
+    }
+
     // --- Convenience methods ---
 
     public String getMt5TerminalPath() {

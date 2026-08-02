@@ -154,15 +154,15 @@ public class PdfReportGenerator {
         addTableCell(perfTable, fw != null ? formatDouble(fw.getSharpeRatio()) : "-", TEXT_FONT);
 
         addTableCell(perfTable, "Worst Parameter CV:", BOLD_FONT);
-        double btCv = engine.getWorstCvForPass(passNum, false);
-        double fwCv = engine.getWorstCvForPass(passNum, true);
+        double btCv = engine.getWorstCvForPass(cp, false);
+        double fwCv = engine.getWorstCvForPass(cp, true);
         // NaN = keine Sensitivitätsdaten vorhanden — als "n/a" ausweisen statt
         // wie ein perfektes Ergebnis auszusehen
         addTableCellColored(perfTable, !Double.isNaN(btCv) && btCv > 0 ? String.format(Locale.US, "%.2f %%", btCv) : "n/a", btCv > 60 ? RED_FONT : (Double.isNaN(btCv) ? BOLD_FONT : GREEN_FONT));
         addTableCellColored(perfTable, !Double.isNaN(fwCv) && fwCv > 0 ? String.format(Locale.US, "%.2f %%", fwCv) : "n/a", fwCv > 60 ? RED_FONT : (Double.isNaN(fwCv) ? BOLD_FONT : GREEN_FONT));
 
         addTableCell(perfTable, "KI Stabilität Score:", BOLD_FONT);
-        int kiScore = engine.getKiScoreForPass(passNum);
+        int kiScore = engine.getKiScoreForPass(cp);
         addTableCellColored(perfTable, kiScore >= 0 ? String.valueOf(kiScore) + " / 100" : "-", kiScore >= 70 ? GREEN_FONT : (kiScore >= 50 ? BOLD_FONT : RED_FONT));
         addTableCell(perfTable, "-", TEXT_FONT);
 
@@ -238,7 +238,7 @@ public class PdfReportGenerator {
 
             document.add(kiTable);
 
-            String passKiReview = extractPassKiReport(kiReportText, passNum);
+            String passKiReview = extractPassKiReport(kiReportText, cp);
             Paragraph kiPara = new Paragraph("Detail-Begründung:\n" + passKiReview, TEXT_FONT);
             kiPara.setSpacingAfter(20);
             document.add(kiPara);
@@ -402,7 +402,7 @@ public class PdfReportGenerator {
         addTableHeaderCell(compTable, "BT Max DD");
 
         for (CombinedPass cp : passes) {
-            int kiScore = engine.getKiScoreForPass(cp.getPassNumber());
+            int kiScore = engine.getKiScoreForPass(cp);
             double wScore = kiScore >= 0 ? (engine.getPerformanceWeight() * cp.getScore() + engine.getStabilityWeight() * kiScore) : cp.getScore();
 
             addTableCell(compTable, String.valueOf(cp.getPassNumber()), BOLD_FONT);
@@ -511,12 +511,21 @@ public class PdfReportGenerator {
         return curve;
     }
 
-    private static String extractPassKiReport(String fullReport, int passNum) {
+    private static String extractPassKiReport(String fullReport, CombinedPass pass) {
         if (fullReport == null || fullReport.isEmpty()) {
             return "Keine KI-Bewertung vorhanden.";
         }
-        String searchStr = "Pass " + passNum;
+        int passNum = pass.getPassNumber();
+        String strategyName = pass.getStrategyName();
         String[] lines = fullReport.split("\n");
+        if (strategyName != null && !strategyName.isBlank()) {
+            for (String line : lines) {
+                if (line.contains(strategyName) && line.contains("Pass")) {
+                    return line.trim();
+                }
+            }
+        }
+        String searchStr = "Pass " + passNum;
         for (String line : lines) {
             if (line.contains(searchStr)) {
                 return line.trim();
@@ -531,6 +540,13 @@ public class PdfReportGenerator {
             }
         }
         return "Keine detaillierte KI-Begründung für Pass " + passNum + " gefunden.";
+    }
+
+    /** Backwards-compatible helper for legacy callers and persisted report tests. */
+    private static String extractPassKiReport(String fullReport, int passNum) {
+        Pass pass = new Pass();
+        pass.setPassNumber(passNum);
+        return extractPassKiReport(fullReport, new CombinedPass(pass, null, 0.0, 0.0, ""));
     }
 
     public static class KiTableResult {

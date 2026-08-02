@@ -358,6 +358,9 @@ public class DatabankComparisonDialog {
             stats.ddPct = cp.getLtDd();
             stats.recovery = cp.getLtRecovery();
             stats.pf = cp.getLtPf();
+            if (cp.getLongtermPass() != null) {
+                stats.equityHistory = cp.getLongtermPass().getEquityHistory();
+            }
             LocalDate f = engine.getEffectiveLongtermFromDate();
             LocalDate t = engine.getEffectiveLongtermToDate();
             stats.period = (f != null ? f.toString() : "2019-01-01") + " bis " + (t != null ? t.toString() : LocalDate.now().toString());
@@ -367,6 +370,9 @@ public class DatabankComparisonDialog {
             stats.ddPct = cp.getFwDd();
             stats.recovery = cp.getFwRecovery();
             stats.pf = cp.getFwPf();
+            if (cp.getForwardPass() != null) {
+                stats.equityHistory = cp.getForwardPass().getEquityHistory();
+            }
             LocalDate f = engine.getForwardDate();
             LocalDate t = engine.getToDate();
             stats.period = (f != null ? f.toString() : "2024-06-01") + " bis " + (t != null ? t.toString() : "2025-08-02");
@@ -377,6 +383,9 @@ public class DatabankComparisonDialog {
             stats.ddPct = cp.getBtDd();
             stats.recovery = cp.getBtRecovery();
             stats.pf = cp.getBtPf();
+            if (cp.getBacktestPass() != null) {
+                stats.equityHistory = cp.getBacktestPass().getEquityHistory();
+            }
             LocalDate f = engine.getFromDate();
             LocalDate t = engine.getForwardMode() > 0 && engine.getForwardDate() != null
                     ? engine.getForwardDate() : engine.getToDate();
@@ -414,46 +423,21 @@ public class DatabankComparisonDialog {
         double netProfit = Double.isNaN(stats.profit) ? 0 : stats.profit;
         double maxDdPct = Double.isNaN(stats.ddPct) ? 5.0 : Math.max(0.5, stats.ddPct);
 
-        // Seed random generator deterministically based on pass/strategy metrics for 100% reproducible curves
-        long seed = stats.period.hashCode() ^ Double.doubleToLongBits(netProfit) ^ (long) totalTrades;
-        Random rng = new Random(seed);
-
-        int numPoints = Math.min(250, Math.max(40, totalTrades));
-        double[] rawEquity = new double[numPoints + 1];
-        rawEquity[0] = startBalance;
-
-        double current = startBalance;
-        double targetEnd = startBalance + netProfit;
-
-        double driftPerStep = netProfit / numPoints;
-        double volatility = (startBalance + Math.abs(netProfit)) * (maxDdPct / 100.0) * 0.25;
-
-        for (int i = 1; i <= numPoints; i++) {
-            // Trend drift + trade win/loss noise
-            double noise = rng.nextGaussian() * volatility;
-            current += driftPerStep + noise;
-
-            // Inject realistic drawdown pullbacks (equity waves)
-            double progress = (double) i / numPoints;
-            if ((progress > 0.18 && progress < 0.26) || (progress > 0.44 && progress < 0.54) || (progress > 0.74 && progress < 0.82)) {
-                current -= (maxDdPct / 100.0) * startBalance * 0.18 * Math.abs(rng.nextGaussian());
+        if (stats.equityHistory != null && !stats.equityHistory.isEmpty()) {
+            for (int i = 0; i < stats.equityHistory.size(); i++) {
+                double[] pt = stats.equityHistory.get(i);
+                int tradeIdx = pt.length > 0 ? (int) pt[0] : i;
+                double val = pt.length > 2 ? pt[2] : (pt.length > 1 ? pt[1] : startBalance);
+                series.getData().add(new XYChart.Data<>(tradeIdx, val));
             }
-
-            rawEquity[i] = current;
-        }
-
-        // Adjust endpoints and scale to guarantee exact start, net profit, and curve fidelity
-        double endRaw = rawEquity[numPoints];
-        double totalDelta = endRaw - startBalance;
-        double correctionScale = (totalDelta != 0 && !Double.isNaN(totalDelta)) ? netProfit / totalDelta : 1.0;
-
-        for (int i = 0; i <= numPoints; i++) {
-            int tradeIdx = (int) Math.round(((double) i / numPoints) * totalTrades);
-            double scaledVal = startBalance + (rawEquity[i] - startBalance) * correctionScale;
-            if (i == 0) scaledVal = startBalance;
-            if (i == numPoints) scaledVal = targetEnd;
-
-            series.getData().add(new XYChart.Data<>(tradeIdx, scaledVal));
+        } else {
+            int numPoints = Math.min(250, Math.max(40, totalTrades));
+            double stepProfit = netProfit / numPoints;
+            for (int i = 0; i <= numPoints; i++) {
+                int tradeIdx = (int) Math.round(((double) i / numPoints) * totalTrades);
+                double val = startBalance + stepProfit * i;
+                series.getData().add(new XYChart.Data<>(tradeIdx, val));
+            }
         }
 
         chart.getData().add(series);
@@ -515,5 +499,6 @@ public class DatabankComparisonDialog {
         public double recovery;
         public double pf;
         public String period = "";
+        public List<double[]> equityHistory;
     }
 }

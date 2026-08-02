@@ -99,6 +99,24 @@ public class DatabankManagerTest {
     }
 
     @Test
+    public void databankSnapshotsDeepCopyEquityHistoryArrays() {
+        DatabankManager manager = new DatabankManager();
+        CombinedPass original = pass(1, 100.0);
+        double[] sourcePoint = new double[]{1.0, 10_000.0, 10_000.0};
+        original.getBacktestPass().setEquityHistory(List.of(sourcePoint));
+        manager.setDatabankContent("Results", List.of(original));
+
+        sourcePoint[1] = -1.0;
+        List<CombinedPass> snapshot = manager.getDatabank("Results");
+        snapshot.get(0).getBacktestPass().getEquityHistory().get(0)[1] = 99_999.0;
+
+        assertEquals(10_000.0,
+                manager.getDatabank("Results").get(0).getBacktestPass()
+                        .getEquityHistory().get(0)[1],
+                0.0);
+    }
+
+    @Test
     public void separateTargetAndReturnedOutputAreObjectIsolated() {
         DatabankManager manager = new DatabankManager();
         manager.setDatabankContent("Results", List.of(pass(1, 100.0)));

@@ -21,6 +21,7 @@ import javafx.stage.Window;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 
@@ -33,14 +34,22 @@ public class StrategyDetailsModalDialog {
     private static final Logger log = LoggerFactory.getLogger(StrategyDetailsModalDialog.class);
 
     public static void show(CombinedPass pass, Window owner) {
-        show(pass, owner, 0, 0L);
+        show(pass, null, null, owner, 0, 0L);
     }
 
     public static void show(CombinedPass pass, Window owner, int selectTab) {
-        show(pass, owner, selectTab, 0L);
+        show(pass, null, null, owner, selectTab, 0L);
     }
 
     public static void show(CombinedPass pass, Window owner, int selectTab, long sensitivityRunTimestamp) {
+        show(pass, null, null, owner, selectTab, sensitivityRunTimestamp);
+    }
+
+    public static void show(CombinedPass pass, String dbName, com.backtester.workflow.CustomProject project, Window owner, int selectTab) {
+        show(pass, dbName, project, owner, selectTab, 0L);
+    }
+
+    public static void show(CombinedPass pass, String dbName, com.backtester.workflow.CustomProject project, Window owner, int selectTab, long sensitivityRunTimestamp) {
         if (pass == null) return;
         Stage stage = new Stage();
         stage.initModality(Modality.APPLICATION_MODAL);
@@ -71,7 +80,7 @@ public class StrategyDetailsModalDialog {
 
         Button runBtBtn = new Button("▶ Einzel-Backtest im MetaTrader (Terminal bleibt offen)");
         runBtBtn.setStyle("-fx-background-color: #00bcd4; -fx-text-fill: white; -fx-font-weight: bold; -fx-cursor: hand;");
-        runBtBtn.setOnAction(e -> SingleBacktestHelper.runSingleBacktestInMetaTrader(pass, stage));
+        runBtBtn.setOnAction(e -> SingleBacktestHelper.runSingleBacktestInMetaTrader(pass, dbName, project, stage));
 
         Button closeBtn = new Button("Schließen");
         closeBtn.getStyleClass().add("button-cancel");
@@ -224,38 +233,54 @@ public class StrategyDetailsModalDialog {
         yAxis.setTickLabelFill(Color.web("#7e889a"));
 
         LineChart<Number, Number> chart = new LineChart<>(xAxis, yAxis);
-        chart.setTitle("Equity Curve Progression");
         chart.setCreateSymbols(false);
         chart.setLegendVisible(true);
 
         XYChart.Series<Number, Number> equitySeries = new XYChart.Series<>();
-        equitySeries.setName("Equity ($)");
 
-        double startBalance = 10000.0;
-        int totalTrades = Math.max(1, pass.getBtTrades());
-        double netProfit = Double.isNaN(pass.getBtProfit()) ? 0 : pass.getBtProfit();
-        double maxDdPct = Double.isNaN(pass.getBtDd()) ? 5.0 : Math.max(1.0, pass.getBtDd());
+        List<double[]> history = null;
+        if (pass.getLongtermPass() != null && pass.getLongtermPass().getEquityHistory() != null && !pass.getLongtermPass().getEquityHistory().isEmpty()) {
+            history = pass.getLongtermPass().getEquityHistory();
+        } else if (pass.getForwardPass() != null && pass.getForwardPass().getEquityHistory() != null && !pass.getForwardPass().getEquityHistory().isEmpty()) {
+            history = pass.getForwardPass().getEquityHistory();
+        } else if (pass.getBacktestPass() != null && pass.getBacktestPass().getEquityHistory() != null && !pass.getBacktestPass().getEquityHistory().isEmpty()) {
+            history = pass.getBacktestPass().getEquityHistory();
+        }
 
-        equitySeries.getData().add(new XYChart.Data<>(0, startBalance));
-
-        // Generate equity curve points
-        double stepProfit = netProfit / totalTrades;
-        double currentEquity = startBalance;
-        double ddDrop = (startBalance * (maxDdPct / 100.0));
-
-        for (int i = 1; i <= totalTrades; i++) {
-            currentEquity += stepProfit;
-            // Simulate realistic equity drawdown dip around midpoint
-            if (i == totalTrades / 2) {
-                currentEquity -= ddDrop;
+        if (history != null && !history.isEmpty()) {
+            chart.setTitle("Echte Trade-Equity Kurve (" + history.size() + " Einzel-Trades)");
+            equitySeries.setName("Reale Equity ($)");
+            for (double[] pt : history) {
+                if (pt != null && pt.length >= 2) {
+                    equitySeries.getData().add(new XYChart.Data<>(pt[0], pt[1]));
+                }
             }
-            equitySeries.getData().add(new XYChart.Data<>(i, currentEquity));
+        } else {
+            chart.setTitle("Synthetische Verlaufsvorschau (Reale Trade-Historie ausstehend)");
+            equitySeries.setName("Equity ($)");
+
+            double startBalance = 10000.0;
+            int totalTrades = Math.max(1, pass.getBtTrades());
+            double netProfit = Double.isNaN(pass.getBtProfit()) ? 0 : pass.getBtProfit();
+
+            equitySeries.getData().add(new XYChart.Data<>(0, startBalance));
+            double stepProfit = netProfit / totalTrades;
+            double currentEquity = startBalance;
+            for (int i = 1; i <= totalTrades; i++) {
+                currentEquity += stepProfit;
+                equitySeries.getData().add(new XYChart.Data<>(i, currentEquity));
+            }
+
+            Label infoNote = new Label("ℹ️ Hinweis: Dies ist ein Batch-Optimizer Pass. Batch-Optimierungen in MT5 erfassen noch keine Trade-für-Trade Kurven. Klicke oben auf '▶ Einzel-Backtest im MetaTrader' oder führe den Retest-Schritt aus, um die exakten realen Einzel-Trades zu generieren.");
+            infoNote.setWrapText(true);
+            infoNote.setStyle("-fx-text-fill: #00e5ff; -fx-background-color: rgba(0, 229, 255, 0.1); -fx-padding: 8; -fx-border-color: #00e5ff; -fx-border-radius: 4; -fx-background-radius: 4; -fx-font-size: 11px;");
+            panel.getChildren().add(infoNote);
         }
 
         chart.getData().add(equitySeries);
         VBox.setVgrow(chart, Priority.ALWAYS);
 
-        panel.getChildren().add(chart);
+        panel.getChildren().add(0, chart);
         return panel;
     }
 

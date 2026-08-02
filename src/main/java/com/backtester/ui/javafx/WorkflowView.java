@@ -1035,7 +1035,7 @@ public class WorkflowView {
         TableColumn<CombinedPass, String> btCvCol = new TableColumn<>("Worst BT CV");
         btCvCol.setCellValueFactory(cellData -> {
             CombinedPass cp = cellData.getValue();
-            double cv = engine.getWorstCvForPass(cp.getPassNumber(), false);
+            double cv = engine.getWorstCvForPass(cp, false);
             return new javafx.beans.property.SimpleStringProperty(Double.isNaN(cv) || cv == 0 ? "-" : String.format(Locale.US, "%.2f %%", cv));
         });
         btCvCol.setPrefWidth(110);
@@ -1044,7 +1044,7 @@ public class WorkflowView {
         TableColumn<CombinedPass, String> fwCvCol = new TableColumn<>("Worst FW CV");
         fwCvCol.setCellValueFactory(cellData -> {
             CombinedPass cp = cellData.getValue();
-            double cv = engine.getWorstCvForPass(cp.getPassNumber(), true);
+            double cv = engine.getWorstCvForPass(cp, true);
             return new javafx.beans.property.SimpleStringProperty(Double.isNaN(cv) || cv == 0 ? "-" : String.format(Locale.US, "%.2f %%", cv));
         });
         fwCvCol.setPrefWidth(110);
@@ -1053,7 +1053,7 @@ public class WorkflowView {
         TableColumn<CombinedPass, String> kiRatingCol = new TableColumn<>("KI Stabilität");
         kiRatingCol.setCellValueFactory(cellData -> {
             CombinedPass cp = cellData.getValue();
-            int score = engine.getKiScoreForPass(cp.getPassNumber());
+            int score = engine.getKiScoreForPass(cp);
             return new javafx.beans.property.SimpleStringProperty(score < 0 ? "-" : String.valueOf(score) + " / 100");
         });
         kiRatingCol.setPrefWidth(110);

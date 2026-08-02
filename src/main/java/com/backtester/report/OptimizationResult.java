@@ -23,6 +23,22 @@ public class OptimizationResult {
         private double customCriterion;
         private double balance;
         private Map<String, String> parameterValues = new LinkedHashMap<>();
+        private List<double[]> equityHistory = new ArrayList<>();
+
+        public List<double[]> getEquityHistory() { return equityHistory; }
+        public void setEquityHistory(List<double[]> equityHistory) {
+            this.equityHistory = deepCopyEquityHistory(equityHistory);
+        }
+
+        private static List<double[]> deepCopyEquityHistory(List<double[]> source) {
+            List<double[]> copy = new ArrayList<>();
+            if (source != null) {
+                for (double[] point : source) {
+                    copy.add(point != null ? point.clone() : null);
+                }
+            }
+            return copy;
+        }
 
         public int getPassNumber() { return passNumber; }
         public void setPassNumber(int passNumber) { this.passNumber = passNumber; }
@@ -80,6 +96,7 @@ public class OptimizationResult {
             copy.setBalance(balance);
             copy.setParameterValues(parameterValues != null
                     ? new LinkedHashMap<>(parameterValues) : new LinkedHashMap<>());
+            copy.setEquityHistory(equityHistory);
             return copy;
         }
     }
@@ -385,7 +402,9 @@ public class OptimizationResult {
             StringBuilder debug = new StringBuilder();
             double score       = computeScore(bt, fw, consistency, passes, forwardPasses,
                                               fwTradesThreshold, years, weights, debug);
-            combined.add(new CombinedPass(bt, fw, score, consistency, debug.toString()));
+            CombinedPass cp = new CombinedPass(bt, fw, score, consistency, debug.toString());
+            cp.setSymbol(this.symbol);
+            combined.add(cp);
         }
         return combined;
     }

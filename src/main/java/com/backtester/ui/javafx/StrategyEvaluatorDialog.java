@@ -1687,9 +1687,7 @@ public class StrategyEvaluatorDialog extends Stage {
 
         double current = startBalance;
         for (double trade : tradeOutputs) {
-            // Add some minor random noise to make it look organic
-            double noise = (rand.nextDouble() - 0.5) * 0.1 * (avgWin + avgLoss);
-            current += trade + noise;
+            current += trade;
             curve.add(current);
         }
         

@@ -38,76 +38,78 @@ public class IniGenerator {
         Path parent = iniPath.toAbsolutePath().getParent();
         if (parent != null) Files.createDirectories(parent);
 
-        try (Writer writer = Files.newBufferedWriter(iniPath, StandardCharsets.UTF_8)) {
-            writer.write("[Tester]\r\n");
+        StringBuilder iniContent = new StringBuilder();
+        iniContent.append("[Tester]\r\n");
 
-            if (AppConfig.getInstance().isMt4(config.getExpert())) {
-                String expertName = config.getExpert();
-                String expertsMarker = "mql4\\experts\\";
-                int markerIdx = expertName.toLowerCase().indexOf(expertsMarker);
-                if (markerIdx != -1) {
-                    expertName = expertName.substring(markerIdx + expertsMarker.length());
-                }
-                expertName = expertName.replace('/', '\\').trim();
-                if (expertName.toLowerCase().endsWith(".ex4") || expertName.toLowerCase().endsWith(".mq4")) {
-                    expertName = expertName.substring(0, expertName.length() - 4).trim();
-                }
-                writer.write("TestExpert=" + expertName + "\r\n");
-                if (config.getExpertParameters() != null && !config.getExpertParameters().isEmpty()) {
-                    writer.write("TestExpertParameters=" + config.getExpertParameters() + "\r\n");
-                }
-                writer.write("TestSymbol=" + config.getSymbol() + "\r\n");
-                writer.write("TestPeriod=" + config.getPeriod() + "\r\n");
-
-                // Map MT5 tick models to MT4 models (0=Every tick, 1=Control points, 2=Open price only)
-                int mt4Model = 0;
-                if (config.getModel() == 2) {
-                    mt4Model = 2; // Open price only
-                } else if (config.getModel() == 1) {
-                    mt4Model = 1; // Control points (corresponds to 1 min OHLC)
-                } else {
-                    mt4Model = 0; // Every tick / real ticks
-                }
-                writer.write("TestModel=" + mt4Model + "\r\n");
-                writer.write("TestDateEnable=true\r\n");
-                writer.write("TestFromDate=" + config.getFromDate().format(MT5_DATE_FORMAT) + "\r\n");
-                writer.write("TestToDate=" + config.getToDate().format(MT5_DATE_FORMAT) + "\r\n");
-                writer.write("TestOptimization=" + (config.getOptimization() > 0 ? "true" : "false") + "\r\n");
-                writer.write("TestReport=" + reportPath + "\r\n");
-                writer.write("TestReplaceReport=" + (config.isReplaceReport() ? "true" : "false") + "\r\n");
-                writer.write("TestShutdownTerminal=" + (config.isShutdownTerminal() ? "true" : "false") + "\r\n");
-                writer.write("TestVisualEnable=" + (config.isVisualMode() ? "true" : "false") + "\r\n");
-            } else {
-                writer.write("Expert=" + config.getExpert() + "\r\n");
-                if (config.getExpertParameters() != null && !config.getExpertParameters().isEmpty()) {
-                    writer.write("ExpertParameters=" + config.getExpertParameters() + "\r\n");
-                }
-                writer.write("Symbol=" + config.getSymbol() + "\r\n");
-                writer.write("Period=" + config.getPeriod() + "\r\n");
-                writer.write("Model=" + config.getModel() + "\r\n");
-                writer.write("ExecutionMode=" + config.getExecutionMode() + "\r\n");
-                writer.write("UseDate=1\r\n");
-                writer.write("FromDate=" + config.getFromDate().format(MT5_DATE_FORMAT) + "\r\n");
-                writer.write("ToDate=" + config.getToDate().format(MT5_DATE_FORMAT) + "\r\n");
-                writer.write("Deposit=" + config.getDeposit() + "\r\n");
-                writer.write("Currency=" + config.getCurrency() + "\r\n");
-                writer.write("Leverage=" + config.getLeverage() + "\r\n");
-                writer.write("Optimization=" + config.getOptimization() + "\r\n");
-                writer.write("Report=" + reportPath + "\r\n");
-                writer.write("ReplaceReport=" + (config.isReplaceReport() ? "1" : "0") + "\r\n");
-                writer.write("ShutdownTerminal=" + (config.isShutdownTerminal() ? "1" : "0") + "\r\n");
+        if (AppConfig.getInstance().isMt4(config.getExpert())) {
+            String expertName = config.getExpert();
+            String expertsMarker = "mql4\\experts\\";
+            int markerIdx = expertName.toLowerCase().indexOf(expertsMarker);
+            if (markerIdx != -1) {
+                expertName = expertName.substring(markerIdx + expertsMarker.length());
             }
-            
-            // Append Experts section to enable DLL imports programmatically
-            writer.write("\r\n[Experts]\r\n");
-            writer.write("AllowDllImport=1\r\n");
-            writer.write("Enabled=1\r\n");
-            writer.write("ExpertsEnable=true\r\n");
-            writer.write("ExpertsDllImport=true\r\n");
-            writer.write("ExpertsTrades=true\r\n");
+            expertName = expertName.replace('/', '\\').trim();
+            if (expertName.toLowerCase().endsWith(".ex4") || expertName.toLowerCase().endsWith(".mq4")) {
+                expertName = expertName.substring(0, expertName.length() - 4).trim();
+            }
+            iniContent.append("TestExpert=").append(expertName).append("\r\n");
+            if (config.getExpertParameters() != null && !config.getExpertParameters().isEmpty()) {
+                iniContent.append("TestExpertParameters=").append(config.getExpertParameters()).append("\r\n");
+            }
+            iniContent.append("TestSymbol=").append(config.getSymbol()).append("\r\n");
+            iniContent.append("TestPeriod=").append(config.getPeriod()).append("\r\n");
+
+            int mt4Model = 0;
+            if (config.getModel() == 2) {
+                mt4Model = 2;
+            } else if (config.getModel() == 1) {
+                mt4Model = 1;
+            } else {
+                mt4Model = 0;
+            }
+            iniContent.append("TestModel=").append(mt4Model).append("\r\n");
+            iniContent.append("TestDateEnable=true\r\n");
+            iniContent.append("TestFromDate=").append(config.getFromDate().format(MT5_DATE_FORMAT)).append("\r\n");
+            iniContent.append("TestToDate=").append(config.getToDate().format(MT5_DATE_FORMAT)).append("\r\n");
+            iniContent.append("TestOptimization=").append(config.getOptimization() > 0 ? "true" : "false").append("\r\n");
+            iniContent.append("TestReport=").append(reportPath).append("\r\n");
+            iniContent.append("TestReplaceReport=").append(config.isReplaceReport() ? "true" : "false").append("\r\n");
+            iniContent.append("TestShutdownTerminal=").append(config.isShutdownTerminal() ? "true" : "false").append("\r\n");
+            iniContent.append("TestVisualEnable=").append(config.isVisualMode() ? "true" : "false").append("\r\n");
+        } else {
+            iniContent.append("Expert=").append(config.getExpert()).append("\r\n");
+            if (config.getExpertParameters() != null && !config.getExpertParameters().isEmpty()) {
+                iniContent.append("ExpertParameters=").append(config.getExpertParameters()).append("\r\n");
+            }
+            iniContent.append("Symbol=").append(config.getSymbol()).append("\r\n");
+            iniContent.append("Period=").append(config.getPeriod()).append("\r\n");
+            iniContent.append("Model=").append(config.getModel()).append("\r\n");
+            iniContent.append("ExecutionMode=").append(config.getExecutionMode()).append("\r\n");
+            iniContent.append("UseDate=1\r\n");
+            iniContent.append("FromDate=").append(config.getFromDate().format(MT5_DATE_FORMAT)).append("\r\n");
+            iniContent.append("ToDate=").append(config.getToDate().format(MT5_DATE_FORMAT)).append("\r\n");
+            iniContent.append("Deposit=").append(config.getDeposit()).append("\r\n");
+            iniContent.append("Currency=").append(config.getCurrency()).append("\r\n");
+            iniContent.append("Leverage=").append(config.getLeverage()).append("\r\n");
+            iniContent.append("Optimization=").append(config.getOptimization()).append("\r\n");
+            iniContent.append("Report=").append(reportPath).append("\r\n");
+            iniContent.append("ReplaceReport=").append(config.isReplaceReport() ? "1" : "0").append("\r\n");
+            iniContent.append("ShutdownTerminal=").append(config.isShutdownTerminal() ? "1" : "0").append("\r\n");
         }
 
-        log.info("Generated tester.ini at: {}", iniPath);
+        iniContent.append("\r\n[Experts]\r\n");
+        iniContent.append("AllowDllImport=1\r\n");
+        iniContent.append("Enabled=1\r\n");
+        iniContent.append("ExpertsEnable=true\r\n");
+        iniContent.append("ExpertsDllImport=true\r\n");
+        iniContent.append("ExpertsTrades=true\r\n");
+
+        String contentStr = iniContent.toString();
+        try (Writer writer = Files.newBufferedWriter(iniPath, StandardCharsets.UTF_8)) {
+            writer.write(contentStr);
+        }
+
+        log.info("Generated tester.ini at: {}\n--- INI CONTENT SENT TO METATRADER ---\n{}\n-----------------------------------", iniPath, contentStr);
         return iniPath;
     }
 
@@ -182,7 +184,7 @@ public class IniGenerator {
                 writer.write("Optimization=" + config.getOptimizationMode() + "\r\n");
                 writer.write("OptimizationCriterion=" + config.getOptimizationCriterion() + "\r\n");
                 writer.write("ForwardMode=" + config.getForwardMode() + "\r\n");
-                if (config.getForwardMode() == 4 && config.getForwardDate() != null) {
+                if (config.getForwardMode() > 0 && config.getForwardDate() != null) {
                     writer.write("ForwardDate=" + config.getForwardDate().format(MT5_DATE_FORMAT) + "\r\n");
                 }
                 

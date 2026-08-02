@@ -1509,7 +1509,7 @@ public class DatabaseManager {
         return list;
     }
 
-    private static com.google.gson.Gson createCustomProjectGson() {
+    public static com.google.gson.Gson createCustomProjectGson() {
         return new com.google.gson.GsonBuilder()
                 // MT5 reports may legitimately contain missing/undefined metrics.
                 // Gson otherwise throws and silently prevents the whole project

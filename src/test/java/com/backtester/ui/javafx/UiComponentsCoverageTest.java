@@ -4,6 +4,7 @@ import com.backtester.report.OptimizationResult.CombinedPass;
 import com.backtester.report.OptimizationResult.Pass;
 import com.backtester.report.BacktestResult;
 import javafx.application.Platform;
+import javafx.scene.control.DatePicker;
 import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.VBox;
 import org.junit.BeforeClass;
@@ -12,8 +13,10 @@ import static org.junit.Assert.*;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.time.LocalDate;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 public class UiComponentsCoverageTest {
 
@@ -86,6 +89,39 @@ public class UiComponentsCoverageTest {
             view.log("MT5", "Test message mt5");
             view.logMessage("An error occurred");
             view.clearLog();
+        });
+    }
+
+    @Test
+    public void datePickerCommitDoesNotRecursivelyFireForEqualParsedValue() {
+        runAndWait(() -> {
+            try {
+                java.lang.reflect.Method commit = ProjectWorkflowEditorView.class
+                        .getDeclaredMethod("commitDatePicker", DatePicker.class);
+                commit.setAccessible(true);
+
+                LocalDate oldDate = LocalDate.of(2026, 1, 1);
+                LocalDate newDate = LocalDate.of(2026, 8, 3);
+                DatePicker picker = new DatePicker(oldDate);
+                AtomicInteger changes = new AtomicInteger();
+                picker.valueProperty().addListener((obs, oldValue, newValue) -> {
+                    changes.incrementAndGet();
+                    try {
+                        commit.invoke(null, picker);
+                    } catch (ReflectiveOperationException ex) {
+                        throw new RuntimeException(ex);
+                    }
+                });
+                picker.getEditor().setText(picker.getConverter().toString(newDate));
+
+                commit.invoke(null, picker);
+                commit.invoke(null, picker);
+
+                assertEquals(newDate, picker.getValue());
+                assertEquals("Only the actual date change may fire", 1, changes.get());
+            } catch (ReflectiveOperationException ex) {
+                throw new RuntimeException(ex);
+            }
         });
     }
 

@@ -853,6 +853,9 @@ public class WorkflowEngine {
                     ltPass.setSharpeRatio(btRes.getSharpeRatio());
                     ltPass.setExpectedPayoff(btRes.getExpectedPayoff());
                     ltPass.setParameterValues(new LinkedHashMap<>(cp.getBacktestPass().getParameterValues()));
+                    if (config.isSaveEquityHistoryInDatabank() && btRes.getEquityHistory() != null && !btRes.getEquityHistory().isEmpty()) {
+                        ltPass.setEquityHistory(new ArrayList<>(btRes.getEquityHistory()));
+                    }
                     cp.setLongtermPass(ltPass);
                     successfulCandidates.add(cp);
                 } else if (logCallback != null) {
@@ -1063,53 +1066,91 @@ public class WorkflowEngine {
             throw new IllegalStateException("Kein zugehöriger Robustness-Lauf vorhanden. Bitte führe zuerst den passenden Robustness-Task aus.");
         }
 
-        List<Integer> activePasses = new ArrayList<>();
+        Map<Integer, Integer> passNumberCounts = new HashMap<>();
+        Set<Integer> reservedAnalysisIds = new HashSet<>();
         for (SensitivityResult sr : sensitivityResults) {
             if (sr.getOriginalPass() != null) {
-                activePasses.add(sr.getOriginalPass().getPassNumber());
+                int passNumber = sr.getOriginalPass().getPassNumber();
+                passNumberCounts.merge(passNumber, 1, Integer::sum);
+                if (passNumber >= 0) reservedAnalysisIds.add(passNumber);
             }
         }
 
         savePreferences(); // Save openrouter credentials if any
 
-        // Build performance data map from selected diverse passes for the LLM
-        Map<Integer, LlmAnalysisService.PassPerformance> performanceData = new HashMap<>();
+        // Use a dedicated analysis id because pass numbers are only unique
+        // inside one MT5 optimization and may collide in merged databanks.
+        List<LlmAnalysisService.AnalysisCandidate> analysisCandidates = new ArrayList<>();
+        Map<Integer, SensitivityResult> sensitivityByAnalysisId = new LinkedHashMap<>();
+        int nextGeneratedId = 1;
         for (SensitivityResult sr : sensitivityResults) {
             if (sr.getOriginalPass() != null) {
-                performanceData.put(sr.getOriginalPass().getPassNumber(),
-                        new LlmAnalysisService.PassPerformance(sr.getOriginalPass()));
+                CombinedPass pass = sr.getOriginalPass();
+                int passNumber = pass.getPassNumber();
+                int analysisId;
+                if (passNumber >= 0 && passNumberCounts.getOrDefault(passNumber, 0) == 1) {
+                    analysisId = passNumber;
+                } else {
+                    while (reservedAnalysisIds.contains(nextGeneratedId)
+                            || sensitivityByAnalysisId.containsKey(nextGeneratedId)) {
+                        nextGeneratedId++;
+                    }
+                    analysisId = nextGeneratedId++;
+                }
+                sensitivityByAnalysisId.put(analysisId, sr);
+                analysisCandidates.add(new LlmAnalysisService.AnalysisCandidate(
+                        analysisId,
+                        passNumber,
+                        pass.getStrategyName(),
+                        new LlmAnalysisService.PassPerformance(pass)));
+                sr.setKiResult("");
             }
         }
 
         LlmAnalysisService llmService = new LlmAnalysisService();
-        kiReportText = llmService.analyzeStrategies(
-                activePasses, expert, symbol, performanceData, sensitivityRunTimestamp);
+        kiReportText = llmService.analyzeCandidates(
+                analysisCandidates, expert, symbol, sensitivityRunTimestamp);
 
         if (kiReportText.startsWith("ERROR")) {
             throw new RuntimeException(kiReportText);
         }
 
-        // Save report to database
-        long ts = System.currentTimeMillis();
-        DatabaseManager.getInstance().saveKiReport(ts, expert, symbol, period, kiReportText);
-
         // Parse stability scores from LLM response
         try {
             java.util.regex.Pattern pattern = java.util.regex.Pattern.compile("STABILITY_SCORE\\|(\\d+)\\|(\\d+)");
             java.util.regex.Matcher matcher = pattern.matcher(kiReportText);
+            Set<Integer> scoredAnalysisIds = new HashSet<>();
             while (matcher.find()) {
-                int passNum = Integer.parseInt(matcher.group(1));
+                int analysisId = Integer.parseInt(matcher.group(1));
                 int score = Math.max(0, Math.min(100, Integer.parseInt(matcher.group(2))));
-                for (SensitivityResult sr : sensitivityResults) {
-                    if (sr != null && sr.getOriginalPass() != null
-                            && sr.getOriginalPass().getPassNumber() == passNum) {
-                        sr.setKiResult(String.valueOf(score));
-                    }
+                SensitivityResult target = sensitivityByAnalysisId.get(analysisId);
+                if (target != null) {
+                    target.setKiResult(String.valueOf(score));
+                    scoredAnalysisIds.add(analysisId);
                 }
             }
+            if (scoredAnalysisIds.size() != sensitivityByAnalysisId.size()) {
+                List<String> missing = new ArrayList<>();
+                for (Map.Entry<Integer, SensitivityResult> entry : sensitivityByAnalysisId.entrySet()) {
+                    if (!scoredAnalysisIds.contains(entry.getKey())) {
+                        CombinedPass pass = entry.getValue().getOriginalPass();
+                        missing.add(pass.getStrategyName() + " (Pass " + pass.getPassNumber() + ")");
+                    }
+                }
+                throw new IllegalStateException("Die KI-Antwort enthält nicht für jede Strategie einen eindeutigen Score. Fehlend: "
+                        + String.join(", ", missing));
+            }
         } catch (Exception parseEx) {
-            log.warn("Failed to parse LLM scores in Step 5: " + parseEx.getMessage());
+            if (parseEx instanceof IllegalStateException illegalStateException) {
+                throw illegalStateException;
+            }
+            throw new IllegalStateException("KI-Scores konnten nicht eindeutig zugeordnet werden: "
+                    + parseEx.getMessage(), parseEx);
         }
+
+        // Persist only complete, unambiguously assigned reports.
+        long ts = System.currentTimeMillis();
+        DatabaseManager.getInstance().saveKiReport(ts, expert, symbol, period, kiReportText);
 
         this.lastActiveStep = Math.max(this.lastActiveStep, 5);
         saveState();
@@ -1137,6 +1178,16 @@ public class WorkflowEngine {
 
     /** Selects final candidates without exporting them, allowing OOS validation to run first. */
     public List<CombinedPass> selectFinalPasses(List<CombinedPass> inputPasses) {
+        return selectFinalPasses(inputPasses, -1L);
+    }
+
+    /**
+     * Selects candidates using KI scores from one exact robustness run.
+     * A non-positive timestamp keeps the legacy wizard behaviour while still
+     * requiring a score for every candidate.
+     */
+    public List<CombinedPass> selectFinalPasses(List<CombinedPass> inputPasses,
+                                                long requiredSensitivityRunTimestamp) {
         if (inputPasses == null || inputPasses.isEmpty()) {
             throw new IllegalStateException("Keine ausgewählten Strategien für die finale Auswahl vorhanden.");
         }
@@ -1149,13 +1200,26 @@ public class WorkflowEngine {
             throw new IllegalStateException("Die finale Auswahl enthält nur ungültige Strategien.");
         }
 
+        List<String> missingKiScores = new ArrayList<>();
+        for (CombinedPass candidate : candidates) {
+            if (getKiScore(candidate, requiredSensitivityRunTimestamp) < 0) {
+                missingKiScores.add(candidate.getStrategyName() + " (Pass " + candidate.getPassNumber() + ")");
+            }
+        }
+        if (!missingKiScores.isEmpty()) {
+            throw new IllegalStateException("Portfolio-Export abgebrochen: Für folgende Strategien fehlt ein "
+                    + "passender KI-Score aus dem aktuellen Robustness-Lauf: "
+                    + String.join(", ", missingKiScores));
+        }
+
         candidates.sort((cp1, cp2) -> Double.compare(
-                computeWeightedFinalScore(cp2), computeWeightedFinalScore(cp1)));
+                computeWeightedFinalScore(cp2, requiredSensitivityRunTimestamp),
+                computeWeightedFinalScore(cp1, requiredSensitivityRunTimestamp)));
 
         List<CombinedPass> finalFiltered = new ArrayList<>();
         for (CombinedPass cp : candidates) {
-            int kiScore = getKiScore(cp.getPassNumber());
-            if (kiScore >= 0 && kiScore < 30) continue;
+            int kiScore = getKiScore(cp, requiredSensitivityRunTimestamp);
+            if (kiScore < 30) continue;
             finalFiltered.add(cp);
         }
 
@@ -1522,7 +1586,7 @@ public class WorkflowEngine {
             boolean createdBestDir = false;
 
             for (CombinedPass cp : finalSelectedPasses) {
-                int kiScore = getKiScore(cp.getPassNumber());
+                int kiScore = getKiScore(cp);
                 if (!isValidationPassedOrPending(cp.getPassNumber())) {
                     log.warn("Pass {} wird NICHT in den Best-Ordner kopiert: Out-of-Sample-Validierung nicht bestanden.", cp.getPassNumber());
                     continue;
@@ -1698,8 +1762,12 @@ public class WorkflowEngine {
      * If no KI score is available, falls back to Combined Score only.
      */
     private double computeWeightedFinalScore(CombinedPass cp) {
+        return computeWeightedFinalScore(cp, -1L);
+    }
+
+    private double computeWeightedFinalScore(CombinedPass cp, long requiredSensitivityRunTimestamp) {
         double combinedScore = Double.isFinite(cp.getScore()) ? cp.getScore() : 0.0;
-        int kiScore = getKiScore(cp.getPassNumber());
+        int kiScore = getKiScore(cp, requiredSensitivityRunTimestamp);
 
         if (kiScore < 0) {
             // No KI score available — use Combined Score only
@@ -1730,23 +1798,61 @@ public class WorkflowEngine {
         return Double.NaN;
     }
 
+    public double getWorstCvForPass(CombinedPass pass, boolean forward) {
+        if (pass == null || sensitivityResults == null) return Double.NaN;
+        String identity = combinedPassIdentity(pass);
+        for (SensitivityResult sr : sensitivityResults) {
+            if (sr != null && sr.getOriginalPass() != null
+                    && identity.equals(combinedPassIdentity(sr.getOriginalPass()))) {
+                return forward ? sr.getOverallCVFw() : sr.getOverallCV();
+            }
+        }
+        return Double.NaN;
+    }
+
     public int getKiScoreForPass(int passNum) {
         return getKiScore(passNum);
+    }
+
+    public int getKiScoreForPass(CombinedPass pass) {
+        return getKiScore(pass);
+    }
+
+    private int getKiScore(CombinedPass pass) {
+        return getKiScore(pass, -1L);
+    }
+
+    private int getKiScore(CombinedPass pass, long requiredSensitivityRunTimestamp) {
+        if (pass == null || sensitivityResults == null) return -1;
+        String identity = combinedPassIdentity(pass);
+        for (SensitivityResult sr : sensitivityResults) {
+            if (sr == null || sr.getOriginalPass() == null) continue;
+            if (requiredSensitivityRunTimestamp > 0
+                    && sr.getRunTimestamp() != requiredSensitivityRunTimestamp) continue;
+            if (identity.equals(combinedPassIdentity(sr.getOriginalPass()))) {
+                return parseKiScore(sr.getKiResult());
+            }
+        }
+        return -1;
     }
 
     private int getKiScore(int passNum) {
         if (sensitivityResults == null) return -1;
         for (SensitivityResult sr : sensitivityResults) {
             if (sr != null && sr.getOriginalPass() != null && sr.getOriginalPass().getPassNumber() == passNum) {
-                String res = sr.getKiResult();
-                if (res != null && !res.isEmpty()) {
-                    try {
-                        return Integer.parseInt(res.trim());
-                    } catch (NumberFormatException ignored) {}
-                }
+                return parseKiScore(sr.getKiResult());
             }
         }
         return -1; // no KI score available
+    }
+
+    private static int parseKiScore(String value) {
+        if (value == null || value.isBlank()) return -1;
+        try {
+            return Integer.parseInt(value.trim());
+        } catch (NumberFormatException ignored) {
+            return -1;
+        }
     }
 
     /**

@@ -1331,6 +1331,22 @@ public class WorkflowConfigDialogs {
         grid.add(new Label("Forward Datum:"), 0, 3);
         DatePicker forwardDatePicker = new DatePicker(engine.getForwardDate());
         forwardDatePicker.setConverter(createDateConverter());
+
+        Runnable updateFwdDate = () -> {
+            int fMode = forwardCombo.getSelectionModel().getSelectedIndex();
+            boolean isCustom = (fMode == 4);
+            forwardDatePicker.setDisable(!isCustom && fMode > 0);
+            if (!isCustom && fMode > 0 && engine.getFromDate() != null && engine.getToDate() != null && engine.getToDate().isAfter(engine.getFromDate())) {
+                long totalDays = java.time.temporal.ChronoUnit.DAYS.between(engine.getFromDate(), engine.getToDate());
+                if (totalDays > 0) {
+                    if (fMode == 1) forwardDatePicker.setValue(engine.getFromDate().plusDays(totalDays / 2));
+                    else if (fMode == 2) forwardDatePicker.setValue(engine.getFromDate().plusDays((totalDays * 2) / 3));
+                    else if (fMode == 3) forwardDatePicker.setValue(engine.getFromDate().plusDays((totalDays * 3) / 4));
+                }
+            }
+        };
+        forwardCombo.setOnAction(e -> updateFwdDate.run());
+        updateFwdDate.run();
         grid.add(forwardDatePicker, 1, 3);
 
         layout.getChildren().add(grid);
@@ -2434,7 +2450,7 @@ public class WorkflowConfigDialogs {
 
         TableColumn<CombinedPass, String> kiScoreCol = new TableColumn<>("KI-Stabilität");
         kiScoreCol.setCellValueFactory(c -> {
-            int score = engine.getKiScoreForPass(c.getValue().getPassNumber());
+            int score = engine.getKiScoreForPass(c.getValue());
             return new javafx.beans.property.SimpleStringProperty(score >= 0 ? String.valueOf(score) : "—");
         });
         kiScoreCol.setStyle("-fx-alignment: CENTER;");
@@ -2444,7 +2460,7 @@ public class WorkflowConfigDialogs {
         weightedScoreCol.setCellValueFactory(c -> {
             CombinedPass cp = c.getValue();
             double perfScore = cp.getScore();
-            int kiScore = engine.getKiScoreForPass(cp.getPassNumber());
+            int kiScore = engine.getKiScoreForPass(cp);
             if (kiScore < 0) {
                 return new javafx.beans.property.SimpleStringProperty(String.format(Locale.US, "%.1f", perfScore));
             }

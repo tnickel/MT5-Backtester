@@ -90,10 +90,14 @@ public class OptimizationReportParser {
                         pass.setTotalTrades(Integer.parseInt(value));
                     } else if (header.contains("payoff") || header.contains("auszahlungserwartung")) {
                         pass.setExpectedPayoff(parseDouble(value));
-                    } else if (header.contains("drawdown") && header.contains("%")) {
-                        pass.setDrawdownPercent(parseDouble(value.replace("%", "")));
-                    } else if (header.contains("drawdown")) {
-                        pass.setDrawdown(parseDouble(value));
+                    } else if ((header.contains("drawdown") || header.contains("rückgang")) && header.contains("%")) {
+                        pass.setDrawdownPercent(parsePercentage(value));
+                    } else if (header.contains("drawdown") || header.contains("rückgang")) {
+                        double ddVal = parsePercentage(value);
+                        pass.setDrawdown(ddVal);
+                        if (pass.getDrawdownPercent() == 0 && value.contains("%")) {
+                            pass.setDrawdownPercent(ddVal);
+                        }
                     } else if (header.contains("input") || header.contains("parameter") || header.contains("eingabevariablen")) {
                         inputsVal = value;
                     }
@@ -241,5 +245,23 @@ public class OptimizationReportParser {
     private double parseDouble(String val) {
         if (val == null || val.isEmpty()) return 0.0;
         return Double.parseDouble(val.replace(" ", "")); // e.g. "1 000.50"
+    }
+
+    private static double parsePercentage(String value) {
+        if (value == null || value.trim().isEmpty()) return 0.0;
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile("([\\d.]+)\\s*%").matcher(value);
+        if (m.find()) {
+            try {
+                return Double.parseDouble(m.group(1));
+            } catch (NumberFormatException e) {
+                // ignore
+            }
+        }
+        try {
+            String cleaned = value.replaceAll("[^\\d.]", "");
+            return cleaned.isEmpty() ? 0.0 : Double.parseDouble(cleaned);
+        } catch (NumberFormatException e) {
+            return 0.0;
+        }
     }
 }

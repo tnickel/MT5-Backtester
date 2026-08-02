@@ -123,6 +123,35 @@ public class LlmAnalysisService {
     public String analyzeStrategies(java.util.List<Integer> activePasses, String expertName, String symbol,
                                     java.util.Map<Integer, PassPerformance> performanceData,
                                     long sensitivityRunTimestamp) {
+        java.util.List<AnalysisCandidate> candidates = new java.util.ArrayList<>();
+        if (activePasses != null) {
+            for (Integer passNumber : activePasses) {
+                if (passNumber == null) continue;
+                candidates.add(new AnalysisCandidate(passNumber, passNumber, null,
+                        performanceData != null ? performanceData.get(passNumber) : null));
+            }
+        }
+        return analyzeCandidates(candidates, expertName, symbol, sensitivityRunTimestamp);
+    }
+
+    /**
+     * Analyzes candidates through a unique analysis id. The id is deliberately
+     * separate from the MT5 pass number because merged databanks may contain
+     * multiple strategies with the same pass number.
+     */
+    public String analyzeCandidates(java.util.List<AnalysisCandidate> candidates,
+                                    String expertName,
+                                    String symbol,
+                                    long sensitivityRunTimestamp) {
+        java.util.Set<Integer> analysisIds = new java.util.HashSet<>();
+        if (candidates == null || candidates.isEmpty()) {
+            return "ERROR: Keine Strategien für die KI-Bewertung ausgewählt.";
+        }
+        for (AnalysisCandidate candidate : candidates) {
+            if (candidate == null || !analysisIds.add(candidate.analysisId())) {
+                throw new IllegalArgumentException("Jede KI-Strategie benötigt eine eindeutige Analyse-ID.");
+            }
+        }
         DatabaseManager db = DatabaseManager.getInstance();
 
         // 1. Check API key
@@ -154,7 +183,7 @@ public class LlmAnalysisService {
 
         // 2. Load sensitivity data from DB (now includes curves + metrics)
         String sensitivityData = loadSensitivityData(
-                activePasses, expertName, symbol, performanceData, sensitivityRunTimestamp);
+                candidates, expertName, symbol, sensitivityRunTimestamp);
         if (sensitivityData == null || sensitivityData.isEmpty()) {
             return "ERROR: Keine Sensitivitätsdaten in der Datenbank für die ausgewählten Passes.\n\n" +
                    "Bitte führe zuerst eine Sensitivitätsanalyse im Backtester durch.";
@@ -162,7 +191,12 @@ public class LlmAnalysisService {
 
         // 3. Build the prompt
         String systemPrompt = buildSystemPrompt();
-        String userPrompt = buildUserPrompt(sensitivityData, customPrompt);
+        String userPrompt = buildUserPrompt(sensitivityData, customPrompt)
+                + "\n\nWICHTIGE IDENTITÄTSREGEL: In jeder STABILITY_SCORE-Zeile muss die in den "
+                + "Eingabedaten angegebene Analyse-ID verwendet werden, nicht die möglicherweise doppelte "
+                + "MT5-Passnummer. Format: STABILITY_SCORE|Analyse-ID|Score. Nenne in Tabelle und "
+                + "Begründung zusätzlich Analyse-ID, MT5-Passnummer und Strategiename, damit gleich nummerierte "
+                + "Strategien unterscheidbar bleiben.";
 
         // 4. Call OpenRouter
         log.info("Calling OpenRouter API with model: {} (max_tokens: {})", model, maxTokens);
@@ -202,6 +236,18 @@ public class LlmAnalysisService {
         }
     }
 
+    public record AnalysisCandidate(int analysisId,
+                                    int passNumber,
+                                    String passName,
+                                    PassPerformance performance) {
+        public AnalysisCandidate {
+            if (analysisId < 0) {
+                throw new IllegalArgumentException("analysisId must not be negative");
+            }
+            passName = passName != null && !passName.isBlank() ? passName.trim() : null;
+        }
+    }
+
     private String buildSystemPrompt() {
         return "Du bist ein erfahrener Quant-Analyst mit Expertise in Parameter-Sensitivitätsanalyse. " +
                "Antworte IMMER auf Deutsch. " +
@@ -217,10 +263,9 @@ public class LlmAnalysisService {
                sensitivityData;
     }
 
-    private String loadSensitivityData(java.util.List<Integer> activePasses, String expertName, String symbol,
-                                        java.util.Map<Integer, PassPerformance> performanceData,
+    private String loadSensitivityData(java.util.List<AnalysisCandidate> candidates, String expertName, String symbol,
                                         long requestedRunTimestamp) {
-        if (activePasses == null || activePasses.isEmpty()) {
+        if (candidates == null || candidates.isEmpty()) {
             return null;
         }
 
@@ -244,38 +289,40 @@ public class LlmAnalysisService {
             }
 
             boolean useTimestamp = (latestTimestamp > 0);
+            java.util.LinkedHashSet<Integer> activePassNumbers = new java.util.LinkedHashSet<>();
+            for (AnalysisCandidate candidate : candidates) {
+                activePassNumbers.add(candidate.passNumber());
+            }
             StringBuilder inClause = new StringBuilder();
-            for (int i = 0; i < activePasses.size(); i++) {
-                if (i > 0) inClause.append(",");
-                inClause.append(activePasses.get(i));
+            for (Integer passNumber : activePassNumbers) {
+                if (inClause.length() > 0) inClause.append(",");
+                inClause.append(passNumber);
             }
 
             StringBuilder sb = new StringBuilder();
 
             // === SECTION 1: Performance Overview per Pass ===
             sb.append("=== PERFORMANCE-ÜBERSICHT ===\n");
-            log.info("[LLM-Data] performanceData is {} with {} entries for {} passes",
-                    performanceData == null ? "NULL" : "present",
-                    performanceData != null ? performanceData.size() : 0,
-                    activePasses.size());
-            if (performanceData != null && !performanceData.isEmpty()) {
-                for (Integer passNum : activePasses) {
-                    PassPerformance perf = performanceData.get(passNum);
-                    if (perf != null) {
-                        sb.append(String.format(java.util.Locale.US,
-                                "Pass %d: BT_Profit=%.2f | FW_Profit=%.2f | BT_Trades=%d | FW_Trades=%d | " +
-                                "BT_PF=%.2f | FW_PF=%.2f | BT_DD=%.2f%% | FW_DD=%.2f%% | " +
-                                "BT_Recovery=%.2f | FW_Recovery=%.2f | Combined_Score=%.1f\n",
-                                passNum,
-                                perf.btProfit, Double.isNaN(perf.fwProfit) ? 0.0 : perf.fwProfit,
-                                perf.btTrades, perf.fwTrades,
-                                perf.btPf, Double.isNaN(perf.fwPf) ? 0.0 : perf.fwPf,
-                                perf.btDd, Double.isNaN(perf.fwDd) ? 0.0 : perf.fwDd,
-                                perf.btRecovery, Double.isNaN(perf.fwRecovery) ? 0.0 : perf.fwRecovery,
-                                perf.combinedScore));
-                    }
+            log.info("[LLM-Data] {} analysis candidates", candidates.size());
+            boolean hasPerformance = false;
+            for (AnalysisCandidate candidate : candidates) {
+                PassPerformance perf = candidate.performance();
+                if (perf != null) {
+                    hasPerformance = true;
+                    sb.append(String.format(java.util.Locale.US,
+                            "Analyse-ID %d | Pass %d | Strategie %s: BT_Profit=%.2f | FW_Profit=%.2f | BT_Trades=%d | FW_Trades=%d | " +
+                            "BT_PF=%.2f | FW_PF=%.2f | BT_DD=%.2f%% | FW_DD=%.2f%% | " +
+                            "BT_Recovery=%.2f | FW_Recovery=%.2f | Combined_Score=%.1f\n",
+                            candidate.analysisId(), candidate.passNumber(), displayPassName(candidate),
+                            perf.btProfit, Double.isNaN(perf.fwProfit) ? 0.0 : perf.fwProfit,
+                            perf.btTrades, perf.fwTrades,
+                            perf.btPf, Double.isNaN(perf.fwPf) ? 0.0 : perf.fwPf,
+                            perf.btDd, Double.isNaN(perf.fwDd) ? 0.0 : perf.fwDd,
+                            perf.btRecovery, Double.isNaN(perf.fwRecovery) ? 0.0 : perf.fwRecovery,
+                            perf.combinedScore));
                 }
-            } else {
+            }
+            if (!hasPerformance) {
                 sb.append("(Keine Performance-Daten verfügbar)\n");
             }
 
@@ -291,21 +338,22 @@ public class LlmAnalysisService {
                     "WHERE expert_name = ? AND symbol = ? " +
                     (useTimestamp ? "AND run_timestamp = ? " : "") +
                     "AND pass_number IN (" + inClause + ") " +
-                    "GROUP BY pass_number ORDER BY avg_cv";
+                    "GROUP BY pass_number, pass_name ORDER BY avg_cv";
 
             // === SECTION 3: Detailed parameter data WITH curves ===
-            String detailSql = "SELECT pass_number, parameter_name, period, cv, verdict, " +
+            String detailSql = "SELECT pass_number, pass_name, parameter_name, period, cv, verdict, " +
                     "base_value, base_profit, mean_profit, min_profit, max_profit, num_variants, curve_json " +
                     "FROM SENSITIVITY_DETAIL " +
                     "WHERE expert_name = ? AND symbol = ? " +
                     (useTimestamp ? "AND run_timestamp = ? " : "") +
                     "AND pass_number IN (" + inClause + ") " +
-                    "ORDER BY pass_number, parameter_name, period";
+                    "ORDER BY pass_number, pass_name, parameter_name, period";
 
             try (java.sql.Connection conn = db.getConnection();
                  java.sql.PreparedStatement pstmtOverview = conn.prepareStatement(overviewSql);
                  java.sql.PreparedStatement pstmtDetail = conn.prepareStatement(detailSql)) {
                 int sensitivityRows = 0;
+                java.util.Set<Integer> candidatesWithSensitivity = new java.util.HashSet<>();
 
                 pstmtOverview.setString(1, expertName);
                 pstmtOverview.setString(2, symbol);
@@ -324,10 +372,14 @@ public class LlmAnalysisService {
                 // Overview
                 try (ResultSet rs = pstmtOverview.executeQuery()) {
                     while (rs.next()) {
+                        AnalysisCandidate candidate = findCandidate(
+                                candidates, rs.getInt("pass_number"), rs.getString("pass_name"));
+                        if (candidate == null) continue;
                         sensitivityRows++;
+                        candidatesWithSensitivity.add(candidate.analysisId());
                         sb.append(String.format(java.util.Locale.US,
-                                "Pass %d (%s): avg_cv=%.2f%%, worst_cv=%.2f%%, robust=%d, acceptable=%d, fragile=%d\n",
-                                rs.getInt("pass_number"), rs.getString("pass_name"),
+                                "Analyse-ID %d | Pass %d (%s): avg_cv=%.2f%%, worst_cv=%.2f%%, robust=%d, acceptable=%d, fragile=%d\n",
+                                candidate.analysisId(), rs.getInt("pass_number"), rs.getString("pass_name"),
                                 rs.getDouble("avg_cv"), rs.getDouble("worst_cv"),
                                 rs.getInt("robust_count"), rs.getInt("acceptable_count"), rs.getInt("fragile_count")));
                     }
@@ -338,8 +390,11 @@ public class LlmAnalysisService {
                 // Detailed data with curve points
                 try (ResultSet rs = pstmtDetail.executeQuery()) {
                     while (rs.next()) {
-                        sensitivityRows++;
                         int passNum = rs.getInt("pass_number");
+                        String passName = rs.getString("pass_name");
+                        AnalysisCandidate candidate = findCandidate(candidates, passNum, passName);
+                        if (candidate == null) continue;
+                        sensitivityRows++;
                         String paramName = rs.getString("parameter_name");
                         String period = rs.getString("period");
                         String baseValue = rs.getString("base_value");
@@ -353,8 +408,9 @@ public class LlmAnalysisService {
                         String curveJson = rs.getString("curve_json");
 
                         sb.append(String.format(java.util.Locale.US,
-                                "\nPass %d | %s | %s | base=%s | CV=%.2f%% [%s]\n",
-                                passNum, paramName, period, baseValue, cv, verdict));
+                                "\nAnalyse-ID %d | Pass %d (%s) | %s | %s | base=%s | CV=%.2f%% [%s]\n",
+                                candidate.analysisId(), passNum, passName,
+                                paramName, period, baseValue, cv, verdict));
                         sb.append(String.format(java.util.Locale.US,
                                 "  Profit: base=%.2f, mean=%.2f, min=%.2f, max=%.2f (%d Varianten)\n",
                                 baseProfit, meanProfit, minProfit, maxProfit, numVariants));
@@ -371,6 +427,11 @@ public class LlmAnalysisService {
                 if (sensitivityRows == 0) {
                     return null;
                 }
+                if (candidatesWithSensitivity.size() != candidates.size()) {
+                    log.warn("Sensitivity data is incomplete: {} of {} candidates found for run {}",
+                            candidatesWithSensitivity.size(), candidates.size(), latestTimestamp);
+                    return null;
+                }
             }
 
             String result = sb.toString();
@@ -381,6 +442,25 @@ public class LlmAnalysisService {
             log.error("Failed to load sensitivity data", e);
             return null;
         }
+    }
+
+    private static AnalysisCandidate findCandidate(java.util.List<AnalysisCandidate> candidates,
+                                                    int passNumber,
+                                                    String passName) {
+        AnalysisCandidate wildcard = null;
+        for (AnalysisCandidate candidate : candidates) {
+            if (candidate.passNumber() != passNumber) continue;
+            if (candidate.passName() == null) {
+                wildcard = candidate;
+            } else if (candidate.passName().equals(passName)) {
+                return candidate;
+            }
+        }
+        return wildcard;
+    }
+
+    private static String displayPassName(AnalysisCandidate candidate) {
+        return candidate.passName() != null ? candidate.passName() : "(nicht angegeben)";
     }
 
     /**

@@ -144,7 +144,7 @@ public class WorkflowValidationAndGateTest {
         List<CombinedPass> diverse = new ArrayList<>();
         diverse.add(p1);
         engine.setSelectedDiversePasses(diverse);
-        engine.setSensitivityResults(new ArrayList<>());
+        engine.setSensitivityResults(List.of(makeSensitivity(p1, 80)));
 
         List<ValidationResult> stale = new ArrayList<>();
         stale.add(new ValidationResult(99));
@@ -154,6 +154,52 @@ public class WorkflowValidationAndGateTest {
 
         // Eine neue finale Auswahl macht alte Validierungsergebnisse ungültig
         assertTrue(engine.getValidationResults().isEmpty());
+    }
+
+    @Test
+    public void kiGateDistinguishesStrategiesWithSamePassNumber() {
+        WorkflowEngine engine = new WorkflowEngine(null);
+        CombinedPass fragile = makePass(7, 1000, 200);
+        fragile.setStrategyName("Strategy A");
+        CombinedPass stable = makePass(7, 900, 180);
+        stable.setStrategyName("Strategy B");
+
+        SensitivityResult fragileResult = makeSensitivity(fragile, 10);
+        SensitivityResult stableResult = makeSensitivity(stable, 80);
+        engine.setSensitivityResults(List.of(fragileResult, stableResult));
+
+        List<CombinedPass> selected = engine.selectFinalPasses(List.of(fragile, stable));
+
+        assertEquals(1, selected.size());
+        assertEquals("Strategy B", selected.get(0).getStrategyName());
+        assertEquals(10, engine.getKiScoreForPass(fragile));
+        assertEquals(80, engine.getKiScoreForPass(stable));
+    }
+
+    @Test
+    public void portfolioSelectionRejectsMissingOrWrongRunKiScores() {
+        WorkflowEngine engine = new WorkflowEngine(null);
+        CombinedPass pass = makePass(7, 1000, 200);
+        pass.setStrategyName("Current strategy");
+        SensitivityResult result = makeSensitivity(pass, 80);
+        result.setRunTimestamp(111L);
+        engine.setSensitivityResults(List.of(result));
+
+        try {
+            engine.selectFinalPasses(List.of(pass), 222L);
+            fail("A KI score from another robustness run must not be accepted");
+        } catch (IllegalStateException expected) {
+            assertTrue(expected.getMessage().contains("passender KI-Score"));
+        }
+
+        CombinedPass missing = makePass(8, 800, 150);
+        missing.setStrategyName("Missing strategy");
+        try {
+            engine.selectFinalPasses(List.of(pass, missing));
+            fail("Every portfolio candidate must have a KI score");
+        } catch (IllegalStateException expected) {
+            assertTrue(expected.getMessage().contains("Missing strategy"));
+        }
     }
 
     // --- Schritt 7: Validierungsfenster ---
