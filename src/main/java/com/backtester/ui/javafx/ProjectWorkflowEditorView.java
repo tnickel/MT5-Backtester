@@ -524,12 +524,36 @@ public class ProjectWorkflowEditorView {
                 saveProject();
             }
         });
+        startDatePicker.valueProperty().addListener((obs, oldVal, newVal) -> {
+            if (selectedTask != null && newVal != null) {
+                selectedTask.setStartDate(newVal.toString());
+                saveProject();
+            }
+        });
+        startDatePicker.getEditor().focusedProperty().addListener((obs, wasFocused, isFocused) -> {
+            if (!isFocused && selectedTask != null && startDatePicker.getValue() != null) {
+                selectedTask.setStartDate(startDatePicker.getValue().toString());
+                saveProject();
+            }
+        });
         grid.add(startDatePicker, 1, 3);
 
         grid.add(new Label("End day (Test To):"), 0, 4);
         endDatePicker = new DatePicker();
         endDatePicker.setOnAction(e -> {
             if (selectedTask != null && endDatePicker.getValue() != null) {
+                selectedTask.setEndDate(endDatePicker.getValue().toString());
+                saveProject();
+            }
+        });
+        endDatePicker.valueProperty().addListener((obs, oldVal, newVal) -> {
+            if (selectedTask != null && newVal != null) {
+                selectedTask.setEndDate(newVal.toString());
+                saveProject();
+            }
+        });
+        endDatePicker.getEditor().focusedProperty().addListener((obs, wasFocused, isFocused) -> {
+            if (!isFocused && selectedTask != null && endDatePicker.getValue() != null) {
                 selectedTask.setEndDate(endDatePicker.getValue().toString());
                 saveProject();
             }
@@ -1906,6 +1930,15 @@ public class ProjectWorkflowEditorView {
                 ? taskSymbol.trim() : (project != null ? project.getSymbol() : engine.getSymbol()));
         engine.setPeriod(taskPeriod != null && !taskPeriod.isBlank()
                 ? taskPeriod.trim() : (project != null ? project.getPeriod() : engine.getPeriod()));
+
+        if (selectedTask == task) {
+            if (startDatePicker != null && startDatePicker.getValue() != null) {
+                task.setStartDate(startDatePicker.getValue().toString());
+            }
+            if (endDatePicker != null && endDatePicker.getValue() != null) {
+                task.setEndDate(endDatePicker.getValue().toString());
+            }
+        }
 
         String startText = task.getStartDate();
         String endText = task.getEndDate();
