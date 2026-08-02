@@ -111,7 +111,9 @@ public class DatabankManager {
     }
 
     public synchronized void clearAll() {
-        resetToDefaults();
+        for (List<CombinedPass> list : databanks.values()) {
+            list.clear();
+        }
     }
 
     /**

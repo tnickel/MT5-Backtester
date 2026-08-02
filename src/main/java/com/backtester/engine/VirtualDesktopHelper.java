@@ -5,10 +5,13 @@ import org.slf4j.LoggerFactory;
 
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Consumer;
 
 /**
  * Launches a process on Windows Virtual Desktop 2 using the PSVirtualDesktop PowerShell module.
@@ -30,14 +33,12 @@ public class VirtualDesktopHelper {
         String launchMode = com.backtester.config.AppConfig.getInstance().get("mt5.launch.mode", "HEADLESS");
 
         if ("HEADLESS".equalsIgnoreCase(launchMode)) {
-            log.info("Starting terminal in HEADLESS mode (with background window hider)...");
-            List<String> mutableArgs = new ArrayList<>(args);
+            log.info("Starting terminal in HEADLESS mode (hidden process launch)...");
+            List<String> mutableArgs = new ArrayList<>(args != null ? args : java.util.Collections.emptyList());
             if (!mutableArgs.contains("/hide")) {
                 mutableArgs.add("/hide");
             }
-            Process p = startNormally(executable, mutableArgs, workingDir);
-            startHidingLoop(executable);
-            return p;
+            return startHidden(executable, mutableArgs, workingDir);
         } else if ("NORMAL".equalsIgnoreCase(launchMode) || !allowVirtualDesktop) {
             log.info("Starting terminal in NORMAL mode...");
             return startNormally(executable, args, workingDir);
@@ -182,12 +183,10 @@ public class VirtualDesktopHelper {
     public static Process startOnDesktop2(String executable, List<String> args, Path workingDir) {
         String os = System.getProperty("os.name").toLowerCase();
         if (!os.contains("win")) {
-            // Fallback: just start normally on non-Windows
             return startNormally(executable, args, workingDir);
         }
 
         try {
-            // Build the argument string for Start-Process
             StringBuilder argString = new StringBuilder();
             if (args != null && !args.isEmpty()) {
                 for (int i = 0; i < args.size(); i++) {
@@ -196,52 +195,24 @@ public class VirtualDesktopHelper {
                 }
             }
 
-            // PowerShell script that:
-            // 1. Imports VirtualDesktop module
-            // 2. Ensures Desktop 2 exists
-            // 3. Starts the process with Start-Process -PassThru
-            // 4. Waits for the window handle
-            // 5. Moves the window to Desktop 2
-            // 6. Outputs the PID so Java can track it
             String psScript = buildPowerShellScript(executable, argString.toString());
 
-            ProcessBuilder pb = new ProcessBuilder(
-                "powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", psScript
-            );
-            pb.redirectErrorStream(true);
-            if (workingDir != null) {
-                pb.directory(workingDir.toFile());
-            }
+            log.info("Starting process on Virtual Desktop 2 (move-window): {} {}", executable, argString);
 
-            log.info("Starting process on Desktop 2: {} {}", executable, argString);
-            Process psProcess = pb.start();
-
-            // Read the output to get the PID
-            long targetPid = -1;
-            try (BufferedReader reader = new BufferedReader(new InputStreamReader(psProcess.getInputStream()))) {
-                String line;
-                while ((line = reader.readLine()) != null) {
-                    line = line.trim();
-                    log.debug("[VD-PS] {}", line);
-                    if (line.startsWith("STARTED_PID:")) {
-                        try {
-                            targetPid = Long.parseLong(line.substring("STARTED_PID:".length()).trim());
-                        } catch (NumberFormatException ignored) {}
-                    }
+            final long[] targetPid = new long[]{-1};
+            executePowerShellScript(psScript, line -> {
+                log.info("[VD-PS] {}", line);
+                if (line.startsWith("STARTED_PID:")) {
+                    try {
+                        targetPid[0] = Long.parseLong(line.substring("STARTED_PID:".length()).trim());
+                    } catch (NumberFormatException ignored) {}
                 }
-            }
+            }, workingDir);
 
-            // Wait for PowerShell to finish (it should be quick - the target process continues running)
-            psProcess.waitFor(30, TimeUnit.SECONDS);
-
-            if (targetPid > 0) {
-                log.info("Process started on Desktop 2 with PID: {}", targetPid);
-                // Return a handle to the actual target process via its PID
-                return ProcessHandle.of(targetPid)
-                    .map(ph -> {
-                        // Create a Process wrapper that delegates to the ProcessHandle
-                        return new PidProcess(ph);
-                    })
+            if (targetPid[0] > 0) {
+                log.info("Process successfully launched on Virtual Desktop 2 with PID: {}", targetPid[0]);
+                return ProcessHandle.of(targetPid[0])
+                    .map(ph -> (Process) new PidProcess(ph))
                     .orElse(null);
             } else {
                 log.warn("Could not determine PID from PowerShell output, falling back to normal start");
@@ -254,10 +225,6 @@ public class VirtualDesktopHelper {
         }
     }
 
-    /**
-     * Moves an already-running process to Desktop 2 using a background thread.
-     * This is a best-effort approach for processes already started from Java.
-     */
     public static void moveProcessToDesktop2(Process process) {
         if (process == null) return;
         String os = System.getProperty("os.name").toLowerCase();
@@ -266,77 +233,98 @@ public class VirtualDesktopHelper {
         long pid = process.pid();
         new Thread(() -> {
             try {
-                log.info("Attempting to move PID {} to Virtual Desktop 2...", pid);
-
+                log.info("Moving process PID {} to Desktop 2 without switching desktop...", pid);
                 String psScript =
-                    "Import-Module VirtualDesktop -WarningAction SilentlyContinue 3>$null; " +
-                    "$count = Get-DesktopCount; " +
-                    "if ($count -lt 2) { New-Desktop | Out-Null; } " +
-                    "$d2 = Get-Desktop 1; " +
-                    "$hwnd = 0; " +
-                    "for ($i = 0; $i -lt 80; $i++) { " +
-                    "  Start-Sleep -Milliseconds 250; " +
-                    "  $procs = Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.Id -eq " + pid + " -or $_.ProcessName -like '*terminal*' }; " +
-                    "  foreach ($p in $procs) { " +
-                    "    try { " +
-                    "      $p.Refresh(); " +
-                    "      if ($p.MainWindowHandle -ne 0) { " +
-                    "        $hwnd = $p.MainWindowHandle; " +
-                    "        Move-Window -Desktop $d2 -Hwnd $hwnd -ErrorAction SilentlyContinue; " +
-                    "      } " +
-                    "    } catch {} " +
-                    "  } " +
-                    "  if ($hwnd -ne 0) { Write-Host 'MOVED'; break; } " +
-                    "} " +
-                    "if ($hwnd -eq 0) { Write-Host 'NO_HWND'; }";
-
-                ProcessBuilder pb = new ProcessBuilder("powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", psScript);
-                pb.redirectErrorStream(true);
-                Process psProc = pb.start();
-
-                try (BufferedReader reader = new BufferedReader(new InputStreamReader(psProc.getInputStream()))) {
-                    String line;
-                    while ((line = reader.readLine()) != null) {
-                        log.debug("[VD-Move] {}", line);
-                    }
-                }
-                psProc.waitFor(30, TimeUnit.SECONDS);
+                    "Import-Module VirtualDesktop -WarningAction SilentlyContinue 3>$null\n" +
+                    "$count = Get-DesktopCount\n" +
+                    "if ($count -lt 2) { New-Desktop | Out-Null }\n" +
+                    "$d2 = Get-Desktop 1\n" +
+                    "for ($i = 0; $i -lt 40; $i++) {\n" +
+                    "    Start-Sleep -Milliseconds 250\n" +
+                    "    $p = Get-Process -Id " + pid + " -ErrorAction SilentlyContinue\n" +
+                    "    if ($p) { $p.Refresh() }\n" +
+                    "    if ($p -and $p.MainWindowHandle -ne 0) {\n" +
+                    "        Move-Window -Desktop $d2 -Hwnd $p.MainWindowHandle -ErrorAction SilentlyContinue\n" +
+                    "        break\n" +
+                    "    }\n" +
+                    "}\n";
+                executePowerShellScript(psScript, line -> log.info("[VD-Move] {}", line), null);
             } catch (Exception e) {
                 log.error("Failed to move process {} to Desktop 2", pid, e);
             }
         }, "VirtualDesktop-Move-Thread-" + pid).start();
     }
 
+    private static void executePowerShellScript(String psScript, Consumer<String> lineConsumer, Path workingDir) {
+        try {
+            byte[] bytes = psScript.getBytes(StandardCharsets.UTF_16LE);
+            String encoded = Base64.getEncoder().encodeToString(bytes);
+
+            ProcessBuilder pb = new ProcessBuilder(
+                "powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-EncodedCommand", encoded
+            );
+            pb.redirectErrorStream(true);
+            if (workingDir != null) {
+                pb.directory(workingDir.toFile());
+            }
+            Process ps = pb.start();
+
+            try (BufferedReader reader = new BufferedReader(new InputStreamReader(ps.getInputStream(), StandardCharsets.UTF_8))) {
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    line = line.trim();
+                    if (!line.isEmpty()) {
+                        lineConsumer.accept(line);
+                    }
+                }
+            }
+            ps.waitFor(30, TimeUnit.SECONDS);
+        } catch (Exception e) {
+            log.error("Failed to execute PowerShell script", e);
+        }
+    }
+
     private static String buildPowerShellScript(String executable, String arguments) {
-        // Escape single quotes in paths
         String escapedExe = executable.replace("'", "''");
         String escapedArgs = arguments.replace("'", "''");
 
-        return "Import-Module VirtualDesktop -WarningAction SilentlyContinue 3>$null; " +
-            "$count = Get-DesktopCount; " +
-            "if ($count -lt 2) { New-Desktop | Out-Null; } " +
-            "$d2 = Get-Desktop 1; " +
+        return "Import-Module VirtualDesktop -WarningAction SilentlyContinue 3>$null\n" +
+            "$count = Get-DesktopCount\n" +
+            "Write-Output \"VD_STATUS: Current Virtual Desktop count = $count\"\n" +
+            "if ($count -lt 2) {\n" +
+            "    New-Desktop | Out-Null\n" +
+            "    Write-Output 'VD_STATUS: Created Virtual Desktop 2'\n" +
+            "}\n" +
+            "$d2 = Get-Desktop 1\n" +
+            "Write-Output \"VD_STATUS: Target desktop = Desktop 2 ($d2)\"\n" +
             (escapedArgs.isEmpty()
-                ? "$app = Start-Process -FilePath '" + escapedExe + "' -PassThru; "
-                : "$app = Start-Process -FilePath '" + escapedExe + "' -ArgumentList '" + escapedArgs + "' -PassThru; ") +
-            "$spid = $app.Id; " +
-            "Write-Host \"STARTED_PID:$spid\"; " +
-            "for ($i = 0; $i -lt 120; $i++) { " +
-            "  Start-Sleep -Milliseconds 250; " +
-            "  $procs = Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.Id -eq $spid -or $_.ProcessName -like '*terminal*' }; " +
-            "  $moved = $false; " +
-            "  foreach ($p in $procs) { " +
-            "    try { " +
-            "      $p.Refresh(); " +
-            "      if ($p.MainWindowHandle -ne 0) { " +
-            "        Move-Window -Desktop $d2 -Hwnd $p.MainWindowHandle -ErrorAction SilentlyContinue; " +
-            "        $moved = $true; " +
-            "      } " +
-            "    } catch {} " +
-            "  } " +
-            "  if ($moved) { break; } " +
-            "} " +
-            "Write-Host 'MOVE_OK';";
+                ? "$app = Start-Process -FilePath '" + escapedExe + "' -PassThru\n"
+                : "$app = Start-Process -FilePath '" + escapedExe + "' -ArgumentList '" + escapedArgs + "' -PassThru\n") +
+            "$spid = $app.Id\n" +
+            "Write-Output \"STARTED_PID:$spid\"\n" +
+            "for ($i = 0; $i -lt 120; $i++) {\n" +
+            "    Start-Sleep -Milliseconds 250\n" +
+            "    $procs = Get-Process -ErrorAction SilentlyContinue | Where-Object { ($_.Id -eq $spid -or $_.ProcessName -eq 'terminal64' -or $_.ProcessName -eq 'terminal') -and $_.ProcessName -notlike '*WindowsTerminal*' }\n" +
+            "    $moved = $false\n" +
+            "    foreach ($p in $procs) {\n" +
+            "        if ($p.MainWindowHandle -ne 0) {\n" +
+            "            try {\n" +
+            "                $h = [IntPtr]$p.MainWindowHandle\n" +
+            "                Write-Output \"VD_STATUS: Found window handle ($h) for MT5 process '$($p.ProcessName)' (PID $($p.Id)) after $($i * 250)ms\"\n" +
+            "                $d2.MoveWindow($h)\n" +
+            "                Write-Output \"VD_STATUS: Successfully moved MT5 window ($h) to Desktop 2\"\n" +
+            "                $moved = $true\n" +
+            "            } catch {\n" +
+            "                Write-Output \"VD_STATUS: Error moving MT5 window handle ($h): $_\"\n" +
+            "            }\n" +
+            "        }\n" +
+            "    }\n" +
+            "    if ($moved) { break }\n" +
+            "}\n" +
+            "if (-not $moved) {\n" +
+            "    Write-Output 'VD_STATUS: WARNUNG - Timeout nach 30s: Kein Hauptfenster-Handle für MT5 gefunden'\n" +
+            "}\n" +
+            "Write-Output 'MOVE_OK'\n";
     }
 
     private static String buildHiddenPowerShellScript(String executable, String arguments) {

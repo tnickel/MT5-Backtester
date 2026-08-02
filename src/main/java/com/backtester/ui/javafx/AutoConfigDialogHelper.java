@@ -158,6 +158,24 @@ public class AutoConfigDialogHelper {
             end = temp;
         }
 
+        // --- Safety bounds to prevent MT5 EA OnInit failures ---
+        String lowerName = name.toLowerCase();
+        if (lowerName.contains("timeframe")) {
+            return null; // Skip raw ENUM_TIMEFRAMES integers
+        }
+
+        if (lowerName.contains("multiplier") || lowerName.contains("step_multiplier") || lowerName.contains("next_lot_multiplier")) {
+            if (start < 1.0) start = 1.0;
+        }
+
+        if (lowerName.contains("lot") && !lowerName.contains("multiplier") && !lowerName.contains("wait")) {
+            if (start < 0.01) start = roundTo(0.01, decimalPlaces);
+        }
+
+        if (start < 0 && (lowerName.contains("step") || lowerName.contains("points") || lowerName.contains("period") || lowerName.contains("profit") || lowerName.contains("bar") || lowerName.contains("hour") || lowerName.contains("level"))) {
+            start = 0;
+        }
+
         return new double[]{start, step, end};
     }
 

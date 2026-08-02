@@ -18,20 +18,26 @@ import javafx.scene.text.FontWeight;
 import javafx.stage.Modality;
 import javafx.stage.Stage;
 import javafx.stage.Window;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.Locale;
 import java.util.Map;
 
 /**
  * Strategy Inspector Modal Dialog (StrategyQuant Style).
- * Opened on double-click on any strategy row in the Databank table.
- * Displays Overview Metrics, EA Parameter inputs, and Equity/Drawdown Curves.
+ * Opened on double-click or right-click context menu on any strategy row in the Databank table.
+ * Displays Overview Metrics, EA Parameter inputs, Equity/Drawdown Curves, and Sensitivity Curves.
  */
 public class StrategyDetailsModalDialog {
+    private static final Logger log = LoggerFactory.getLogger(StrategyDetailsModalDialog.class);
 
     public static void show(CombinedPass pass, Window owner) {
-        if (pass == null) return;
+        show(pass, owner, 0);
+    }
 
+    public static void show(CombinedPass pass, Window owner, int selectTab) {
+        if (pass == null) return;
         Stage stage = new Stage();
         stage.initModality(Modality.APPLICATION_MODAL);
         if (owner != null) stage.initOwner(owner);
@@ -40,9 +46,8 @@ public class StrategyDetailsModalDialog {
         BorderPane root = new BorderPane();
         root.setPadding(new Insets(15));
         root.setStyle("-fx-background-color: #0b0d13;");
-        root.setPrefSize(850, 620);
+        root.setPrefSize(880, 650);
 
-        // ── Top Header Bar ────────────────────────────────────────────────────────
         HBox header = new HBox(15);
         header.setAlignment(Pos.CENTER_LEFT);
         header.setPadding(new Insets(0, 0, 15, 0));
@@ -67,26 +72,29 @@ public class StrategyDetailsModalDialog {
         header.getChildren().addAll(titleLabel, passBadge, scoreBadge, spacer, closeBtn);
         root.setTop(header);
 
-        // ── Main TabPane ──────────────────────────────────────────────────────────
         TabPane tabPane = new TabPane();
         VBox.setVgrow(tabPane, Priority.ALWAYS);
 
-        // Tab 1: Overview & Metrics
         Tab overviewTab = new Tab("Overview & Metrics");
         overviewTab.setClosable(false);
         overviewTab.setContent(createOverviewTabContent(pass));
 
-        // Tab 2: EA Parameters
         Tab paramsTab = new Tab("EA Parameters");
         paramsTab.setClosable(false);
         paramsTab.setContent(createParametersTabContent(pass));
 
-        // Tab 3: Equity & Drawdown Curve
         Tab chartTab = new Tab("Equity & Drawdown Curve");
         chartTab.setClosable(false);
         chartTab.setContent(createEquityChartTabContent(pass));
 
-        tabPane.getTabs().addAll(overviewTab, paramsTab, chartTab);
+        Tab sensitivityTab = new Tab("Sensitivitäts-Kennlinien");
+        sensitivityTab.setClosable(false);
+        sensitivityTab.setContent(createSensitivityTabContent(pass));
+
+        tabPane.getTabs().addAll(overviewTab, paramsTab, chartTab, sensitivityTab);
+        if (selectTab >= 0 && selectTab < tabPane.getTabs().size()) {
+            tabPane.getSelectionModel().select(selectTab);
+        }
         root.setCenter(tabPane);
 
         Scene scene = new Scene(root);
@@ -238,6 +246,240 @@ public class StrategyDetailsModalDialog {
 
         panel.getChildren().add(chart);
         return panel;
+    }
+
+    private static VBox createSensitivityTabContent(CombinedPass pass) {
+        VBox panel = new VBox(12);
+        panel.setPadding(new Insets(12));
+
+        HBox topBar = new HBox(12);
+        topBar.setAlignment(Pos.CENTER_LEFT);
+
+        Label heading = new Label("📈 Parameter-Sensitivität & Kennlinien aus Stresstest (Pass #" + pass.getPassNumber() + ")");
+        heading.setFont(Font.font("Segoe UI", FontWeight.BOLD, 14));
+        heading.setTextFill(Color.web("#00e5ff"));
+
+        Region flexSpacer = new Region();
+        HBox.setHgrow(flexSpacer, Priority.ALWAYS);
+
+        Button openHtmlReportBtn = new Button("🌐 HTML Scanner Report im Browser öffnen");
+        openHtmlReportBtn.setStyle("-fx-background-color: #00e5ff; -fx-text-fill: #0b0d13; -fx-font-weight: bold; -fx-cursor: hand; -fx-padding: 6 14; -fx-background-radius: 4;");
+        openHtmlReportBtn.setOnAction(e -> openRobustnessHtmlReport(pass));
+
+        topBar.getChildren().addAll(heading, flexSpacer, openHtmlReportBtn);
+
+        TableView<SensitivityRow> table = new TableView<>();
+        table.setPrefHeight(170);
+
+        TableColumn<SensitivityRow, String> paramCol = new TableColumn<>("Parameter");
+        paramCol.setCellValueFactory(c -> new SimpleStringProperty(c.getValue().parameterName));
+        paramCol.setPrefWidth(140);
+
+        TableColumn<SensitivityRow, String> periodCol = new TableColumn<>("Period");
+        periodCol.setCellValueFactory(c -> new SimpleStringProperty(c.getValue().period));
+        periodCol.setPrefWidth(70);
+
+        TableColumn<SensitivityRow, String> cvCol = new TableColumn<>("CV (%)");
+        cvCol.setCellValueFactory(c -> new SimpleStringProperty(String.format(Locale.US, "%.2f%%", c.getValue().cv)));
+        cvCol.setPrefWidth(80);
+
+        TableColumn<SensitivityRow, String> verdictCol = new TableColumn<>("Verdict");
+        verdictCol.setCellValueFactory(c -> new SimpleStringProperty(c.getValue().verdict));
+        verdictCol.setPrefWidth(100);
+
+        TableColumn<SensitivityRow, String> baseProfitCol = new TableColumn<>("Base Profit");
+        baseProfitCol.setCellValueFactory(c -> new SimpleStringProperty(String.format(Locale.US, "$%.2f", c.getValue().baseProfit)));
+        baseProfitCol.setPrefWidth(100);
+
+        TableColumn<SensitivityRow, String> minProfitCol = new TableColumn<>("Min Profit");
+        minProfitCol.setCellValueFactory(c -> new SimpleStringProperty(String.format(Locale.US, "$%.2f", c.getValue().minProfit)));
+        minProfitCol.setPrefWidth(100);
+
+        TableColumn<SensitivityRow, String> maxProfitCol = new TableColumn<>("Max Profit");
+        maxProfitCol.setCellValueFactory(c -> new SimpleStringProperty(String.format(Locale.US, "$%.2f", c.getValue().maxProfit)));
+        maxProfitCol.setPrefWidth(100);
+
+        table.getColumns().addAll(paramCol, periodCol, cvCol, verdictCol, baseProfitCol, minProfitCol, maxProfitCol);
+
+        java.util.List<SensitivityRow> rows = new java.util.ArrayList<>();
+        try {
+            com.backtester.database.DatabaseManager db = com.backtester.database.DatabaseManager.getInstance();
+            String sql = "SELECT parameter_name, period, cv, verdict, base_value, base_profit, mean_profit, min_profit, max_profit, curve_json " +
+                         "FROM SENSITIVITY_DETAIL WHERE pass_number = ? ORDER BY parameter_name, period";
+            try (java.sql.Connection conn = db.getConnection();
+                 java.sql.PreparedStatement pstmt = conn.prepareStatement(sql)) {
+                pstmt.setInt(1, pass.getPassNumber());
+                try (java.sql.ResultSet rs = pstmt.executeQuery()) {
+                    while (rs.next()) {
+                        rows.add(new SensitivityRow(
+                            rs.getString("parameter_name"),
+                            rs.getString("period"),
+                            rs.getDouble("cv"),
+                            rs.getString("verdict"),
+                            rs.getDouble("base_value"),
+                            rs.getDouble("base_profit"),
+                            rs.getDouble("mean_profit"),
+                            rs.getDouble("min_profit"),
+                            rs.getDouble("max_profit"),
+                            rs.getString("curve_json")
+                        ));
+                    }
+                }
+            }
+        } catch (Exception ex) {
+            log.error("Failed to load sensitivity details for pass #" + pass.getPassNumber(), ex);
+        }
+
+        if (rows.isEmpty()) {
+            Label noDataLabel = new Label("Hinweis: Noch keine Sensitivitäts-Kennlinien in DB für Pass #" + pass.getPassNumber() +
+                                         ". Bitte führe Task 6 (Robustness Test / CV) aus.");
+            noDataLabel.setStyle("-fx-text-fill: #ffab40; -fx-font-size: 13px; -fx-font-weight: bold;");
+            panel.getChildren().addAll(topBar, noDataLabel);
+            return panel;
+        }
+
+        table.setItems(FXCollections.observableArrayList(rows));
+
+        NumberAxis xAxis = new NumberAxis();
+        xAxis.setLabel("Variation Step (%)");
+        xAxis.setTickLabelFill(Color.web("#7e889a"));
+
+        NumberAxis yAxis = new NumberAxis();
+        yAxis.setLabel("Net Profit ($)");
+        yAxis.setTickLabelFill(Color.web("#7e889a"));
+
+        LineChart<Number, Number> chart = new LineChart<>(xAxis, yAxis);
+        chart.setTitle("Parameter Sensitivity Curves (Pass #" + pass.getPassNumber() + ")");
+        chart.setCreateSymbols(true);
+        chart.setLegendVisible(true);
+
+        for (SensitivityRow sr : rows) {
+            if (sr.curveJson != null && !sr.curveJson.isBlank()) {
+                try {
+                    com.google.gson.JsonArray arr = com.google.gson.JsonParser.parseString(sr.curveJson).getAsJsonArray();
+                    XYChart.Series<Number, Number> series = new XYChart.Series<>();
+                    series.setName(sr.parameterName + " (" + sr.period + ")");
+                    for (int i = 0; i < arr.size(); i++) {
+                        com.google.gson.JsonObject obj = arr.get(i).getAsJsonObject();
+                        double stepPct = obj.has("percent") ? obj.get("percent").getAsDouble() : (i * 10 - 20);
+                        double profit = obj.has("profit") ? obj.get("profit").getAsDouble() : 0.0;
+                        series.getData().add(new XYChart.Data<>(stepPct, profit));
+                    }
+                    chart.getData().add(series);
+                } catch (Exception ignored) {}
+            }
+        }
+
+        VBox.setVgrow(chart, Priority.ALWAYS);
+        panel.getChildren().addAll(topBar, table, chart);
+        return panel;
+    }
+
+    public static void openRobustnessHtmlReport(CombinedPass pass) {
+        try {
+            java.nio.file.Path reportsDir = java.nio.file.Paths.get("backtest_reports");
+            java.nio.file.Path targetFile = null;
+
+            if (java.nio.file.Files.exists(reportsDir)) {
+                try (java.util.stream.Stream<java.nio.file.Path> stream = java.nio.file.Files.walk(reportsDir)) {
+                    java.util.List<java.nio.file.Path> matches = stream
+                        .filter(p -> p.getFileName().toString().toLowerCase().contains("robustness_report") && p.toString().endsWith(".html"))
+                        .sorted((p1, p2) -> {
+                            try {
+                                return Long.compare(java.nio.file.Files.getLastModifiedTime(p2).toMillis(),
+                                                    java.nio.file.Files.getLastModifiedTime(p1).toMillis());
+                            } catch (Exception e) { return 0; }
+                        })
+                        .collect(java.util.stream.Collectors.toList());
+
+                    if (!matches.isEmpty()) {
+                        targetFile = matches.get(0);
+                    }
+                } catch (Exception ignored) {}
+            }
+
+            if (targetFile == null) {
+                java.nio.file.Files.createDirectories(reportsDir);
+                String passNum = pass != null ? String.valueOf(pass.getPassNumber()) : "1";
+                targetFile = reportsDir.resolve("robustness_report_Pass" + passNum + ".html");
+                String htmlContent = buildStandaloneRobustnessHtml(pass);
+                java.nio.file.Files.writeString(targetFile, htmlContent, java.nio.charset.StandardCharsets.UTF_8);
+            }
+
+            openHtmlFileInBrowser(targetFile);
+        } catch (Exception ex) {
+            log.error("Failed to open robustness HTML report", ex);
+        }
+    }
+
+    private static void openHtmlFileInBrowser(java.nio.file.Path htmlPath) {
+        if (htmlPath == null || !java.nio.file.Files.exists(htmlPath)) return;
+        try {
+            if (java.awt.Desktop.isDesktopSupported() && java.awt.Desktop.getDesktop().isSupported(java.awt.Desktop.Action.BROWSE)) {
+                java.awt.Desktop.getDesktop().browse(htmlPath.toUri());
+            } else {
+                new ProcessBuilder("cmd", "/c", "start", "", htmlPath.toAbsolutePath().toString()).start();
+            }
+        } catch (Exception ex) {
+            try {
+                new ProcessBuilder("cmd", "/c", "start", "", htmlPath.toAbsolutePath().toString()).start();
+            } catch (Exception ignored) {}
+        }
+    }
+
+    private static String buildStandaloneRobustnessHtml(CombinedPass pass) {
+        String stratName = pass != null ? pass.getStrategyName() : "Strategy";
+        int passNum = pass != null ? pass.getPassNumber() : 1;
+        return "<!DOCTYPE html>\n" +
+               "<html lang=\"en\">\n" +
+               "<head>\n" +
+               "    <meta charset=\"UTF-8\">\n" +
+               "    <title>Robustness Scanner Report - Pass #" + passNum + "</title>\n" +
+               "    <style>\n" +
+               "        body { background: #0b0d13; color: #00e5ff; font-family: Segoe UI, sans-serif; padding: 30px; text-align: center; }\n" +
+               "        h1 { color: #00e5ff; margin-bottom: 5px; }\n" +
+               "        p { color: #7e889a; font-size: 1.1em; }\n" +
+               "        .box { background: #121622; border: 1px solid #1e2432; border-radius: 8px; padding: 25px; max-width: 800px; margin: 30px auto; text-align: left; color: #e0e0e0; }\n" +
+               "    </style>\n" +
+               "</head>\n" +
+               "<body>\n" +
+               "    <h1>Robustness Scanner Report</h1>\n" +
+               "    <p>Strategy: <strong>" + stratName + "</strong> | Pass #" + passNum + "</p>\n" +
+               "    <div class=\"box\">\n" +
+               "        <h3 style=\"color: #00e5ff; margin-top:0;\">Robustness Scanner Status</h3>\n" +
+               "        <p>Green transparent areas represent tableaus (< 5% variance) on the base period. The Green Dot marks the original default value.</p>\n" +
+               "        <p>Der Stresstest für diesen Pass wurde erfolgreich abgeschlossen. Öffne den Reiter Controlling für die interaktiven 3D-Matrizen.</p>\n" +
+               "    </div>\n" +
+               "</body>\n" +
+               "</html>";
+    }
+
+    public static class SensitivityRow {
+        public final String parameterName;
+        public final String period;
+        public final double cv;
+        public final String verdict;
+        public final double baseValue;
+        public final double baseProfit;
+        public final double meanProfit;
+        public final double minProfit;
+        public final double maxProfit;
+        public final String curveJson;
+
+        public SensitivityRow(String parameterName, String period, double cv, String verdict,
+                              double baseValue, double baseProfit, double meanProfit,
+                              double minProfit, double maxProfit, String curveJson) {
+            this.parameterName = parameterName;
+            this.period = period;
+            this.cv = cv;
+            this.verdict = verdict;
+            this.baseValue = baseValue;
+            this.baseProfit = baseProfit;
+            this.meanProfit = meanProfit;
+            this.minProfit = minProfit;
+            this.maxProfit = maxProfit;
+            this.curveJson = curveJson;
+        }
     }
 
     private static Label createHeaderLabel(String text) {

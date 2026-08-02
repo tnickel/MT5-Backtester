@@ -100,6 +100,7 @@ public class ProjectWorkflowEditorView {
     private ComboBox<String> execModeCombo;
     private CheckBox deleteFailedCheckBox;
     private TableView<FilterCondition> filterConditionsTable;
+    private TextField expertField;
     private Label currentTaskSettingsHeader;
 
     // Bottom Fixed Databank Panel Components
@@ -739,9 +740,20 @@ public class ProjectWorkflowEditorView {
         grid.setVgap(15);
 
         grid.add(new Label("Expert Advisor:"), 0, 0);
-        TextField expertField = new TextField(engine.getExpert() != null ? engine.getExpert() : "");
+        String initialEA = (project != null && project.getExpert() != null && !project.getExpert().isBlank())
+                ? project.getExpert() : (engine.getExpert() != null ? engine.getExpert() : "");
+        expertField = new TextField(initialEA);
         expertField.setPrefWidth(280);
-        expertField.textProperty().addListener((obs, oldV, newV) -> engine.setExpert(newV));
+        expertField.textProperty().addListener((obs, oldV, newV) -> {
+            if (newV != null) {
+                String trimmed = newV.trim();
+                engine.setExpert(trimmed);
+                if (project != null) {
+                    project.setExpert(trimmed);
+                    saveProject();
+                }
+            }
+        });
 
         Button browseBtn = new Button("📁 Durchsuchen");
         browseBtn.getStyleClass().add("button");
@@ -752,11 +764,15 @@ public class ProjectWorkflowEditorView {
             java.io.File selected = chooser.showOpenDialog(root.getScene().getWindow());
             if (selected != null) {
                 String path = selected.getName();
-                if (path.toLowerCase().endsWith(".ex5")) {
+                if (path.toLowerCase().endsWith(".ex5") || path.toLowerCase().endsWith(".ex4")) {
                     path = path.substring(0, path.length() - 4);
                 }
                 engine.changeExpert(path);
+                if (project != null) {
+                    project.setExpert(path);
+                }
                 expertField.setText(path);
+                saveProject();
             }
         });
         HBox eaBox = new HBox(8, expertField, browseBtn);
@@ -874,7 +890,7 @@ public class ProjectWorkflowEditorView {
         clearAllBtn.setStyle("-fx-background-color: transparent; -fx-text-fill: #ff5252; -fx-font-weight: bold; -fx-cursor: hand;");
         clearAllBtn.setOnAction(e -> {
             if (!confirmDestructiveAction("Alle Databanken leeren",
-                    "Alle Strategien und alle eigenen Databank-Tabs entfernen?")) return;
+                    "Alle Strategien aus allen Databanken entfernen? (Die Databank-Tabs bleiben erhalten)")) return;
             databankManager.clearAll();
             saveProject();
             refreshDatabanksUI();
@@ -1211,18 +1227,30 @@ public class ProjectWorkflowEditorView {
                 TableRow<CombinedPass> row = new TableRow<>();
 
                 ContextMenu contextMenu = new ContextMenu();
-                MenuItem inspectItem = new MenuItem("🔍 Details anzeigen (Doppelklick)");
+                MenuItem inspectItem = new MenuItem("🔍 Details & EA Parameter anzeigen (Doppelklick)");
                 inspectItem.setOnAction(e -> {
-                    if (!row.isEmpty()) StrategyDetailsModalDialog.show(row.getItem(), root.getScene().getWindow());
+                    if (!row.isEmpty()) StrategyDetailsModalDialog.show(row.getItem(), root.getScene().getWindow(), 0);
                 });
+
+                MenuItem sensitivityItem = new MenuItem("📈 Sensitivitäts-Kennlinien & Stresstest (Rechtsklick)");
+                sensitivityItem.setOnAction(e -> {
+                    if (!row.isEmpty()) StrategyDetailsModalDialog.show(row.getItem(), root.getScene().getWindow(), 3);
+                });
+
+                MenuItem htmlReportItem = new MenuItem("🌐 HTML Robustness Scanner Report im Browser öffnen");
+                htmlReportItem.setOnAction(e -> {
+                    if (!row.isEmpty()) StrategyDetailsModalDialog.openRobustnessHtmlReport(row.getItem());
+                });
+
                 MenuItem deleteItem = new MenuItem("🗑 Selektierte Strategie(n) löschen (Entf)");
                 deleteItem.setOnAction(e -> deleteSelectedRowsFromDatabank(dbName, table));
-                contextMenu.getItems().addAll(inspectItem, deleteItem);
+
+                contextMenu.getItems().addAll(inspectItem, sensitivityItem, htmlReportItem, new SeparatorMenuItem(), deleteItem);
 
                 row.setOnMouseClicked(event -> {
                     if (event.getClickCount() == 2 && (!row.isEmpty())) {
                         CombinedPass rowData = row.getItem();
-                        StrategyDetailsModalDialog.show(rowData, root.getScene().getWindow());
+                        StrategyDetailsModalDialog.show(rowData, root.getScene().getWindow(), 0);
                     }
                 });
 
@@ -1382,6 +1410,11 @@ public class ProjectWorkflowEditorView {
             if (targetDatabankCombo != null) targetDatabankCombo.setValue(tgt);
             if (rankingSourceCombo != null) rankingSourceCombo.setValue(src);
             if (rankingTargetCombo != null) rankingTargetCombo.setValue(tgt);
+            if (expertField != null) {
+                String currentEA = (project != null && project.getExpert() != null && !project.getExpert().isBlank())
+                        ? project.getExpert() : engine.getExpert();
+                expertField.setText(currentEA != null ? currentEA : "");
+            }
             deleteFailedCheckBox.setSelected(task.isDeleteFailed());
             filterConditionsTable.getItems().setAll(task.getFilterConditions());
 
@@ -1404,10 +1437,20 @@ public class ProjectWorkflowEditorView {
                         ? taskPeriod : (project != null ? project.getPeriod() : "H1"));
             }
             if (startDatePicker != null) {
-                startDatePicker.setValue(parseDateOrNull(task.getStartDate()));
+                LocalDate startVal = parseDateOrNull(task.getStartDate());
+                if (startVal == null) {
+                    startVal = engine.getFromDate() != null ? engine.getFromDate() : LocalDate.now().minusYears(2);
+                    task.setStartDate(startVal.toString());
+                }
+                startDatePicker.setValue(startVal);
             }
             if (endDatePicker != null) {
-                endDatePicker.setValue(parseDateOrNull(task.getEndDate()));
+                LocalDate endVal = parseDateOrNull(task.getEndDate());
+                if (endVal == null) {
+                    endVal = engine.getToDate() != null ? engine.getToDate() : LocalDate.now();
+                    task.setEndDate(endVal.toString());
+                }
+                endDatePicker.setValue(endVal);
             }
 
             // Dynamically display only sub-tabs relevant to this task type
@@ -1502,28 +1545,45 @@ public class ProjectWorkflowEditorView {
         String endText = task.getEndDate();
         boolean hasStart = startText != null && !startText.isBlank();
         boolean hasEnd = endText != null && !endText.isBlank();
-        if (hasStart != hasEnd) {
-            throw new IllegalArgumentException("Start- und Enddatum müssen gemeinsam gesetzt werden.");
-        }
 
         LocalDate start = null;
         LocalDate end = null;
+
         if (hasStart) {
             try {
                 start = LocalDate.parse(startText.trim());
+            } catch (Exception ex) {
+                System.err.println("Ungültiges Startdatum-Format im Task: " + startText);
+            }
+        }
+        if (hasEnd) {
+            try {
                 end = LocalDate.parse(endText.trim());
-            } catch (RuntimeException ex) {
-                throw new IllegalArgumentException("Ungültiges Datumsformat im Task (erwartet: YYYY-MM-DD).", ex);
+            } catch (Exception ex) {
+                System.err.println("Ungültiges Enddatum-Format im Task: " + endText);
             }
-            if (!start.isBefore(end)) {
-                throw new IllegalArgumentException("Das Startdatum muss vor dem Enddatum liegen.");
-            }
+        }
+
+        // Fallback for missing dates from engine configuration
+        if (start == null && end != null) {
+            start = engine.getFromDate();
+            if (start == null) start = end.minusYears(3);
+        } else if (end == null && start != null) {
+            end = engine.getToDate();
+            if (end == null) end = LocalDate.now();
+        } else if (start == null && end == null) {
+            start = engine.getFromDate();
+            end = engine.getToDate();
+        }
+
+        if (start != null && end != null && !start.isBefore(end)) {
+            end = start.plusYears(1);
         }
 
         switch (task.getType()) {
             case OPTIMIZER:
             case ROBUSTNESS_CV:
-                if (start != null) {
+                if (start != null && end != null) {
                     engine.setFromDate(start);
                     engine.setToDate(end);
                 }
@@ -1696,6 +1756,7 @@ public class ProjectWorkflowEditorView {
                 Throwable error = getException();
                 String message = error != null && error.getMessage() != null ? error.getMessage() : "Unbekannter Fehler";
                 task.setLastExecutionLog(message);
+                logger.error("Task '" + task.getName() + "' fehlgeschlagen", error);
                 logToConsole("ERROR", "Task '" + task.getName() + "' fehlgeschlagen: " + message);
                 cleanupExecutionState();
             }
@@ -1831,20 +1892,17 @@ public class ProjectWorkflowEditorView {
                                 break;
                         }
 
-                        // Databank processing & filtering
                         List<CombinedPass> processed = databankManager.processTaskDatabanks(task, currentPipelinePasses);
                         task.setOutputPasses(processed);
                         task.setStatus(WorkflowTask.TaskStatus.COMPLETED);
-                        task.setLastExecutionLog("Erfolgreich: " + processed.size() + " Strategien geroutet.");
-                        saveProject();
-
-                        logToConsole("PROJECT", "=== TASK " + (i + 1) + " FERTIG. Databank '" + task.getTargetDatabank() + "' enthält " + processed.size() + " Strategien ===");
-                        Platform.runLater(() -> refreshDatabanksUI());
-                    } catch (Exception ex) {
+                        logToConsole("PROJECT", "Task " + (i + 1) + " (" + task.getName() + ") erfolgreich beendet. Databank '" + task.getTargetDatabank() + "' hat nun " + processed.size() + " Strategien.");
+                    } catch (Exception taskEx) {
                         task.setStatus(WorkflowTask.TaskStatus.FAILED);
-                        task.setLastExecutionLog(ex.getMessage());
-                        logToConsole("ERROR", "Fehler in Task " + (i + 1) + ": " + ex.getMessage());
-                        throw ex;
+                        String errMsg = taskEx.getMessage() != null ? taskEx.getMessage() : taskEx.getClass().getSimpleName();
+                        task.setLastExecutionLog(errMsg);
+                        logger.error("Fehler bei Ausfuehrung von Task " + (i + 1) + " (" + task.getName() + ")", taskEx);
+                        logToConsole("ERROR", "Task " + (i + 1) + " (" + task.getName() + ") fehlgeschlagen: " + errMsg);
+                        throw taskEx;
                     }
 
                     if (isCancelled()) return null;
@@ -1866,6 +1924,7 @@ public class ProjectWorkflowEditorView {
             protected void failed() {
                 Throwable error = getException();
                 String message = error != null && error.getMessage() != null ? error.getMessage() : "Unbekannter Fehler";
+                logger.error("Projektlauf fehlgeschlagen", error);
                 logToConsole("ERROR", "Projektlauf fehlgeschlagen: " + message);
                 cleanupExecutionState();
             }
@@ -1935,13 +1994,13 @@ public class ProjectWorkflowEditorView {
     }
 
     private void cleanupExecutionState() {
-        startBtn.setDisable(false);
-        stopBtn.setDisable(true);
-        resetBtn.setDisable(false);
-        setEditorLocked(false);
-        activeProjectTask = null;
         saveProject();
         Platform.runLater(() -> {
+            startBtn.setDisable(false);
+            stopBtn.setDisable(true);
+            resetBtn.setDisable(false);
+            setEditorLocked(false);
+            activeProjectTask = null;
             refreshTaskChain();
             String focusDb = selectedTask != null ? selectedTask.getTargetDatabank() : null;
             refreshDatabanksUI(focusDb);
@@ -1949,10 +2008,18 @@ public class ProjectWorkflowEditorView {
     }
 
     private void setEditorLocked(boolean locked) {
-        if (fullSettingsTab != null) fullSettingsTab.setDisable(locked);
-        if (taskChainListBox != null) taskChainListBox.setDisable(locked);
-        if (bottomDatabankTabPane != null) bottomDatabankTabPane.setDisable(locked);
-        if (databankToolbar != null) databankToolbar.setDisable(locked);
+        Runnable updateUI = () -> {
+            if (fullSettingsTab != null) fullSettingsTab.setDisable(locked);
+            if (resultsTab != null) resultsTab.setDisable(locked);
+            if (taskChainListBox != null) taskChainListBox.setDisable(locked);
+            if (bottomDatabankTabPane != null) bottomDatabankTabPane.setDisable(locked);
+            if (databankToolbar != null) databankToolbar.setDisable(locked);
+        };
+        if (Platform.isFxApplicationThread()) {
+            updateUI.run();
+        } else {
+            Platform.runLater(updateUI);
+        }
     }
 
     private void saveProject() {

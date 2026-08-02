@@ -1546,8 +1546,8 @@ public class WorkflowView {
 
         logToConsole("WORKFLOW", "=== AUTOMATION GESTARTET ===");
 
-        // Show Desktop 2 info toast, then start the workflow after it disappears
-        showDesktop2Notification(() -> launchWorkflowTask());
+        // Immediately launch the workflow task without modal dialog interruptions
+        launchWorkflowTask();
     }
 
     /**

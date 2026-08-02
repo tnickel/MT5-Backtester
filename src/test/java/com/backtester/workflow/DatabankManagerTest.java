@@ -114,6 +114,20 @@ public class DatabankManagerTest {
         assertFalse(invalidThreshold.evaluate(null));
     }
 
+    @Test
+    public void clearAllRetainsCustomDatabankTabsAndEmptiesContent() {
+        DatabankManager manager = new DatabankManager();
+        manager.createDatabank("CustomDB");
+        manager.setDatabankContent("Results", List.of(pass(1, 100.0)));
+        manager.setDatabankContent("CustomDB", List.of(pass(2, 200.0)));
+
+        manager.clearAll();
+
+        assertTrue("CustomDB tab must be retained", manager.getDatabankNames().contains("CustomDB"));
+        assertTrue("Results must be empty", manager.getDatabank("Results").isEmpty());
+        assertTrue("CustomDB must be empty", manager.getDatabank("CustomDB").isEmpty());
+    }
+
     private static CombinedPass pass(int number, double profit) {
         OptimizationResult.Pass bt = new OptimizationResult.Pass();
         bt.setPassNumber(number);

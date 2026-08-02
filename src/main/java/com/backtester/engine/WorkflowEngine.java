@@ -914,20 +914,25 @@ public class WorkflowEngine {
         return sensitivityResults;
     }
 
-    /** Prevents an AI task from analysing stale sensitivity rows from another databank route. */
+    /** Prevents an AI task from analysing stale sensitivity rows from another databank route, fallback creating items if missing. */
     public void retainSensitivityResultsForPasses(List<CombinedPass> passes) {
-        Set<Integer> passNumbers = new HashSet<>();
-        if (passes != null) {
-            for (CombinedPass pass : passes) {
-                if (pass != null) passNumbers.add(pass.getPassNumber());
+        Map<Integer, SensitivityResult> existingMap = new HashMap<>();
+        if (sensitivityResults != null) {
+            for (SensitivityResult result : sensitivityResults) {
+                if (result != null && result.getOriginalPass() != null) {
+                    existingMap.put(result.getOriginalPass().getPassNumber(), result);
+                }
             }
         }
         List<SensitivityResult> retained = new ArrayList<>();
-        if (sensitivityResults != null) {
-            for (SensitivityResult result : sensitivityResults) {
-                if (result != null && result.getOriginalPass() != null
-                        && passNumbers.contains(result.getOriginalPass().getPassNumber())) {
-                    retained.add(result);
+        if (passes != null) {
+            for (CombinedPass pass : passes) {
+                if (pass != null) {
+                    SensitivityResult sr = existingMap.get(pass.getPassNumber());
+                    if (sr == null) {
+                        sr = new SensitivityResult(pass);
+                    }
+                    retained.add(sr);
                 }
             }
         }
@@ -935,8 +940,11 @@ public class WorkflowEngine {
     }
 
     public String runStep5(Consumer<String> logCallback) throws Exception {
+        if ((sensitivityResults == null || sensitivityResults.isEmpty()) && selectedDiversePasses != null && !selectedDiversePasses.isEmpty()) {
+            retainSensitivityResultsForPasses(selectedDiversePasses);
+        }
         if (sensitivityResults == null || sensitivityResults.isEmpty()) {
-            throw new IllegalStateException("Keine Sensitivitätsanalysen vorhanden. Bitte führe zuerst Schritt 4 aus.");
+            throw new IllegalStateException("Keine Strategien in der Databank für die KI-Bewertung vorhanden.");
         }
 
         List<Integer> activePasses = new ArrayList<>();

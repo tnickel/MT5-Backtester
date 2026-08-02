@@ -208,6 +208,11 @@ public class WorkflowConfigDialogs {
         paramTable.setEditable(true);
         paramTable.setStyle("-fx-background-color: transparent;");
 
+        paramTable.getItems().addListener((javafx.collections.ListChangeListener<EaParameter>) c -> {
+            int count = paramTable.getItems().size();
+            paramTitle.setText("EA Parameter & Optimierungs-Suchraum (" + count + " Parameter)");
+        });
+
         TableColumn<EaParameter, Boolean> optCol = new TableColumn<>("Opt");
         optCol.setCellValueFactory(cellData -> new javafx.beans.property.SimpleBooleanProperty(cellData.getValue().isOptimizeEnabled()));
         optCol.setCellFactory(tc -> new TableCell<EaParameter, Boolean>() {
@@ -343,8 +348,11 @@ public class WorkflowConfigDialogs {
                                 modelCombo.getSelectionModel().select(engine.getTickModel());
                             }
 
+                            List<EaParameter> diskParams = eaParamManager.getEffectiveParameters(expert);
+                            List<EaParameter> mergedEngineParams = eaParamManager.mergeLoadedWithExisting(diskParams, engine.getEaParameters());
+
                             List<EaParameter> tableCopy = new ArrayList<>();
-                            for (EaParameter p : engine.getEaParameters()) {
+                            for (EaParameter p : mergedEngineParams) {
                                 EaParameter copy = new EaParameter();
                                 copy.setName(p.getName());
                                 copy.setDisplayName(p.getDisplayName());
@@ -387,6 +395,8 @@ public class WorkflowConfigDialogs {
                     java.lang.reflect.Type listType = new com.google.gson.reflect.TypeToken<java.util.List<com.backtester.config.EaParameter>>(){}.getType();
                     params = new com.google.gson.Gson().fromJson(dbParamsJson, listType);
                     if (params != null && !params.isEmpty()) {
+                        List<EaParameter> diskParams = eaParamManager.getEffectiveParameters(expert);
+                        params = eaParamManager.mergeLoadedWithExisting(diskParams, params);
                         eaParamManager.applyTranslations(expert, params);
                     }
                 } catch (Exception ignored) {}

@@ -165,7 +165,7 @@ public class OptimizationRunner {
                 long lastProgressTime = System.currentTimeMillis();
                 int lastProgress = 0;
                 
-                while (!finished && !cancelled && currentProcess.isAlive()) {
+                while (!finished && !cancelled && isProcessRunning(currentProcess, mt5Dir)) {
                     Thread.sleep(2000);
                     int currentProgress = currentProgressVal.get();
                     long now = System.currentTimeMillis();
@@ -180,13 +180,13 @@ public class OptimizationRunner {
                     } else if (now - lastProgressTime > 600_000) { // 10 minutes without progress or activity
                         if (lastProgress == 0 && now - lastProgressTime > 900_000) { // 15 minutes to start up
                             logMessage("ERROR: " + platformName + " terminal hung during startup (no progress or log activity for 15 minutes). Terminating process...");
-                            currentProcess.destroyForcibly();
+                            if (currentProcess != null && currentProcess.isAlive()) currentProcess.destroyForcibly();
                             cancelled = true;
                             result.setMessage("Hung during startup");
                             break;
                         } else if (lastProgress > 0) {
                             logMessage("ERROR: No optimization progress or log activity detected for 10 minutes. Terminating process...");
-                            currentProcess.destroyForcibly();
+                            if (currentProcess != null && currentProcess.isAlive()) currentProcess.destroyForcibly();
                             cancelled = true;
                             result.setMessage("Progress timeout");
                             break;
@@ -201,18 +201,22 @@ public class OptimizationRunner {
                 }
                 
                 if (!cancelled) {
-                    logMessage("Waiting for " + platformName + " process to exit...");
-                    try {
-                        if (!currentProcess.waitFor(30, java.util.concurrent.TimeUnit.SECONDS)) {
-                            logMessage("WARNING: " + platformName + " process did not exit within 30 seconds after report completion. Forcibly terminating process...");
-                            currentProcess.destroyForcibly();
+                    if (currentProcess != null && currentProcess.isAlive()) {
+                        logMessage("Waiting for " + platformName + " process to exit...");
+                        try {
+                            if (!currentProcess.waitFor(30, java.util.concurrent.TimeUnit.SECONDS)) {
+                                logMessage("WARNING: " + platformName + " process did not exit within 30 seconds after report completion. Forcibly terminating process...");
+                                currentProcess.destroyForcibly();
+                            }
+                        } catch (InterruptedException e) {
+                            logMessage("Interrupted while waiting for " + platformName + " process to exit.");
+                            Thread.currentThread().interrupt();
                         }
-                    } catch (InterruptedException e) {
-                        logMessage("Interrupted while waiting for " + platformName + " process to exit.");
-                        Thread.currentThread().interrupt();
+                        int exitCode = currentProcess.isAlive() ? -1 : currentProcess.exitValue();
+                        logMessage(platformName + " process exited with code " + exitCode);
+                    } else {
+                        logMessage(platformName + " process delegated execution to existing running terminal instance.");
                     }
-                    int exitCode = currentProcess.isAlive() ? -1 : currentProcess.exitValue();
-                    logMessage(platformName + " process exited with code " + exitCode);
                 }
             } else {
                 logMessage("Waiting for optimization to finish (" + platformName + " will remain open)...");
@@ -222,7 +226,7 @@ public class OptimizationRunner {
                 // spinning forever (the process stays alive because the terminal
                 // remains open by design in this mode).
                 long lastActivityDeadline = System.currentTimeMillis();
-                while (!finished && !cancelled && currentProcess.isAlive()) {
+                while (!finished && !cancelled && isProcessRunning(currentProcess, mt5Dir)) {
                     Thread.sleep(2000);
                     long now = System.currentTimeMillis();
                     if (now - tailer.getLastActivityTime() < 600_000) {
@@ -385,6 +389,33 @@ public class OptimizationRunner {
         if (currentProcess != null && currentProcess.isAlive()) {
             currentProcess.destroyForcibly();
             logMessage("Optimization process terminated.");
+        }
+    }
+
+    private boolean isProcessRunning(Process process, Path mt5Dir) {
+        if (process != null && process.isAlive()) {
+            return true;
+        }
+        if (tailer != null && (System.currentTimeMillis() - tailer.getLastActivityTime()) < 30_000) {
+            return true;
+        }
+        return isMt5ProcessRunning();
+    }
+
+    private boolean isMt5ProcessRunning() {
+        try {
+            return ProcessHandle.allProcesses()
+                .anyMatch(ph -> {
+                    if (!ph.isAlive()) return false;
+                    java.util.Optional<String> cmd = ph.info().command();
+                    if (cmd.isPresent()) {
+                        String name = cmd.get().toLowerCase();
+                        return name.contains("terminal64") || name.contains("terminal");
+                    }
+                    return false;
+                });
+        } catch (Exception e) {
+            return false;
         }
     }
 }

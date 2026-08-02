@@ -350,6 +350,11 @@ public class OptimizationView {
         paramTable = new TableView<>();
         paramTable.setStyle("-fx-background-color: transparent;");
         paramTable.setEditable(true);
+
+        paramTable.getItems().addListener((javafx.collections.ListChangeListener<EaParameter>) c -> {
+            int count = paramTable.getItems().size();
+            title.setText("EA Parameters & Optimization Ranges (" + count + " Parameter)");
+        });
         paramTable.setRowFactory(tv -> new TableRow<EaParameter>() {
             @Override
             protected void updateItem(EaParameter item, boolean empty) {
@@ -3393,9 +3398,11 @@ public class OptimizationView {
                 java.lang.reflect.Type listType = new com.google.gson.reflect.TypeToken<java.util.List<com.backtester.config.EaParameter>>(){}.getType();
                 java.util.List<com.backtester.config.EaParameter> params = new com.google.gson.Gson().fromJson(dbParamsJson, listType);
                 if (params != null && !params.isEmpty()) {
+                    java.util.List<com.backtester.config.EaParameter> diskParams = eaParamManager.getEffectiveParameters(expert);
+                    params = eaParamManager.mergeLoadedWithExisting(diskParams, params);
                     eaParamManager.applyTranslations(expert, params);
                     paramTable.getItems().setAll(params);
-                    logView.log("INFO", "Loaded parameters for " + EaParameterManager.extractEaBaseName(expert) + " [" + symbol + ", " + period + "] from DB");
+                    logView.log("INFO", "Loaded " + params.size() + " parameters for " + EaParameterManager.extractEaBaseName(expert) + " [" + symbol + ", " + period + "] from DB");
                     return;
                 }
             } catch (Exception e) {
