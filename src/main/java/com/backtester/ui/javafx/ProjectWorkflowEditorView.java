@@ -1074,8 +1074,12 @@ public class ProjectWorkflowEditorView {
             DatabankColumnChooserDialog.show(root.getScene().getWindow(), this::refreshDatabanksUI);
         });
 
+        Button compareDatabanksBtn = new Button("📊 Databanken vergleichen");
+        compareDatabanksBtn.setStyle("-fx-background-color: transparent; -fx-text-fill: #76ff03; -fx-font-weight: bold; -fx-cursor: hand;");
+        compareDatabanksBtn.setOnAction(e -> DatabankComparisonDialog.show(root.getScene().getWindow(), databankManager));
+
         bar.getChildren().addAll(newDatabankBtn, clearCurrentDbBtn, clearAllBtn, deleteDatabankBtn,
-                deleteSelectedStratsBtn, configColumnsBtn, persistDatabanksCheckBox);
+                deleteSelectedStratsBtn, configColumnsBtn, compareDatabanksBtn, persistDatabanksCheckBox);
 
         bottomDatabankTabPane = new TabPane();
         VBox.setVgrow(bottomDatabankTabPane, Priority.ALWAYS);
