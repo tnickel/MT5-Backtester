@@ -36,7 +36,6 @@ import java.time.LocalDate;
 import java.time.Duration;
 import java.util.Locale;
 import java.util.ArrayList;
-import java.util.HashSet;
 import java.util.List;
 
 /**
@@ -101,6 +100,12 @@ public class ProjectWorkflowEditorView {
     private CheckBox deleteFailedCheckBox;
     private TableView<FilterCondition> filterConditionsTable;
     private TextField expertField;
+    private TextField taskNameField;
+    private TextField diversityParamDiffField;
+    private TextField diversityTradeDiffField;
+    private Spinner<Integer> diversityMinDiffParamsSpinner;
+    private Spinner<Integer> diversityMaxStrategiesSpinner;
+    private boolean updatingDiversityControls;
     private Label currentTaskSettingsHeader;
 
     // Bottom Fixed Databank Panel Components
@@ -161,8 +166,13 @@ public class ProjectWorkflowEditorView {
     }
 
     public void loadProject(CustomProject proj) {
+        if (this.project != null && this.project != proj && selectedTask != null) {
+            applySelectedTaskName();
+        }
         this.project = proj;
+        this.selectedTask = null;
         if (proj != null) {
+            boolean projectChanged = proj.migrateLegacyTaskDefinitions();
             engine.resetTransientResults();
             projectTitleLabel.setText("/ " + proj.getName());
             databankManager.loadFromProject(proj);
@@ -180,16 +190,13 @@ public class ProjectWorkflowEditorView {
                     }
                 }
                 if (!hasSelection) {
-                    WorkflowTask selTask = new WorkflowTask("1. Strategie-Auswahl", WorkflowTask.TaskType.STRATEGY_SELECTION);
+                    WorkflowTask selTask = new WorkflowTask("Strategie-Auswahl", WorkflowTask.TaskType.STRATEGY_SELECTION);
                     proj.getTasks().add(0, selTask);
-                    for (int i = 0; i < proj.getTasks().size(); i++) {
-                        WorkflowTask t = proj.getTasks().get(i);
-                        String cleanName = t.getName().replaceAll("^\\d+\\.\\s*", "");
-                        t.setName((i + 1) + ". " + cleanName);
-                    }
-                    saveProject();
+                    projectChanged = true;
                 }
             }
+
+            if (projectChanged) saveProject();
 
             engine.changeExpert(proj.getExpert());
             engine.setSymbol(proj.getSymbol());
@@ -337,6 +344,20 @@ public class ProjectWorkflowEditorView {
         currentTaskSettingsHeader.setFont(Font.font("Segoe UI", FontWeight.BOLD, 15));
         currentTaskSettingsHeader.setTextFill(Color.web("#00e5ff"));
 
+        HBox taskIdentityRow = new HBox(10);
+        taskIdentityRow.setAlignment(Pos.CENTER_LEFT);
+        Label taskNameLabel = new Label("Modulname:");
+        taskNameLabel.setStyle("-fx-font-weight: bold;");
+        taskNameField = new TextField();
+        taskNameField.setPromptText("Individueller Name, z. B. Validierung (OOS)");
+        taskNameField.setDisable(true);
+        taskNameField.setOnAction(e -> applySelectedTaskName());
+        taskNameField.focusedProperty().addListener((obs, wasFocused, isFocused) -> {
+            if (wasFocused && !isFocused) applySelectedTaskName();
+        });
+        HBox.setHgrow(taskNameField, Priority.ALWAYS);
+        taskIdentityRow.getChildren().addAll(taskNameLabel, taskNameField);
+
         fullSettingsSubTabPane = new TabPane();
         VBox.setVgrow(fullSettingsSubTabPane, Priority.ALWAYS);
 
@@ -350,8 +371,8 @@ public class ProjectWorkflowEditorView {
         optimizerSettingsTab.setClosable(false);
         optimizerSettingsTab.setContent(createOptimizerSettingsSubTab());
 
-        // Sub-Tab 3: What to retest / Databanks
-        retestSubTab = new Tab("What to retest");
+        // Sub-Tab 3: Databank routing
+        retestSubTab = new Tab("Databank routing");
         retestSubTab.setClosable(false);
         retestSubTab.setContent(createWhatToRetestSubTab());
 
@@ -373,7 +394,7 @@ public class ProjectWorkflowEditorView {
         fullSettingsSubTabPane.getTabs().addAll(
             strategySelectionTab, optimizerSettingsTab, retestSubTab, dataSubTab, rankingSubTab, diversitySubTab
         );
-        box.getChildren().addAll(currentTaskSettingsHeader, fullSettingsSubTabPane);
+        box.getChildren().addAll(currentTaskSettingsHeader, taskIdentityRow, fullSettingsSubTabPane);
 
         return box;
     }
@@ -383,7 +404,7 @@ public class ProjectWorkflowEditorView {
         panel.setPadding(new Insets(20));
         panel.setStyle("-fx-background-color: rgba(26, 30, 40, 0.85); -fx-border-color: #2e3545; -fx-border-radius: 6;");
 
-        Label heading = new Label("What to retest / Databank routing settings");
+        Label heading = new Label("Databank routing settings");
         heading.setFont(Font.font("Segoe UI", FontWeight.BOLD, 15));
         heading.setTextFill(Color.web("#00e5ff"));
 
@@ -391,7 +412,7 @@ public class ProjectWorkflowEditorView {
         grid.setHgap(15);
         grid.setVgap(15);
 
-        grid.add(new Label("Retest all strategies from databank:"), 0, 0);
+        grid.add(new Label("Read strategies from databank:"), 0, 0);
         sourceDatabankCombo = new ComboBox<>(FXCollections.observableArrayList("Results", "Existing portfolio", "Final"));
         sourceDatabankCombo.setValue("Results");
         sourceDatabankCombo.setOnAction(e -> {
@@ -402,7 +423,7 @@ public class ProjectWorkflowEditorView {
         });
         grid.add(sourceDatabankCombo, 1, 0);
 
-        grid.add(new Label("and store results in databank:"), 0, 1);
+        grid.add(new Label("Store task results in databank:"), 0, 1);
         targetDatabankCombo = new ComboBox<>(FXCollections.observableArrayList("Results", "Existing portfolio", "Final"));
         targetDatabankCombo.setValue("Results");
         targetDatabankCombo.setOnAction(e -> {
@@ -414,8 +435,8 @@ public class ProjectWorkflowEditorView {
         grid.add(targetDatabankCombo, 1, 1);
 
         Label helpText = new Label(
-            "If you choose a different databank to store the retested results, the strategies will be copied to the " +
-            "destination databank and the original strategies with their existing results will remain in the source databank."
+            "This task processes only the selected source databank. Choose a separate target to keep the source " +
+            "unchanged and route the task results into a new databank."
         );
         helpText.setWrapText(true);
         helpText.setStyle("-fx-text-fill: #7e889a; -fx-font-size: 12px;");
@@ -429,7 +450,7 @@ public class ProjectWorkflowEditorView {
         panel.setPadding(new Insets(20));
         panel.setStyle("-fx-background-color: rgba(26, 30, 40, 0.85); -fx-border-color: #2e3545; -fx-border-radius: 6;");
 
-        Label heading = new Label("Backtest Data Settings (OOS / Retest Period)");
+        Label heading = new Label("Backtest Data Settings (Retester)");
         heading.setFont(Font.font("Segoe UI", FontWeight.BOLD, 15));
         heading.setTextFill(Color.web("#00e5ff"));
 
@@ -481,7 +502,7 @@ public class ProjectWorkflowEditorView {
         });
         grid.add(execModeCombo, 1, 2);
 
-        grid.add(new Label("Start day (OOS From):"), 0, 3);
+        grid.add(new Label("Start day (Test From):"), 0, 3);
         startDatePicker = new DatePicker();
         startDatePicker.setOnAction(e -> {
             if (selectedTask != null && startDatePicker.getValue() != null) {
@@ -491,7 +512,7 @@ public class ProjectWorkflowEditorView {
         });
         grid.add(startDatePicker, 1, 3);
 
-        grid.add(new Label("End day (OOS To):"), 0, 4);
+        grid.add(new Label("End day (Test To):"), 0, 4);
         endDatePicker = new DatePicker();
         endDatePicker.setOnAction(e -> {
             if (selectedTask != null && endDatePicker.getValue() != null) {
@@ -692,7 +713,7 @@ public class ProjectWorkflowEditorView {
         panel.setPadding(new Insets(20));
         panel.setStyle("-fx-background-color: rgba(26, 30, 40, 0.85); -fx-border-color: #2e3545; -fx-border-radius: 6;");
 
-        Label heading = new Label("Diversitäts-Filter & Korrelations-Schwellenwerte");
+        Label heading = new Label("Diversitäts-Clustering der ausgewählten Quell-Databank");
         heading.setFont(Font.font("Segoe UI", FontWeight.BOLD, 15));
         heading.setTextFill(Color.web("#00e5ff"));
 
@@ -701,29 +722,78 @@ public class ProjectWorkflowEditorView {
         grid.setVgap(15);
 
         grid.add(new Label("Param Differenz %:"), 0, 0);
-        TextField paramDiffField = new TextField(String.format(Locale.US, "%.0f", engine.getParamDiffPct() * 100));
-        grid.add(paramDiffField, 1, 0);
+        diversityParamDiffField = new TextField(String.format(Locale.US, "%.0f",
+                WorkflowTask.DEFAULT_DIVERSITY_PARAM_DIFF_PCT * 100));
+        diversityParamDiffField.setOnAction(e -> commitDiversityPercentage(diversityParamDiffField, true));
+        diversityParamDiffField.focusedProperty().addListener((obs, wasFocused, isFocused) -> {
+            if (wasFocused && !isFocused) commitDiversityPercentage(diversityParamDiffField, true);
+        });
+        grid.add(diversityParamDiffField, 1, 0);
 
         grid.add(new Label("Trades Differenz %:"), 2, 0);
-        TextField tradeDiffField = new TextField(String.format(Locale.US, "%.0f", engine.getTradeDiffPct() * 100));
-        grid.add(tradeDiffField, 3, 0);
+        diversityTradeDiffField = new TextField(String.format(Locale.US, "%.0f",
+                WorkflowTask.DEFAULT_DIVERSITY_TRADE_DIFF_PCT * 100));
+        diversityTradeDiffField.setOnAction(e -> commitDiversityPercentage(diversityTradeDiffField, false));
+        diversityTradeDiffField.focusedProperty().addListener((obs, wasFocused, isFocused) -> {
+            if (wasFocused && !isFocused) commitDiversityPercentage(diversityTradeDiffField, false);
+        });
+        grid.add(diversityTradeDiffField, 3, 0);
 
         grid.add(new Label("Min. differente Params:"), 0, 1);
-        Spinner<Integer> minDiffParamsSpin = new Spinner<>(1, 10, engine.getMinDifferentParams(), 1);
-        grid.add(minDiffParamsSpin, 1, 1);
+        diversityMinDiffParamsSpinner = new Spinner<>(1, 100,
+                WorkflowTask.DEFAULT_DIVERSITY_MIN_DIFFERENT_PARAMS, 1);
+        diversityMinDiffParamsSpinner.setEditable(true);
+        diversityMinDiffParamsSpinner.valueProperty().addListener((obs, oldValue, newValue) -> {
+            if (!updatingDiversityControls && selectedTask != null && newValue != null) {
+                selectedTask.setDiversityMinDifferentParams(newValue);
+                saveProject();
+            }
+        });
+        grid.add(diversityMinDiffParamsSpinner, 1, 1);
 
         grid.add(new Label("Max. Strategien (Ziel):"), 2, 1);
-        Spinner<Integer> maxStratsSpin = new Spinner<>(1, 20, engine.getMaxStrategiesToSelect(), 1);
-        grid.add(maxStratsSpin, 3, 1);
-
-        Button openFullDialogBtn = new Button("⚙ Vollständigen Diversitäts- & Filtereinstellungs-Dialog öffnen");
-        openFullDialogBtn.getStyleClass().add("button-start");
-        openFullDialogBtn.setOnAction(e -> {
-            WorkflowConfigDialogs.showStep3Dialog(engine, root.getScene().getWindow());
+        diversityMaxStrategiesSpinner = new Spinner<>(1, 10000,
+                WorkflowTask.DEFAULT_DIVERSITY_MAX_STRATEGIES, 1);
+        diversityMaxStrategiesSpinner.setEditable(true);
+        diversityMaxStrategiesSpinner.valueProperty().addListener((obs, oldValue, newValue) -> {
+            if (!updatingDiversityControls && selectedTask != null && newValue != null) {
+                selectedTask.setDiversityMaxStrategies(newValue);
+                saveProject();
+            }
         });
+        grid.add(diversityMaxStrategiesSpinner, 3, 1);
 
-        panel.getChildren().addAll(heading, grid, new Separator(), openFullDialogBtn);
+        Label sourceInfo = new Label(
+                "Es wird ausschließlich die unter 'Databank routing' gewählte Quell-Databank geclustert. " +
+                "Performance-Filter und Retests werden als eigene Tasks angelegt. Für Langzeitdaten wird hinter " +
+                "dem Retester ein weiterer Diversitäts-Clustering-Task mit dessen Ausgabedatabank als Quelle eingefügt."
+        );
+        sourceInfo.setWrapText(true);
+        sourceInfo.setStyle("-fx-text-fill: #7e889a; -fx-font-size: 12px;");
+
+        panel.getChildren().addAll(heading, grid, new Separator(), sourceInfo);
         return panel;
+    }
+
+    private void commitDiversityPercentage(TextField field, boolean parameterDifference) {
+        if (updatingDiversityControls || selectedTask == null || field == null) return;
+        double currentValue = parameterDifference
+                ? selectedTask.getDiversityParamDiffPct() : selectedTask.getDiversityTradeDiffPct();
+        try {
+            double percentage = Double.parseDouble(field.getText().trim().replace(',', '.'));
+            double fraction = percentage / 100.0;
+            if (parameterDifference) {
+                selectedTask.setDiversityParamDiffPct(fraction);
+            } else {
+                selectedTask.setDiversityTradeDiffPct(fraction);
+            }
+            field.setText(String.format(Locale.US, "%.0f", percentage));
+            field.setStyle("");
+            saveProject();
+        } catch (RuntimeException ex) {
+            field.setText(String.format(Locale.US, "%.0f", currentValue * 100));
+            field.setStyle("-fx-border-color: #ff5252;");
+        }
     }
 
     private VBox createStrategySelectionSubTab() {
@@ -1372,11 +1442,17 @@ public class ProjectWorkflowEditorView {
 
         Button configBtn = new Button("⚙");
         configBtn.setStyle("-fx-background-color: transparent; -fx-text-fill: #ffd740; -fx-padding: 2; -fx-cursor: hand;");
-        configBtn.setTooltip(new Tooltip("Task-Einstellungen in der Mitte öffnen"));
+        configBtn.setTooltip(new Tooltip("Modulname und Task-Einstellungen öffnen"));
         configBtn.setOnAction(e -> {
             e.consume();
             selectTask(task);
             centerMainTabPane.getSelectionModel().select(fullSettingsTab);
+            Platform.runLater(() -> {
+                if (taskNameField != null) {
+                    taskNameField.requestFocus();
+                    taskNameField.selectAll();
+                }
+            });
         });
 
         Button deleteBtn = new Button("🗑");
@@ -1398,11 +1474,18 @@ public class ProjectWorkflowEditorView {
     }
 
     private void selectTask(WorkflowTask task) {
+        if (this.selectedTask != null && this.selectedTask != task) {
+            applySelectedTaskName();
+        }
         this.selectedTask = task;
         refreshTaskChain();
         updateDatabankComboBoxes();
         if (task != null) {
             currentTaskSettingsHeader.setText("Advanced settings for '" + task.getName() + "'");
+            if (taskNameField != null) {
+                taskNameField.setDisable(false);
+                taskNameField.setText(task.getName());
+            }
             String src = task.getSourceDatabank() != null ? task.getSourceDatabank() : "Results";
             String tgt = task.getTargetDatabank() != null ? task.getTargetDatabank() : "Results";
 
@@ -1410,6 +1493,27 @@ public class ProjectWorkflowEditorView {
             if (targetDatabankCombo != null) targetDatabankCombo.setValue(tgt);
             if (rankingSourceCombo != null) rankingSourceCombo.setValue(src);
             if (rankingTargetCombo != null) rankingTargetCombo.setValue(tgt);
+            updatingDiversityControls = true;
+            try {
+                if (diversityParamDiffField != null) {
+                    diversityParamDiffField.setText(String.format(Locale.US, "%.0f",
+                            task.getDiversityParamDiffPct() * 100));
+                    diversityParamDiffField.setStyle("");
+                }
+                if (diversityTradeDiffField != null) {
+                    diversityTradeDiffField.setText(String.format(Locale.US, "%.0f",
+                            task.getDiversityTradeDiffPct() * 100));
+                    diversityTradeDiffField.setStyle("");
+                }
+                if (diversityMinDiffParamsSpinner != null) {
+                    diversityMinDiffParamsSpinner.getValueFactory().setValue(task.getDiversityMinDifferentParams());
+                }
+                if (diversityMaxStrategiesSpinner != null) {
+                    diversityMaxStrategiesSpinner.getValueFactory().setValue(task.getDiversityMaxStrategies());
+                }
+            } finally {
+                updatingDiversityControls = false;
+            }
             if (expertField != null) {
                 String currentEA = (project != null && project.getExpert() != null && !project.getExpert().isBlank())
                         ? project.getExpert() : engine.getExpert();
@@ -1466,7 +1570,7 @@ public class ProjectWorkflowEditorView {
                     if (rankingSubTab != null) fullSettingsSubTabPane.getTabs().add(rankingSubTab);
                     if (retestSubTab != null) fullSettingsSubTabPane.getTabs().add(retestSubTab);
                     break;
-                case LONGTERM_RETEST:
+                case RETESTER:
                     if (retestSubTab != null) fullSettingsSubTabPane.getTabs().add(retestSubTab);
                     if (dataSubTab != null) fullSettingsSubTabPane.getTabs().add(dataSubTab);
                     if (rankingSubTab != null) fullSettingsSubTabPane.getTabs().add(rankingSubTab);
@@ -1477,7 +1581,6 @@ public class ProjectWorkflowEditorView {
                     if (rankingSubTab != null) fullSettingsSubTabPane.getTabs().add(rankingSubTab);
                     break;
                 case ROBUSTNESS_CV:
-                case OOS_VALIDATION:
                     if (dataSubTab != null) fullSettingsSubTabPane.getTabs().add(dataSubTab);
                     if (retestSubTab != null) fullSettingsSubTabPane.getTabs().add(retestSubTab);
                     if (rankingSubTab != null) fullSettingsSubTabPane.getTabs().add(rankingSubTab);
@@ -1497,8 +1600,27 @@ public class ProjectWorkflowEditorView {
             }
         } else {
             currentTaskSettingsHeader.setText("No task selected");
+            if (taskNameField != null) {
+                taskNameField.clear();
+                taskNameField.setDisable(true);
+            }
             fullSettingsSubTabPane.getTabs().clear();
         }
+    }
+
+    private void applySelectedTaskName() {
+        if (selectedTask == null || taskNameField == null) return;
+        String requestedName = taskNameField.getText() != null ? taskNameField.getText().trim() : "";
+        if (requestedName.isEmpty()) {
+            taskNameField.setText(selectedTask.getName());
+            return;
+        }
+        if (requestedName.equals(selectedTask.getName())) return;
+
+        selectedTask.setName(requestedName);
+        currentTaskSettingsHeader.setText("Advanced settings for '" + requestedName + "'");
+        saveProject();
+        refreshTaskChain();
     }
 
     private static LocalDate parseDateOrNull(String value) {
@@ -1518,9 +1640,8 @@ public class ProjectWorkflowEditorView {
 
         boolean requiresExpert = (task.getType() == WorkflowTask.TaskType.STRATEGY_SELECTION ||
                                   task.getType() == WorkflowTask.TaskType.OPTIMIZER ||
-                                  task.getType() == WorkflowTask.TaskType.LONGTERM_RETEST ||
-                                  task.getType() == WorkflowTask.TaskType.ROBUSTNESS_CV ||
-                                  task.getType() == WorkflowTask.TaskType.OOS_VALIDATION);
+                                  task.getType() == WorkflowTask.TaskType.RETESTER ||
+                                  task.getType() == WorkflowTask.TaskType.ROBUSTNESS_CV);
 
         if (requiresExpert) {
             String taskExpert = (project != null && project.getExpert() != null && !project.getExpert().isBlank())
@@ -1588,34 +1709,13 @@ public class ProjectWorkflowEditorView {
                     engine.setToDate(end);
                 }
                 break;
-            case LONGTERM_RETEST:
+            case RETESTER:
                 engine.setLongtermFromDate(start != null ? start : LocalDate.now().minusYears(7));
                 engine.setLongtermToDate(end != null ? end : LocalDate.now());
-                break;
-            case OOS_VALIDATION:
-                engine.setValidationFromDate(start);
-                engine.setValidationToDate(end);
                 break;
             default:
                 break;
         }
-    }
-
-    private static List<CombinedPass> passedValidationCandidates(List<CombinedPass> inputPasses,
-                                                                  List<ValidationResult> validationResults) {
-        Set<Integer> passedNumbers = new HashSet<>();
-        if (validationResults != null) {
-            for (ValidationResult result : validationResults) {
-                if (result != null && result.isPassed()) passedNumbers.add(result.getPassNumber());
-            }
-        }
-        List<CombinedPass> passed = new ArrayList<>();
-        if (inputPasses != null) {
-            for (CombinedPass pass : inputPasses) {
-                if (pass != null && passedNumbers.contains(pass.getPassNumber())) passed.add(pass);
-            }
-        }
-        return passed;
     }
 
     private List<CombinedPass> exportPortfolioCandidates(List<CombinedPass> inputPasses) {
@@ -1693,18 +1793,23 @@ public class ProjectWorkflowEditorView {
                             outputPasses = engine.getOptResult().buildCombinedPasses(engine.getForwardMode() > 0, engine.loadScoreWeightsFromDb());
                         }
                         break;
-                    case LONGTERM_RETEST:
+                    case RETESTER:
                         outputPasses = engine.runLongtermTest(
                             inputPasses,
-                            msg -> logToConsole("RETEST", msg),
-                            pct -> updateProgressUI((double) pct / 100.0, "Retest " + pct + "%")
+                            msg -> logToConsole("RETESTER", msg),
+                            pct -> updateProgressUI((double) pct / 100.0, task.getName() + " " + pct + "%")
                         );
                         break;
                     case PRE_FILTER:
                         outputPasses = new ArrayList<>(inputPasses);
                         break;
                     case DIVERSITY_FILTER:
-                        outputPasses = engine.selectDiversePasses(inputPasses);
+                        outputPasses = engine.clusterDatabankPasses(
+                                inputPasses,
+                                task.getDiversityParamDiffPct(),
+                                task.getDiversityTradeDiffPct(),
+                                task.getDiversityMinDifferentParams(),
+                                task.getDiversityMaxStrategies());
                         break;
                     case ROBUSTNESS_CV:
                         engine.setSelectedDiversePasses(inputPasses);
@@ -1722,17 +1827,6 @@ public class ProjectWorkflowEditorView {
                         break;
                     case PORTFOLIO_EXPORT:
                         outputPasses = exportPortfolioCandidates(inputPasses);
-                        break;
-                    case OOS_VALIDATION:
-                        List<CombinedPass> validationCandidates = engine.selectFinalPasses(inputPasses);
-                        if (!engine.hasUsableValidationWindow(14)) {
-                            throw new IllegalStateException("Kein nutzbares OOS-Validierungsfenster von mindestens 14 Tagen konfiguriert.");
-                        }
-                        List<ValidationResult> validationResults = engine.runStep7(
-                            msg -> logToConsole("VALIDIERUNG", msg),
-                            (curr, totV) -> updateProgressUI((double) curr / Math.max(1, totV), "Validierung " + curr + " / " + totV)
-                        );
-                        outputPasses = passedValidationCandidates(validationCandidates, validationResults);
                         break;
                     default:
                         outputPasses = new ArrayList<>(inputPasses);
@@ -1847,18 +1941,23 @@ public class ProjectWorkflowEditorView {
                                     currentPipelinePasses = engine.getOptResult().buildCombinedPasses(engine.getForwardMode() > 0, engine.loadScoreWeightsFromDb());
                                 }
                                 break;
-                            case LONGTERM_RETEST:
+                            case RETESTER:
                                 currentPipelinePasses = engine.runLongtermTest(
                                     inputPasses,
-                                    msg -> logToConsole("LANGZEITTEST", msg),
-                                    pct -> updateProgressUI((double) currentIdx / total, "Langzeittest " + pct + "%")
+                                    msg -> logToConsole("RETESTER", msg),
+                                    pct -> updateProgressUI((double) currentIdx / total, task.getName() + " " + pct + "%")
                                 );
                                 break;
                             case PRE_FILTER:
                                 currentPipelinePasses = new ArrayList<>(inputPasses);
                                 break;
                             case DIVERSITY_FILTER:
-                                currentPipelinePasses = engine.selectDiversePasses(inputPasses);
+                                currentPipelinePasses = engine.clusterDatabankPasses(
+                                        inputPasses,
+                                        task.getDiversityParamDiffPct(),
+                                        task.getDiversityTradeDiffPct(),
+                                        task.getDiversityMinDifferentParams(),
+                                        task.getDiversityMaxStrategies());
                                 break;
                             case ROBUSTNESS_CV:
                                 engine.setSelectedDiversePasses(inputPasses);
@@ -1876,17 +1975,6 @@ public class ProjectWorkflowEditorView {
                                 break;
                             case PORTFOLIO_EXPORT:
                                 currentPipelinePasses = exportPortfolioCandidates(inputPasses);
-                                break;
-                            case OOS_VALIDATION:
-                                List<CombinedPass> validationCandidates = engine.selectFinalPasses(inputPasses);
-                                if (!engine.hasUsableValidationWindow(14)) {
-                                    throw new IllegalStateException("Kein nutzbares OOS-Validierungsfenster von mindestens 14 Tagen konfiguriert.");
-                                }
-                                List<ValidationResult> taskValidationResults = engine.runStep7(
-                                    msg -> logToConsole("VALIDIERUNG", msg),
-                                    (curr, totV) -> updateProgressUI((double) currentIdx / total, "Validierung " + curr + " / " + totV)
-                                );
-                                currentPipelinePasses = passedValidationCandidates(validationCandidates, taskValidationResults);
                                 break;
                             default:
                                 break;
@@ -1949,23 +2037,9 @@ public class ProjectWorkflowEditorView {
     }
 
     private void validateProjectExecutionOrder() {
-        List<WorkflowTask> enabledTasks = new ArrayList<>();
         for (WorkflowTask task : project.getTasks()) {
-            if (task != null && task.isEnabled()) enabledTasks.add(task);
-        }
-        boolean hasOosGate = enabledTasks.stream()
-                .anyMatch(task -> task.getType() == WorkflowTask.TaskType.OOS_VALIDATION);
-        boolean oosCompletedInChain = false;
-        for (WorkflowTask task : enabledTasks) {
-            if (task.getType() == null) {
+            if (task != null && task.isEnabled() && task.getType() == null) {
                 throw new IllegalStateException("Ein aktivierter Task besitzt keinen gültigen Typ.");
-            }
-            if (task.getType() == WorkflowTask.TaskType.OOS_VALIDATION) {
-                oosCompletedInChain = true;
-            } else if (task.getType() == WorkflowTask.TaskType.PORTFOLIO_EXPORT
-                    && hasOosGate && !oosCompletedInChain) {
-                throw new IllegalStateException(
-                        "Der Portfolio-Export steht vor der OOS-Validierung. Verschiebe die OOS-Validierung vor den Export.");
             }
         }
     }

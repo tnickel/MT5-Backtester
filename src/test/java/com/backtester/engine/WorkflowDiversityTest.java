@@ -238,6 +238,65 @@ public class WorkflowDiversityTest {
         assertEquals(1, selected.get(0).getPassNumber());
     }
 
+    @Test
+    public void customProjectClusteringUsesOnlySourceRowsWithoutHiddenPerformanceGates() {
+        WorkflowEngine engine = new WorkflowEngine(null);
+        engine.setMinBtProfit(10_000);
+        engine.setMinBtTrades(10_000);
+        engine.setMinLtProfit(10_000);
+        engine.setMinLtTrades(10_000);
+
+        Pass first = createSelectionPass(1, -500, 2, -1.0);
+        first.setParameter("entry", "10");
+        first.setParameter("exit", "20");
+        Pass second = createSelectionPass(2, -700, 3, -2.0);
+        second.setParameter("entry", "40");
+        second.setParameter("exit", "80");
+
+        List<CombinedPass> sourceRows = List.of(
+                new CombinedPass(first, null, 1.0, 1.0, ""),
+                new CombinedPass(second, null, 99.0, 1.0, ""));
+
+        List<CombinedPass> selected = engine.clusterDatabankPasses(sourceRows, 0.10, 0.15, 2, 10);
+
+        assertEquals(2, selected.size());
+        assertEquals(1, selected.get(0).getPassNumber());
+        assertEquals(2, selected.get(1).getPassNumber());
+    }
+
+    @Test
+    public void customProjectClusteringPreservesDatabankRankingOrder() {
+        WorkflowEngine engine = new WorkflowEngine(null);
+        Pass first = createSelectionPass(1, 10, 100, 1.0);
+        Pass second = createSelectionPass(2, 1_000, 100, 5.0);
+
+        List<CombinedPass> selected = engine.clusterDatabankPasses(List.of(
+                new CombinedPass(first, null, 1.0, 1.0, ""),
+                new CombinedPass(second, null, 99.0, 1.0, "")),
+                0.10, 0.15, 2, 1);
+
+        assertEquals(1, selected.size());
+        assertEquals("The databank order, not the old combined score, defines the first candidate",
+                1, selected.get(0).getPassNumber());
+    }
+
+    @Test
+    public void dedicatedRetesterDatabankUsesRetestTradesForClustering() {
+        WorkflowEngine engine = new WorkflowEngine(null);
+        Pass first = createSelectionPass(1, 100, 100, 1.0);
+        Pass second = createSelectionPass(2, 100, 100, 1.0);
+        Pass firstRetest = createSelectionPass(1, 100, 100, 1.0);
+        Pass secondRetest = createSelectionPass(2, 100, 50, 1.0);
+
+        List<CombinedPass> selected = engine.clusterDatabankPasses(List.of(
+                new CombinedPass(first, null, firstRetest, 50.0, 1.0, ""),
+                new CombinedPass(second, null, secondRetest, 50.0, 1.0, "")),
+                0.10, 0.15, 2, 10);
+
+        assertEquals("Different trade counts in the selected retest databank make both rows diverse",
+                2, selected.size());
+    }
+
     private static Pass createSelectionPass(int passNumber, double profit, int trades, double recovery) {
         Pass pass = new Pass();
         pass.setPassNumber(passNumber);

@@ -296,13 +296,14 @@ Im Tab **Custom Projects (StrategyQuant)** können Sie komplexe, mehrstufige Tes
   - **Task-Typen**:
     1. *Strategie-Auswahl*: EA, Symbol, Timeframe & Parameterbereich.
     2. *MT5 Optimizer*: Evolutionäre/Genetische Parametersuche.
-    3. *Kurzzeit-Vorauswahl & Filter*: Schnelle Performance-Vorfilterung auf Kurzzeit-Daten.
-    4. *Langzeittest (5-10 Jahre / Retest)*: Langzeit-Backtest / Out-of-Sample Validierung über mehrjährige historische Marktdaten.
-    5. *Diversitäts-Clustering*: Unkorrelierte Top-Strategien selektieren.
+    3. *Retester*: Einheitlicher Modultyp für jeden erneuten Backtest. Langzeit-Retest, OOS-Retest und benutzerdefinierte Retests unterscheiden sich durch Modulname, Zeitraum, Routing und Filter – nicht durch separate Task-Typen.
+    4. *Kurzzeit-Vorauswahl & Filter*: Schnelle Performance-Vorfilterung auf Kurzzeit-Daten.
+    5. *Diversitäts-Clustering*: Unkorrelierte Strategien aus genau einer ausgewählten Quell-Databank selektieren.
     6. *Robustness Test (CV)*: Parameter-Sensitivity Sweeps & Stresstests.
     7. *KI-Bewertung*: LLM-gestützte Stabilitätsanalyse via OpenRouter.
-    8. *OOS-Validierung*: Finale Kandidaten auf einem unberührten Zeitfenster prüfen; nur bestandene Strategien werden weitergereicht.
-    9. *Portfolio Export*: Erst nach den Validierungsgates finale `.set`-Dateien & PDF-Berichte speichern.
+    8. *Portfolio Export*: Finale `.set`-Dateien & PDF-Berichte speichern.
+  - **Individueller Modulname**: Über das Zahnrad (`⚙`) lässt sich jeder Task frei benennen. Ein Retester kann dadurch beispielsweise `Langzeittest (5-10 Jahre)`, `Validierung (OOS)` oder `Monte-Carlo-Nachtest` heißen; auf der Kachel bleibt der technische Typ immer `Retester`.
+  - **Getrenntes Diversitäts-Clustering**: Ein Clustering-Task arbeitet ausschließlich auf seiner unter **Databank routing** gewählten Quelle und besitzt keine gekoppelten Kurzzeit-/Langzeit-Performancefilter. Sollen sowohl Kurzzeit- als auch Langzeit-Ergebnisse geclustert werden, werden zwei Clustering-Tasks angelegt. Der zweite liest die Ausgabedatabank des Langzeit-Retesters.
 
 * **Flexible Databank-Architektur (Results, Portfolio & Custom Databanks)**:
   - Jedes Projekttask liest Strategien aus einer Quell-Databank (z.B. `Results`) und schreibt gefilterte/geprüfte Strategien in eine Ziel-Databank (z.B. `data1` oder `Final`).
@@ -323,7 +324,7 @@ Im Tab **Custom Projects (StrategyQuant)** können Sie komplexe, mehrstufige Tes
   - **Dynamische Layout-Anpassung**: Die Filtertabelle passt sich automatisch über die volle Breite an (`100 %`) und bietet reichlich Vertikalraum für viele Filterzeilen ohne Abschneiden.
 
 * **Backtest-Daten & Modellierung (Execution Mode)**:
-  - Im Unter-Tab **Data** des Tasks lassen sich für Retests und Langzeittests folgende Datenparameter konfigurieren:
+  - Im Unter-Tab **Data** eines Retesters lassen sich folgende Datenparameter konfigurieren:
     - **Symbol**: Handelsinstrument (z. B. `AUDCAD`, `EURUSD`).
     - **Timeframe**: Periode (z. B. `M5`, `H1`).
     - **Execution Mode (Modellierung)**:
@@ -331,7 +332,7 @@ Im Tab **Custom Projects (StrategyQuant)** können Sie komplexe, mehrstufige Tes
       - `Every Tick (Ticksimulation)` (Echte Tick-für-Tick Simulation)
       - `Every Tick based on Real Ticks (Realtick)` (Verwendung echter Broker-Ticks)
       - `Open Prices Only` (Nur Eröffnungspreise)
-    - **Start day (OOS From) & End day (OOS To)**: Datumsbereich für den Test.
+    - **Start day (Test From) & End day (Test To)**: Datumsbereich für den Retest.
 
 ---
 

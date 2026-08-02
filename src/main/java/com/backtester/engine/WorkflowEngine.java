@@ -712,7 +712,7 @@ public class WorkflowEngine {
                                               Consumer<String> logCallback,
                                               Consumer<Integer> progressCallback) throws Exception {
         cancelRequested = false;
-        requireValidDateRange(getEffectiveLongtermFromDate(), getEffectiveLongtermToDate(), "Langzeittest-Zeitraum");
+        requireValidDateRange(getEffectiveLongtermFromDate(), getEffectiveLongtermToDate(), "Retest-Zeitraum");
         List<CombinedPass> allPasses;
         if (inputPasses != null) {
             allPasses = new ArrayList<>();
@@ -726,7 +726,7 @@ public class WorkflowEngine {
             allPasses = optResult.buildCombinedPasses(forwardMode > 0, loadScoreWeightsFromDb());
         }
         if (allPasses.isEmpty()) {
-            log.warn("Langzeittest: 0 Pässe vorhanden.");
+            log.warn("Retester: 0 Pässe vorhanden.");
             return new ArrayList<>();
         }
 
@@ -764,7 +764,7 @@ public class WorkflowEngine {
         }
 
         if (logCallback != null) {
-            logCallback.accept(String.format("Starte Langzeittest für %d Kandidaten (%s bis %s)...",
+            logCallback.accept(String.format("Starte Retest für %d Kandidaten (%s bis %s)...",
                     candidates.size(), getEffectiveLongtermFromDate(), getEffectiveLongtermToDate()));
         }
 
@@ -779,7 +779,7 @@ public class WorkflowEngine {
         try {
             for (int i = 0; i < total; i++) {
                 if (cancelRequested || Thread.currentThread().isInterrupted()) {
-                    throw new InterruptedException("Langzeittest abgebrochen.");
+                    throw new InterruptedException("Retest abgebrochen.");
                 }
                 CombinedPass cp = candidates.get(i);
                 cp.setLongtermPass(null);
@@ -808,12 +808,12 @@ public class WorkflowEngine {
                 btConfig.setReportFileName("LongtermReport_Pass" + cp.getPassNumber());
 
                 if (logCallback != null) {
-                    logCallback.accept(String.format("[%d/%d] Führe Langzeittest für Pass %d aus...", (i + 1), total, cp.getPassNumber()));
+                    logCallback.accept(String.format("[%d/%d] Führe Retest für Pass %d aus...", (i + 1), total, cp.getPassNumber()));
                 }
 
                 BacktestResult btRes = currentLongtermRunner.runBacktest(btConfig);
                 if (cancelRequested || Thread.currentThread().isInterrupted()) {
-                    throw new InterruptedException("Langzeittest abgebrochen.");
+                    throw new InterruptedException("Retest abgebrochen.");
                 }
                 if (btRes != null && btRes.isSuccess()) {
                     OptimizationResult.Pass ltPass = new OptimizationResult.Pass();
@@ -830,7 +830,7 @@ public class WorkflowEngine {
                     successfulCandidates.add(cp);
                 } else if (logCallback != null) {
                     String detail = btRes != null ? btRes.getMessage() : "kein Ergebnis";
-                    logCallback.accept(String.format("WARNUNG: Pass %d Langzeittest schlug fehl: %s",
+                    logCallback.accept(String.format("WARNUNG: Retest für Pass %d schlug fehl: %s",
                             cp.getPassNumber(), detail));
                 }
             }
@@ -863,16 +863,70 @@ public class WorkflowEngine {
         return selectDiversePasses(allPasses);
     }
 
-    /** Applies the diversity gate to an explicit custom-project databank. */
+    /** Applies the legacy combined quality and diversity gate used by the classic wizard. */
     public List<CombinedPass> selectDiversePasses(List<CombinedPass> allPasses) {
         selectedDiversePasses = filterDiversePasses(allPasses);
+        finishDiversitySelection();
+        return new ArrayList<>(selectedDiversePasses);
+    }
+
+    /**
+     * Clusters exactly one custom-project databank. The source order is the
+     * ranking order, and no hidden BT/FW/LT performance filter is applied.
+     */
+    public List<CombinedPass> clusterDatabankPasses(List<CombinedPass> sourcePasses,
+                                                     double parameterDifferencePct,
+                                                     double tradeDifferencePct,
+                                                     int minimumDifferentParameters,
+                                                     int maximumStrategies) {
+        if (!Double.isFinite(parameterDifferencePct) || parameterDifferencePct < 0.0 || parameterDifferencePct > 1.0) {
+            throw new IllegalArgumentException("Parameter-Differenz muss zwischen 0 und 100 Prozent liegen.");
+        }
+        if (!Double.isFinite(tradeDifferencePct) || tradeDifferencePct < 0.0 || tradeDifferencePct > 1.0) {
+            throw new IllegalArgumentException("Trade-Differenz muss zwischen 0 und 100 Prozent liegen.");
+        }
+        if (minimumDifferentParameters < 1 || maximumStrategies < 1) {
+            throw new IllegalArgumentException("Clustering-Anzahlen müssen größer als null sein.");
+        }
+
+        List<CombinedPass> candidates = new ArrayList<>();
+        if (sourcePasses != null) {
+            for (CombinedPass pass : sourcePasses) {
+                if (pass != null) candidates.add(pass);
+            }
+        }
+
+        // A dedicated Retester databank contains a retest result for every row.
+        // Only in that case does the trade-distance use the retest trades.
+        boolean useRetestTrades = !candidates.isEmpty()
+                && candidates.stream().allMatch(pass -> pass.getLongtermPass() != null);
+
+        selectedDiversePasses = new ArrayList<>();
+        for (CombinedPass candidate : candidates) {
+            if (selectedDiversePasses.size() >= maximumStrategies) break;
+
+            boolean isDiverse = true;
+            for (CombinedPass selected : selectedDiversePasses) {
+                if (arePassesSimilar(candidate, selected, parameterDifferencePct, tradeDifferencePct,
+                        minimumDifferentParameters, eaParameters, useRetestTrades)) {
+                    isDiverse = false;
+                    break;
+                }
+            }
+            if (isDiverse) selectedDiversePasses.add(candidate);
+        }
+
+        finishDiversitySelection();
+        return new ArrayList<>(selectedDiversePasses);
+    }
+
+    private void finishDiversitySelection() {
         sensitivityResults = new ArrayList<>();
         kiReportText = "";
         finalSelectedPasses = new ArrayList<>();
         validationResults = new ArrayList<>();
         this.lastActiveStep = Math.max(this.lastActiveStep, 3);
         saveState();
-        return new ArrayList<>(selectedDiversePasses);
     }
 
     public List<SensitivityResult> runStep4(Consumer<String> logCallback, Consumer<Integer> progressCallback) throws Exception {
@@ -1753,9 +1807,14 @@ public class WorkflowEngine {
     }
 
     public static boolean arePassesSimilar(CombinedPass cp1, CombinedPass cp2, double paramDiffPct, double tradeDiffPct, int minDifferentParams, List<EaParameter> eaParams) {
-        // Compare backtest trade counts
-        int trades1 = cp1.getBtTrades();
-        int trades2 = cp2.getBtTrades();
+        return arePassesSimilar(cp1, cp2, paramDiffPct, tradeDiffPct, minDifferentParams, eaParams, false);
+    }
+
+    private static boolean arePassesSimilar(CombinedPass cp1, CombinedPass cp2, double paramDiffPct,
+                                             double tradeDiffPct, int minDifferentParams,
+                                             List<EaParameter> eaParams, boolean useRetestTrades) {
+        int trades1 = useRetestTrades ? cp1.getLtTrades() : cp1.getBtTrades();
+        int trades2 = useRetestTrades ? cp2.getLtTrades() : cp2.getBtTrades();
         double tradeDiff = (double) Math.abs(trades1 - trades2) / Math.max(trades1, 1);
         boolean tradesSimilar = tradeDiff < tradeDiffPct;
 

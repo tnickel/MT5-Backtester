@@ -16,29 +16,50 @@ public class WorkflowTask {
     public static final int MODE_OHLC_M1 = 1;
     public static final int MODE_REAL_TICKS = 2;
     public static final int MODE_OPEN_PRICES = 3;
+    public static final double DEFAULT_DIVERSITY_PARAM_DIFF_PCT = 0.10;
+    public static final double DEFAULT_DIVERSITY_TRADE_DIFF_PCT = 0.15;
+    public static final int DEFAULT_DIVERSITY_MIN_DIFFERENT_PARAMS = 2;
+    public static final int DEFAULT_DIVERSITY_MAX_STRATEGIES = 5;
 
     public enum TaskType {
-        STRATEGY_SELECTION("Strategie-Auswahl", "EA, Symbol, Timeframe & Parameterbereiche festlegen"),
-        OPTIMIZER("MT5 Optimizer", "Evolutionäre/Genetische Parametersuche"),
-        LONGTERM_RETEST("Retest", "Backtest / OOS / Multi-Year Retest von Strategien"),
-        PRE_FILTER("Vorauswahl & Filter", "Kurzzeit / Performance-Vorfilterung"),
-        DIVERSITY_FILTER("Diversitäts-Clustering", "Unkorrelierte Top-Strategien selektieren"),
-        ROBUSTNESS_CV("Robustness Test (CV)", "Parameter-Sensitivity Sweeps & Stresstests"),
-        KI_EVALUATION("KI-Bewertung", "LLM-gestützte Stabilitätsanalyse"),
-        PORTFOLIO_EXPORT("Portfolio Export", "Finale .set / PDF Berichte speichern"),
-        OOS_VALIDATION("OOS Validierung", "Test auf unberührten historischen Daten"),
-        CUSTOM_SCRIPT("Custom Task", "Benutzerdefinierte Analyse oder Skript");
+        STRATEGY_SELECTION("Strategie-Auswahl", "EA, Symbol, Timeframe & Parameterbereiche festlegen", true),
+        OPTIMIZER("MT5 Optimizer", "Evolutionäre/Genetische Parametersuche", true),
+        RETESTER("Retester", "Strategien auf einem frei wählbaren Zeitraum erneut testen", true),
+        PRE_FILTER("Vorauswahl & Filter", "Kurzzeit / Performance-Vorfilterung", true),
+        DIVERSITY_FILTER("Diversitäts-Clustering", "Unkorrelierte Top-Strategien selektieren", true),
+        ROBUSTNESS_CV("Robustness Test (CV)", "Parameter-Sensitivity Sweeps & Stresstests", true),
+        KI_EVALUATION("KI-Bewertung", "LLM-gestützte Stabilitätsanalyse", true),
+        PORTFOLIO_EXPORT("Portfolio Export", "Finale .set / PDF Berichte speichern", true),
+
+        // Persisted aliases kept exclusively for backwards-compatible Gson loading.
+        @Deprecated LONGTERM_RETEST("Retester", "Legacy-Alias für Retester", false),
+        @Deprecated OOS_VALIDATION("Retester", "Legacy-Alias für Retester", false),
+        @Deprecated CUSTOM_SCRIPT("Retester", "Legacy-Alias für Retester", false);
 
         private final String displayName;
         private final String description;
+        private final boolean userSelectable;
 
-        TaskType(String displayName, String description) {
+        TaskType(String displayName, String description, boolean userSelectable) {
             this.displayName = displayName;
             this.description = description;
+            this.userSelectable = userSelectable;
         }
 
         public String getDisplayName() { return displayName; }
         public String getDescription() { return description; }
+        public boolean isUserSelectable() { return userSelectable; }
+
+        public TaskType canonical() {
+            return this == LONGTERM_RETEST || this == OOS_VALIDATION || this == CUSTOM_SCRIPT
+                    ? RETESTER : this;
+        }
+
+        public static TaskType[] userSelectableValues() {
+            return java.util.Arrays.stream(values())
+                    .filter(TaskType::isUserSelectable)
+                    .toArray(TaskType[]::new);
+        }
     }
 
     public enum TaskStatus {
@@ -77,6 +98,10 @@ public class WorkflowTask {
     private int executionMode = MODE_OHLC_M1;
     private boolean deleteFailed = true;
     private List<FilterCondition> filterConditions;
+    private Double diversityParamDiffPct;
+    private Double diversityTradeDiffPct;
+    private Integer diversityMinDifferentParams;
+    private Integer diversityMaxStrategies;
 
     public WorkflowTask() {
         this.id = UUID.randomUUID().toString();
@@ -93,8 +118,8 @@ public class WorkflowTask {
     public WorkflowTask(String name, TaskType type) {
         this();
         this.name = name;
-        this.type = type;
-        if (type == TaskType.LONGTERM_RETEST) {
+        setType(type);
+        if (getType() == TaskType.RETESTER) {
             this.startDate = LocalDate.now().minusYears(7).toString();
             this.endDate = LocalDate.now().toString();
         } else if (type == TaskType.OPTIMIZER || type == TaskType.ROBUSTNESS_CV) {
@@ -109,8 +134,19 @@ public class WorkflowTask {
     public String getName() { return name != null ? name : (type != null ? type.getDisplayName() : "Unbenannter Task"); }
     public void setName(String name) { this.name = name; }
 
-    public TaskType getType() { return type; }
-    public void setType(TaskType type) { this.type = type; }
+    public TaskType getType() {
+        if (type != null) type = type.canonical();
+        return type;
+    }
+    public void setType(TaskType type) { this.type = type != null ? type.canonical() : null; }
+
+    public boolean normalizeLegacyType() {
+        if (type == null) return false;
+        TaskType canonicalType = type.canonical();
+        if (canonicalType == type) return false;
+        type = canonicalType;
+        return true;
+    }
 
     public boolean isEnabled() { return enabled; }
     public void setEnabled(boolean enabled) { this.enabled = enabled; }
@@ -187,12 +223,62 @@ public class WorkflowTask {
         if (cond != null) getFilterConditions().add(cond);
     }
 
+    public double getDiversityParamDiffPct() {
+        return validPercentage(diversityParamDiffPct)
+                ? diversityParamDiffPct : DEFAULT_DIVERSITY_PARAM_DIFF_PCT;
+    }
+
+    public void setDiversityParamDiffPct(double value) {
+        requirePercentage(value, "Parameter-Differenz");
+        this.diversityParamDiffPct = value;
+    }
+
+    public double getDiversityTradeDiffPct() {
+        return validPercentage(diversityTradeDiffPct)
+                ? diversityTradeDiffPct : DEFAULT_DIVERSITY_TRADE_DIFF_PCT;
+    }
+
+    public void setDiversityTradeDiffPct(double value) {
+        requirePercentage(value, "Trade-Differenz");
+        this.diversityTradeDiffPct = value;
+    }
+
+    public int getDiversityMinDifferentParams() {
+        return diversityMinDifferentParams != null && diversityMinDifferentParams > 0
+                ? diversityMinDifferentParams : DEFAULT_DIVERSITY_MIN_DIFFERENT_PARAMS;
+    }
+
+    public void setDiversityMinDifferentParams(int value) {
+        if (value < 1) throw new IllegalArgumentException("Mindestens ein Parameter muss verglichen werden.");
+        this.diversityMinDifferentParams = value;
+    }
+
+    public int getDiversityMaxStrategies() {
+        return diversityMaxStrategies != null && diversityMaxStrategies > 0
+                ? diversityMaxStrategies : DEFAULT_DIVERSITY_MAX_STRATEGIES;
+    }
+
+    public void setDiversityMaxStrategies(int value) {
+        if (value < 1) throw new IllegalArgumentException("Es muss mindestens eine Strategie ausgewählt werden.");
+        this.diversityMaxStrategies = value;
+    }
+
+    private static boolean validPercentage(Double value) {
+        return value != null && Double.isFinite(value) && value >= 0.0 && value <= 1.0;
+    }
+
+    private static void requirePercentage(double value, String label) {
+        if (!Double.isFinite(value) || value < 0.0 || value > 1.0) {
+            throw new IllegalArgumentException(label + " muss zwischen 0 und 100 Prozent liegen.");
+        }
+    }
+
     /** Creates a detached copy without the transient, potentially large output cache. */
     public WorkflowTask copyForPersistence() {
         WorkflowTask copy = new WorkflowTask();
         copy.setId(id);
         copy.setName(name);
-        copy.setType(type);
+        copy.setType(getType());
         copy.setEnabled(enabled);
         copy.setStatus(status);
         copy.setTaskConfigJson(taskConfigJson);
@@ -205,6 +291,10 @@ public class WorkflowTask {
         copy.setRetestPeriod(retestPeriod);
         copy.setExecutionMode(getExecutionMode());
         copy.setDeleteFailed(deleteFailed);
+        copy.diversityParamDiffPct = diversityParamDiffPct;
+        copy.diversityTradeDiffPct = diversityTradeDiffPct;
+        copy.diversityMinDifferentParams = diversityMinDifferentParams;
+        copy.diversityMaxStrategies = diversityMaxStrategies;
 
         List<FilterCondition> conditionCopies = new ArrayList<>();
         for (FilterCondition condition : getFilterConditions()) {

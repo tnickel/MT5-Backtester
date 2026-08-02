@@ -7,12 +7,16 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * Repräsentiert ein benutzerdefiniertes Workflow-Projekt (StrategyQuant Custom Project Paradigm).
  * Enthält grundlegende Marktdaten (Symbol, Period, Expert) und eine dynamische Kette von WorkflowTask-Elementen.
  */
 public class CustomProject {
+
+    private static final Pattern LEGACY_NUMBERED_TASK_NAME = Pattern.compile("^\\s*(\\d+)\\.\\s*(.+)$");
 
     private String id;
     private String name;
@@ -117,10 +121,55 @@ public class CustomProject {
     }
 
     /**
+     * Upgrades old projects where Retest, OOS validation and Custom Task were
+     * modelled as separate types and task names redundantly stored positions.
+     */
+    public boolean migrateLegacyTaskDefinitions() {
+        List<WorkflowTask> projectTasks = getTasks();
+        boolean changed = false;
+        int legacyNumberedNames = 0;
+
+        for (WorkflowTask task : projectTasks) {
+            changed |= task.normalizeLegacyType();
+            if (isLegacyNumberedName(task.getName(), projectTasks.size())) legacyNumberedNames++;
+        }
+
+        if (legacyNumberedNames > 0 && legacyNumberedNames * 2 >= projectTasks.size()) {
+            for (WorkflowTask task : projectTasks) {
+                Matcher matcher = LEGACY_NUMBERED_TASK_NAME.matcher(task.getName());
+                if (matcher.matches() && isLegacyNumberedName(task.getName(), projectTasks.size())) {
+                    task.setName(matcher.group(2).trim());
+                    changed = true;
+                }
+            }
+        }
+        for (WorkflowTask task : projectTasks) {
+            if (task.getType() == WorkflowTask.TaskType.DIVERSITY_FILTER
+                    && "Dual- & Diversitäts-Filter".equals(task.getName())) {
+                task.setName("Diversitäts-Clustering");
+                changed = true;
+            }
+        }
+        return changed;
+    }
+
+    private static boolean isLegacyNumberedName(String name, int taskCount) {
+        Matcher matcher = LEGACY_NUMBERED_TASK_NAME.matcher(name != null ? name : "");
+        if (!matcher.matches()) return false;
+        try {
+            int storedPosition = Integer.parseInt(matcher.group(1));
+            return storedPosition >= 1 && storedPosition <= taskCount;
+        } catch (NumberFormatException ignored) {
+            return false;
+        }
+    }
+
+    /**
      * Copies the small mutable project metadata on the caller thread. Databank
      * contents are intentionally attached later by the asynchronous writer.
      */
     public CustomProject copyMetadataForPersistence() {
+        migrateLegacyTaskDefinitions();
         CustomProject copy = new CustomProject();
         copy.setId(id);
         copy.setName(name);
@@ -146,15 +195,15 @@ public class CustomProject {
     public static CustomProject createDefaultTemplate(String name, String expert, String symbol, String period) {
         CustomProject proj = new CustomProject(name, expert, symbol, period);
         
-        WorkflowTask t1 = new WorkflowTask("1. Strategie-Auswahl", WorkflowTask.TaskType.STRATEGY_SELECTION);
-        WorkflowTask t2 = new WorkflowTask("2. MT5 Optimizer", WorkflowTask.TaskType.OPTIMIZER);
-        WorkflowTask t3 = new WorkflowTask("3. Retest", WorkflowTask.TaskType.LONGTERM_RETEST);
-        WorkflowTask t4 = new WorkflowTask("4. Kurzzeit-Vorauswahl", WorkflowTask.TaskType.PRE_FILTER);
-        WorkflowTask t5 = new WorkflowTask("5. Dual- & Diversitäts-Filter", WorkflowTask.TaskType.DIVERSITY_FILTER);
-        WorkflowTask t6 = new WorkflowTask("6. Robustness Test (CV)", WorkflowTask.TaskType.ROBUSTNESS_CV);
-        WorkflowTask t7 = new WorkflowTask("7. KI-Bewertung", WorkflowTask.TaskType.KI_EVALUATION);
-        WorkflowTask t8 = new WorkflowTask("8. Validierung (OOS)", WorkflowTask.TaskType.OOS_VALIDATION);
-        WorkflowTask t9 = new WorkflowTask("9. Portfolio Export", WorkflowTask.TaskType.PORTFOLIO_EXPORT);
+        WorkflowTask t1 = new WorkflowTask("Strategie-Auswahl", WorkflowTask.TaskType.STRATEGY_SELECTION);
+        WorkflowTask t2 = new WorkflowTask("MT5 Optimizer", WorkflowTask.TaskType.OPTIMIZER);
+        WorkflowTask t3 = new WorkflowTask("Langzeittest (5-10 Jahre)", WorkflowTask.TaskType.RETESTER);
+        WorkflowTask t4 = new WorkflowTask("Kurzzeit-Vorauswahl", WorkflowTask.TaskType.PRE_FILTER);
+        WorkflowTask t5 = new WorkflowTask("Diversitäts-Clustering", WorkflowTask.TaskType.DIVERSITY_FILTER);
+        WorkflowTask t6 = new WorkflowTask("Robustness Test (CV)", WorkflowTask.TaskType.ROBUSTNESS_CV);
+        WorkflowTask t7 = new WorkflowTask("KI-Bewertung", WorkflowTask.TaskType.KI_EVALUATION);
+        WorkflowTask t8 = new WorkflowTask("Validierung (OOS)", WorkflowTask.TaskType.RETESTER);
+        WorkflowTask t9 = new WorkflowTask("Portfolio Export", WorkflowTask.TaskType.PORTFOLIO_EXPORT);
         java.time.LocalDate validationCutoff = java.time.LocalDate.now().minusMonths(3);
         t2.setStartDate(java.time.LocalDate.now().minusYears(2).toString());
         t2.setEndDate(validationCutoff.toString());

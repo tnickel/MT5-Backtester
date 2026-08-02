@@ -18,7 +18,7 @@ public class DatabankManagerTest {
         CombinedPass fresh = pass(2, 200.0);
         manager.setDatabankContent("Results", List.of(stale));
 
-        WorkflowTask task = new WorkflowTask("Retest", WorkflowTask.TaskType.LONGTERM_RETEST);
+        WorkflowTask task = new WorkflowTask("Retest", WorkflowTask.TaskType.RETESTER);
         task.setSourceDatabank("Results");
         task.setTargetDatabank("Final");
 
@@ -34,7 +34,7 @@ public class DatabankManagerTest {
         manager.setDatabankContent("Results", List.of(pass(1, 100.0)));
         manager.setDatabankContent("Final", List.of(pass(9, 900.0)));
 
-        WorkflowTask task = new WorkflowTask("Empty retest", WorkflowTask.TaskType.LONGTERM_RETEST);
+        WorkflowTask task = new WorkflowTask("Empty retest", WorkflowTask.TaskType.RETESTER);
         task.setSourceDatabank("Results");
         task.setTargetDatabank("Final");
 

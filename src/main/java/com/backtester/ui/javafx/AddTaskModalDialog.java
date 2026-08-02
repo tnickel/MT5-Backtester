@@ -47,7 +47,7 @@ public class AddTaskModalDialog {
         grid.setVgap(12);
         grid.setAlignment(Pos.CENTER);
 
-        TaskType[] types = TaskType.values();
+        TaskType[] types = TaskType.userSelectableValues();
         int col = 0;
         int row = 0;
 
