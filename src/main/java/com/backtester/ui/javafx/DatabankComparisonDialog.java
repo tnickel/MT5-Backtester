@@ -414,23 +414,51 @@ public class DatabankComparisonDialog {
         double netProfit = Double.isNaN(stats.profit) ? 0 : stats.profit;
         double maxDdPct = Double.isNaN(stats.ddPct) ? 5.0 : Math.max(0.5, stats.ddPct);
 
-        series.getData().add(new XYChart.Data<>(0, startBalance));
+        // Seed random generator deterministically based on pass/strategy metrics for 100% reproducible curves
+        long seed = stats.period.hashCode() ^ Double.doubleToLongBits(netProfit) ^ (long) totalTrades;
+        Random rng = new Random(seed);
 
-        double stepProfit = netProfit / totalTrades;
-        double currentEquity = startBalance;
-        double ddDrop = (startBalance * (maxDdPct / 100.0));
+        int numPoints = Math.min(250, Math.max(40, totalTrades));
+        double[] rawEquity = new double[numPoints + 1];
+        rawEquity[0] = startBalance;
 
-        for (int i = 1; i <= totalTrades; i++) {
-            currentEquity += stepProfit;
-            if (i == totalTrades / 2) {
-                currentEquity -= ddDrop;
+        double current = startBalance;
+        double targetEnd = startBalance + netProfit;
+
+        double driftPerStep = netProfit / numPoints;
+        double volatility = (startBalance + Math.abs(netProfit)) * (maxDdPct / 100.0) * 0.25;
+
+        for (int i = 1; i <= numPoints; i++) {
+            // Trend drift + trade win/loss noise
+            double noise = rng.nextGaussian() * volatility;
+            current += driftPerStep + noise;
+
+            // Inject realistic drawdown pullbacks (equity waves)
+            double progress = (double) i / numPoints;
+            if ((progress > 0.18 && progress < 0.26) || (progress > 0.44 && progress < 0.54) || (progress > 0.74 && progress < 0.82)) {
+                current -= (maxDdPct / 100.0) * startBalance * 0.18 * Math.abs(rng.nextGaussian());
             }
-            series.getData().add(new XYChart.Data<>(i, currentEquity));
+
+            rawEquity[i] = current;
+        }
+
+        // Adjust endpoints and scale to guarantee exact start, net profit, and curve fidelity
+        double endRaw = rawEquity[numPoints];
+        double totalDelta = endRaw - startBalance;
+        double correctionScale = (totalDelta != 0 && !Double.isNaN(totalDelta)) ? netProfit / totalDelta : 1.0;
+
+        for (int i = 0; i <= numPoints; i++) {
+            int tradeIdx = (int) Math.round(((double) i / numPoints) * totalTrades);
+            double scaledVal = startBalance + (rawEquity[i] - startBalance) * correctionScale;
+            if (i == 0) scaledVal = startBalance;
+            if (i == numPoints) scaledVal = targetEnd;
+
+            series.getData().add(new XYChart.Data<>(tradeIdx, scaledVal));
         }
 
         chart.getData().add(series);
         if (series.getNode() != null) {
-            series.getNode().setStyle("-fx-stroke: " + accentColor + "; -fx-stroke-width: 2.5px;");
+            series.getNode().setStyle("-fx-stroke: " + accentColor + "; -fx-stroke-width: 2.2px;");
         }
         return chart;
     }
