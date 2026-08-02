@@ -102,6 +102,15 @@ public class OptimizationResult {
 
         private Pass longtermPass;
         private String strategyName;
+        private String symbol;
+
+        public String getSymbol() {
+            return symbol;
+        }
+
+        public void setSymbol(String symbol) {
+            this.symbol = symbol;
+        }
 
         public String getStrategyName() {
             if (strategyName == null || strategyName.trim().isEmpty()) {
@@ -185,6 +194,7 @@ public class OptimizationResult {
                     longtermPass != null ? longtermPass.copy() : null,
                     score, consistency, scoreDetails);
             copy.strategyName = strategyName;
+            copy.symbol = symbol;
             return copy;
         }
     }
