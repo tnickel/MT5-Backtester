@@ -33,6 +33,7 @@ public class OptimizationRunner {
     // never see the cancellation.
     private volatile Process currentProcess;
     private volatile boolean cancelled = false;
+    private volatile Mt5LogTailer tailer;
     private Consumer<String> logCallback;
     private java.util.function.BiConsumer<Integer, Integer> progressCallback;
     private long totalPasses = 1;
@@ -71,7 +72,7 @@ public class OptimizationRunner {
         if (optConfig.getFromDate() != null) result.setFromDate(optConfig.getFromDate().toString());
         if (optConfig.getToDate() != null) result.setToDate(optConfig.getToDate().toString());
 
-        Mt5LogTailer tailer = null;
+        tailer = null;
         MetaTraderPlatform platform = config.getPlatform(optConfig.getExpert());
 
         // Pre-flight: check for stale MetaTrader processes from previous runs
