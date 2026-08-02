@@ -381,7 +381,11 @@ public class ControllingView {
                         ContextMenu contextMenu = new ContextMenu();
                         MenuItem reviewItem = new MenuItem("Review schreiben...");
                         reviewItem.setOnAction(e -> showReviewDialog(item));
-                        contextMenu.getItems().add(reviewItem);
+
+                        MenuItem singleBtItem = new MenuItem("▶ Einzel-Backtest im MetaTrader ausführen (Terminal bleibt offen)");
+                        singleBtItem.setOnAction(e -> SingleBacktestHelper.runSingleBacktestInMetaTrader(item.combinedPass, getScene().getWindow()));
+
+                        contextMenu.getItems().addAll(reviewItem, singleBtItem);
                         setContextMenu(contextMenu);
                     }
                 }

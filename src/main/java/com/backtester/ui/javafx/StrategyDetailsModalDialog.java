@@ -69,11 +69,15 @@ public class StrategyDetailsModalDialog {
         Region spacer = new Region();
         HBox.setHgrow(spacer, Priority.ALWAYS);
 
-        Button closeBtn = new Button("Close");
+        Button runBtBtn = new Button("▶ Einzel-Backtest im MetaTrader (Terminal bleibt offen)");
+        runBtBtn.setStyle("-fx-background-color: #00bcd4; -fx-text-fill: white; -fx-font-weight: bold; -fx-cursor: hand;");
+        runBtBtn.setOnAction(e -> SingleBacktestHelper.runSingleBacktestInMetaTrader(pass, stage));
+
+        Button closeBtn = new Button("Schließen");
         closeBtn.getStyleClass().add("button-cancel");
         closeBtn.setOnAction(e -> stage.close());
 
-        header.getChildren().addAll(titleLabel, passBadge, scoreBadge, spacer, closeBtn);
+        header.getChildren().addAll(titleLabel, passBadge, scoreBadge, spacer, runBtBtn, closeBtn);
         root.setTop(header);
 
         TabPane tabPane = new TabPane();

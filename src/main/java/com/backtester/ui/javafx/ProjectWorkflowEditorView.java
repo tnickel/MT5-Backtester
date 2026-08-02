@@ -1381,6 +1381,11 @@ public class ProjectWorkflowEditorView {
                     if (!row.isEmpty()) StrategyDetailsModalDialog.show(row.getItem(), root.getScene().getWindow(), 0);
                 });
 
+                MenuItem singleBtItem = new MenuItem("▶ Einzel-Backtest im MetaTrader ausführen (Terminal bleibt offen)");
+                singleBtItem.setOnAction(e -> {
+                    if (!row.isEmpty()) SingleBacktestHelper.runSingleBacktestInMetaTrader(row.getItem(), root.getScene().getWindow());
+                });
+
                 MenuItem sensitivityItem = new MenuItem("📈 Sensitivitäts-Kennlinien & Stresstest (Rechtsklick)");
                 sensitivityItem.setOnAction(e -> {
                     if (!row.isEmpty()) StrategyDetailsModalDialog.show(
@@ -1397,7 +1402,7 @@ public class ProjectWorkflowEditorView {
                 deleteItem.setOnAction(e -> deleteSelectedRowsFromDatabank(dbName, table));
 
                 SeparatorMenuItem robustnessSeparator = new SeparatorMenuItem();
-                contextMenu.getItems().addAll(inspectItem, sensitivityItem, htmlReportItem, robustnessSeparator, deleteItem);
+                contextMenu.getItems().addAll(inspectItem, singleBtItem, sensitivityItem, htmlReportItem, robustnessSeparator, deleteItem);
                 contextMenu.setOnShowing(e -> {
                     boolean hasSensitivity = !row.isEmpty()
                             && DatabaseManager.getInstance().hasSensitivityDetails(
