@@ -22,7 +22,22 @@ public class OptimizationResult {
         private double sharpeRatio;
         private double customCriterion;
         private double balance;
+        private String fromDate = "";
+        private String toDate = "";
         private Map<String, String> parameterValues = new LinkedHashMap<>();
+
+        public String getFromDate() { return fromDate; }
+        public void setFromDate(String fromDate) { this.fromDate = fromDate != null ? fromDate : ""; }
+        public String getToDate() { return toDate; }
+        public void setToDate(String toDate) { this.toDate = toDate != null ? toDate : ""; }
+
+        public String getDateRange() {
+            if (!fromDate.isEmpty() && !toDate.isEmpty()) {
+                return fromDate + " - " + toDate;
+            }
+            if (!fromDate.isEmpty()) return fromDate;
+            return "";
+        }
         private List<double[]> equityHistory = new ArrayList<>();
 
         public List<double[]> getEquityHistory() { return equityHistory; }
@@ -81,6 +96,11 @@ public class OptimizationResult {
         public void setParameter(String name, String value) { parameterValues.put(name, value); }
         public String getParameter(String name) { return parameterValues.getOrDefault(name, ""); }
 
+        private String reportDirectory = "";
+
+        public String getReportDirectory() { return reportDirectory != null ? reportDirectory : ""; }
+        public void setReportDirectory(String reportDirectory) { this.reportDirectory = reportDirectory != null ? reportDirectory : ""; }
+
         public Pass copy() {
             Pass copy = new Pass();
             copy.setPassNumber(passNumber);
@@ -94,6 +114,9 @@ public class OptimizationResult {
             copy.setSharpeRatio(sharpeRatio);
             copy.setCustomCriterion(customCriterion);
             copy.setBalance(balance);
+            copy.setFromDate(fromDate);
+            copy.setToDate(toDate);
+            copy.setReportDirectory(reportDirectory);
             copy.setParameterValues(parameterValues != null
                     ? new LinkedHashMap<>(parameterValues) : new LinkedHashMap<>());
             copy.setEquityHistory(equityHistory);
@@ -120,6 +143,22 @@ public class OptimizationResult {
         private Pass longtermPass;
         private String strategyName;
         private String symbol;
+        private String reportDirectory;
+
+        public String getReportDirectory() {
+            if (reportDirectory != null && !reportDirectory.isEmpty()) return reportDirectory;
+            if (longtermPass != null && longtermPass.getReportDirectory() != null && !longtermPass.getReportDirectory().isEmpty()) {
+                return longtermPass.getReportDirectory();
+            }
+            if (backtestPass != null && backtestPass.getReportDirectory() != null && !backtestPass.getReportDirectory().isEmpty()) {
+                return backtestPass.getReportDirectory();
+            }
+            return "";
+        }
+
+        public void setReportDirectory(String reportDirectory) {
+            this.reportDirectory = reportDirectory;
+        }
 
         public String getSymbol() {
             return symbol;
@@ -180,6 +219,27 @@ public class OptimizationResult {
             return String.valueOf(passNumber);
         }
 
+        public String getBtDateRange() {
+            if (backtestPass != null && !backtestPass.getDateRange().isEmpty()) {
+                return backtestPass.getDateRange();
+            }
+            return "-";
+        }
+
+        public String getFwDateRange() {
+            if (forwardPass != null && !forwardPass.getDateRange().isEmpty()) {
+                return forwardPass.getDateRange();
+            }
+            return "-";
+        }
+
+        public String getLtDateRange() {
+            if (longtermPass != null && !longtermPass.getDateRange().isEmpty()) {
+                return longtermPass.getDateRange();
+            }
+            return "-";
+        }
+
         // Convenience getters used by the table columns
         public double getBtProfit()       { return backtestPass.getProfit(); }
         public int    getBtTrades()       { return backtestPass.getTotalTrades(); }
@@ -212,6 +272,7 @@ public class OptimizationResult {
                     score, consistency, scoreDetails);
             copy.strategyName = strategyName;
             copy.symbol = symbol;
+            copy.reportDirectory = reportDirectory;
             return copy;
         }
     }
@@ -229,12 +290,40 @@ public class OptimizationResult {
     private String outputDirectory = "";
 
     public List<Pass> getPasses() { return passes; }
-    public void setPasses(List<Pass> passes) { this.passes = passes; }
-    public void addPass(Pass pass) { this.passes.add(pass); }
+    public void setPasses(List<Pass> passes) {
+        this.passes = passes;
+        if (passes != null && outputDirectory != null && !outputDirectory.isEmpty()) {
+            for (Pass p : passes) {
+                if (p != null && (p.getReportDirectory() == null || p.getReportDirectory().isEmpty())) {
+                    p.setReportDirectory(outputDirectory);
+                }
+            }
+        }
+    }
+    public void addPass(Pass pass) {
+        if (pass != null && outputDirectory != null && !outputDirectory.isEmpty() && pass.getReportDirectory().isEmpty()) {
+            pass.setReportDirectory(outputDirectory);
+        }
+        this.passes.add(pass);
+    }
 
     public List<Pass> getForwardPasses() { return forwardPasses; }
-    public void setForwardPasses(List<Pass> forwardPasses) { this.forwardPasses = forwardPasses; }
-    public void addForwardPass(Pass pass) { this.forwardPasses.add(pass); }
+    public void setForwardPasses(List<Pass> forwardPasses) {
+        this.forwardPasses = forwardPasses;
+        if (forwardPasses != null && outputDirectory != null && !outputDirectory.isEmpty()) {
+            for (Pass p : forwardPasses) {
+                if (p != null && (p.getReportDirectory() == null || p.getReportDirectory().isEmpty())) {
+                    p.setReportDirectory(outputDirectory);
+                }
+            }
+        }
+    }
+    public void addForwardPass(Pass pass) {
+        if (pass != null && outputDirectory != null && !outputDirectory.isEmpty() && pass.getReportDirectory().isEmpty()) {
+            pass.setReportDirectory(outputDirectory);
+        }
+        this.forwardPasses.add(pass);
+    }
     public boolean hasForwardResults() { return !forwardPasses.isEmpty(); }
 
     public List<String> getParameterNames() { return parameterNames; }
@@ -262,7 +351,25 @@ public class OptimizationResult {
     public void setMessage(String message) { this.message = message; }
 
     public String getOutputDirectory() { return outputDirectory; }
-    public void setOutputDirectory(String outputDirectory) { this.outputDirectory = outputDirectory; }
+    public void setOutputDirectory(String outputDirectory) {
+        this.outputDirectory = outputDirectory;
+        if (outputDirectory != null && !outputDirectory.isEmpty()) {
+            if (passes != null) {
+                for (Pass p : passes) {
+                    if (p != null && (p.getReportDirectory() == null || p.getReportDirectory().isEmpty())) {
+                        p.setReportDirectory(outputDirectory);
+                    }
+                }
+            }
+            if (forwardPasses != null) {
+                for (Pass p : forwardPasses) {
+                    if (p != null && (p.getReportDirectory() == null || p.getReportDirectory().isEmpty())) {
+                        p.setReportDirectory(outputDirectory);
+                    }
+                }
+            }
+        }
+    }
 
     /**
      * Returns the pass with the highest profit.

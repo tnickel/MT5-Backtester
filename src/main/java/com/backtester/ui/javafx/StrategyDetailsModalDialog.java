@@ -2,6 +2,7 @@ package com.backtester.ui.javafx;
 
 import com.backtester.report.OptimizationResult.CombinedPass;
 import com.backtester.report.OptimizationResult.Pass;
+import javafx.beans.property.SimpleObjectProperty;
 import javafx.beans.property.SimpleStringProperty;
 import javafx.collections.FXCollections;
 import javafx.geometry.Insets;
@@ -18,6 +19,7 @@ import javafx.scene.text.FontWeight;
 import javafx.stage.Modality;
 import javafx.stage.Stage;
 import javafx.stage.Window;
+import javafx.util.StringConverter;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -143,6 +145,18 @@ public class StrategyDetailsModalDialog {
         grid.add(createHeaderLabel("Longterm (5-10Y)"), 3, 0);
 
         int row = 1;
+        grid.add(new Label("Test Period:"), 0, row);
+        Label btDateLbl = new Label(pass.getBtDateRange());
+        btDateLbl.setStyle("-fx-text-fill: #ffd740; -fx-font-weight: bold;");
+        Label fwDateLbl = new Label(pass.getFwDateRange());
+        fwDateLbl.setStyle("-fx-text-fill: #10b981; -fx-font-weight: bold;");
+        Label ltDateLbl = new Label(pass.getLtDateRange());
+        ltDateLbl.setStyle("-fx-text-fill: #a78bfa; -fx-font-weight: bold;");
+        grid.add(btDateLbl, 1, row);
+        grid.add(fwDateLbl, 2, row);
+        grid.add(ltDateLbl, 3, row);
+        row++;
+
         grid.add(new Label("Net Profit:"), 0, row);
         grid.add(createValueLabel(pass.getBtProfit(), "$%.2f"), 1, row);
         grid.add(createValueLabel(pass.getFwProfit(), "$%.2f"), 2, row);
@@ -304,39 +318,6 @@ public class StrategyDetailsModalDialog {
 
         topBar.getChildren().addAll(heading, flexSpacer, openHtmlReportBtn);
 
-        TableView<SensitivityRow> table = new TableView<>();
-        table.setPrefHeight(170);
-
-        TableColumn<SensitivityRow, String> paramCol = new TableColumn<>("Parameter");
-        paramCol.setCellValueFactory(c -> new SimpleStringProperty(c.getValue().parameterName));
-        paramCol.setPrefWidth(140);
-
-        TableColumn<SensitivityRow, String> periodCol = new TableColumn<>("Period");
-        periodCol.setCellValueFactory(c -> new SimpleStringProperty(c.getValue().period));
-        periodCol.setPrefWidth(70);
-
-        TableColumn<SensitivityRow, String> cvCol = new TableColumn<>("CV (%)");
-        cvCol.setCellValueFactory(c -> new SimpleStringProperty(String.format(Locale.US, "%.2f%%", c.getValue().cv)));
-        cvCol.setPrefWidth(80);
-
-        TableColumn<SensitivityRow, String> verdictCol = new TableColumn<>("Verdict");
-        verdictCol.setCellValueFactory(c -> new SimpleStringProperty(c.getValue().verdict));
-        verdictCol.setPrefWidth(100);
-
-        TableColumn<SensitivityRow, String> baseProfitCol = new TableColumn<>("Base Profit");
-        baseProfitCol.setCellValueFactory(c -> new SimpleStringProperty(String.format(Locale.US, "$%.2f", c.getValue().baseProfit)));
-        baseProfitCol.setPrefWidth(100);
-
-        TableColumn<SensitivityRow, String> minProfitCol = new TableColumn<>("Min Profit");
-        minProfitCol.setCellValueFactory(c -> new SimpleStringProperty(String.format(Locale.US, "$%.2f", c.getValue().minProfit)));
-        minProfitCol.setPrefWidth(100);
-
-        TableColumn<SensitivityRow, String> maxProfitCol = new TableColumn<>("Max Profit");
-        maxProfitCol.setCellValueFactory(c -> new SimpleStringProperty(String.format(Locale.US, "$%.2f", c.getValue().maxProfit)));
-        maxProfitCol.setPrefWidth(100);
-
-        table.getColumns().addAll(paramCol, periodCol, cvCol, verdictCol, baseProfitCol, minProfitCol, maxProfitCol);
-
         java.util.List<SensitivityRow> rows = new java.util.ArrayList<>();
         try {
             com.backtester.database.DatabaseManager db = com.backtester.database.DatabaseManager.getInstance();
@@ -371,33 +352,78 @@ public class StrategyDetailsModalDialog {
 
         if (rows.isEmpty()) {
             Label noDataLabel = new Label("Hinweis: Noch keine Sensitivitäts-Kennlinien in DB für Pass #" + pass.getPassNumber() +
-                                         ". Bitte führe Task 6 (Robustness Test / CV) aus.");
+                                         ". Bitte führe Task (Robustness Test / CV) aus.");
             noDataLabel.setStyle("-fx-text-fill: #ffab40; -fx-font-size: 13px; -fx-font-weight: bold;");
             panel.getChildren().addAll(topBar, noDataLabel);
             return panel;
         }
 
-        table.setItems(FXCollections.observableArrayList(rows));
+        // Summary Bar with Counters & Ampeln
+        int robustCount = 0, acceptableCount = 0, fragileCount = 0;
+        for (SensitivityRow r : rows) {
+            String vUpper = r.verdict != null ? r.verdict.toUpperCase(Locale.US) : "";
+            if ("ROBUST".equals(vUpper)) robustCount++;
+            else if ("ACCEPTABLE".equals(vUpper)) acceptableCount++;
+            else fragileCount++;
+        }
 
-        NumberAxis xAxis = new NumberAxis();
-        xAxis.setLabel("Parameterwert");
-        xAxis.setTickLabelFill(Color.web("#7e889a"));
+        HBox summaryBar = new HBox(16);
+        summaryBar.setAlignment(Pos.CENTER_LEFT);
+        summaryBar.setStyle("-fx-background-color: #121622; -fx-border-color: #1e2432; -fx-padding: 8 14; -fx-background-radius: 6;");
 
-        NumberAxis yAxis = new NumberAxis();
-        yAxis.setLabel("Net Profit ($)");
-        yAxis.setTickLabelFill(Color.web("#7e889a"));
+        Label totalLabel = new Label("Gesamt Parametersweeps: " + rows.size());
+        totalLabel.setFont(Font.font("Segoe UI", FontWeight.BOLD, 12));
+        totalLabel.setTextFill(Color.web("#e0e0e0"));
 
-        LineChart<Number, Number> chart = new LineChart<>(xAxis, yAxis);
-        chart.setTitle("Parameter Sensitivity Curves (Pass #" + pass.getPassNumber() + ")");
-        chart.setCreateSymbols(true);
-        chart.setLegendVisible(true);
+        Label robustBadge = new Label("🟢 Robust: " + robustCount);
+        robustBadge.setStyle("-fx-background-color: #143820; -fx-text-fill: #00e676; -fx-padding: 3 8; -fx-background-radius: 10; -fx-font-weight: bold;");
 
-        for (SensitivityRow sr : rows) {
-            if (sr.curveJson != null && !sr.curveJson.isBlank()) {
+        Label accBadge = new Label("🟡 Acceptable: " + acceptableCount);
+        accBadge.setStyle("-fx-background-color: #3d2b00; -fx-text-fill: #ffb300; -fx-padding: 3 8; -fx-background-radius: 10; -fx-font-weight: bold;");
+
+        Label fragileBadge = new Label("🔴 Fragile: " + fragileCount);
+        fragileBadge.setStyle("-fx-background-color: #3d0c11; -fx-text-fill: #ff1744; -fx-padding: 3 8; -fx-background-radius: 10; -fx-font-weight: bold;");
+
+        summaryBar.getChildren().addAll(totalLabel, robustBadge, accBadge, fragileBadge);
+
+        // Scrollable List of Parameter Cards
+        VBox cardsContainer = new VBox(14);
+        cardsContainer.setPadding(new Insets(4));
+
+        for (SensitivityRow row : rows) {
+            HBox card = new HBox(16);
+            card.setAlignment(Pos.CENTER_LEFT);
+            card.setStyle("-fx-background-color: #121622; -fx-border-color: #1e2432; -fx-border-radius: 8; -fx-background-radius: 8; -fx-padding: 12;");
+
+            // --- LEFT SIDE: 1/4 Size Dedicated Graphic / LineChart ---
+            NumberAxis xAxis = new NumberAxis();
+            xAxis.setLabel("Parameterwert");
+            xAxis.setTickLabelFill(Color.web("#7e889a"));
+            xAxis.setTickLabelFont(Font.font("Segoe UI", 9));
+            xAxis.setForceZeroInRange(false);
+            xAxis.setAutoRanging(true);
+
+            NumberAxis yAxis = new NumberAxis();
+            yAxis.setLabel("Profit ($)");
+            yAxis.setTickLabelFill(Color.web("#7e889a"));
+            yAxis.setTickLabelFont(Font.font("Segoe UI", 9));
+            yAxis.setForceZeroInRange(false);
+            yAxis.setAutoRanging(true);
+
+            LineChart<Number, Number> miniChart = new LineChart<>(xAxis, yAxis);
+            miniChart.setPrefSize(340, 190);
+            miniChart.setMinSize(320, 180);
+            miniChart.setMaxSize(360, 200);
+            miniChart.setCreateSymbols(true);
+            miniChart.setLegendVisible(false);
+            miniChart.setAnimated(false);
+            miniChart.setStyle("-fx-background-color: transparent;");
+
+            if (row.curveJson != null && !row.curveJson.isBlank()) {
                 try {
-                    com.google.gson.JsonArray arr = com.google.gson.JsonParser.parseString(sr.curveJson).getAsJsonArray();
+                    com.google.gson.JsonArray arr = com.google.gson.JsonParser.parseString(row.curveJson).getAsJsonArray();
                     XYChart.Series<Number, Number> series = new XYChart.Series<>();
-                    series.setName(sr.parameterName + " (" + sr.period + ")");
+
                     for (int i = 0; i < arr.size(); i++) {
                         com.google.gson.JsonObject obj = arr.get(i).getAsJsonObject();
                         double parameterValue = obj.has("paramValue")
@@ -406,14 +432,89 @@ public class StrategyDetailsModalDialog {
                         double profit = obj.has("profit") ? obj.get("profit").getAsDouble() : 0.0;
                         series.getData().add(new XYChart.Data<>(parameterValue, profit));
                     }
-                    chart.getData().add(series);
+                    miniChart.getData().add(series);
                 } catch (Exception ignored) {}
             }
+
+            // --- RIGHT SIDE: Values & Ampel Assessment Card ---
+            VBox detailsBox = new VBox(10);
+            HBox.setHgrow(detailsBox, Priority.ALWAYS);
+
+            // Title Line (Parameter Name + Period + Verdict Ampel Badge)
+            HBox cardHeader = new HBox(12);
+            cardHeader.setAlignment(Pos.CENTER_LEFT);
+
+            Label paramNameLabel = new Label(row.parameterName);
+            paramNameLabel.setFont(Font.font("Segoe UI", FontWeight.BOLD, 15));
+            paramNameLabel.setTextFill(Color.web("#00e5ff"));
+
+            Label periodTag = new Label("[" + row.period + "]");
+            periodTag.setFont(Font.font("Segoe UI", FontWeight.BOLD, 11));
+            periodTag.setStyle("FW".equalsIgnoreCase(row.period)
+                    ? "-fx-background-color: #3b164c; -fx-text-fill: #ab47bc; -fx-padding: 2 6; -fx-background-radius: 4;"
+                    : "-fx-background-color: #0b3547; -fx-text-fill: #00e5ff; -fx-padding: 2 6; -fx-background-radius: 4;");
+
+            Label verdictBadge = new Label();
+            verdictBadge.setFont(Font.font("Segoe UI", FontWeight.BOLD, 11));
+            String vUpper = row.verdict != null ? row.verdict.toUpperCase(Locale.US) : "";
+            if ("ROBUST".equals(vUpper)) {
+                verdictBadge.setText("🟢 ROBUST");
+                verdictBadge.setStyle("-fx-background-color: #143820; -fx-text-fill: #00e676; -fx-padding: 3 10; -fx-background-radius: 10; -fx-font-weight: bold;");
+            } else if ("ACCEPTABLE".equals(vUpper)) {
+                verdictBadge.setText("🟡 ACCEPTABLE");
+                verdictBadge.setStyle("-fx-background-color: #3d2b00; -fx-text-fill: #ffb300; -fx-padding: 3 10; -fx-background-radius: 10; -fx-font-weight: bold;");
+            } else {
+                verdictBadge.setText("🔴 FRAGILE");
+                verdictBadge.setStyle("-fx-background-color: #3d0c11; -fx-text-fill: #ff1744; -fx-padding: 3 10; -fx-background-radius: 10; -fx-font-weight: bold;");
+            }
+
+            cardHeader.getChildren().addAll(paramNameLabel, periodTag, verdictBadge);
+
+            // Metrics Grid
+            GridPane metricsGrid = new GridPane();
+            metricsGrid.setHgap(24);
+            metricsGrid.setVgap(6);
+
+            // Row 0
+            metricsGrid.add(createMetricCell("Variationskoeffizient (CV):", String.format(Locale.US, "%.2f%%", row.cv),
+                    row.cv < 30.0 ? "#00e676" : (row.cv <= 60.0 ? "#ffb300" : "#ff1744")), 0, 0);
+            metricsGrid.add(createMetricCell("Optimierter Basis-Wert:", String.format(Locale.US, "%.4f", row.baseValue), "#e0e0e0"), 1, 0);
+
+            // Row 1
+            metricsGrid.add(createMetricCell("Basis-Gewinn (Base Profit):", String.format(Locale.US, "$%.2f", row.baseProfit), "#00e5ff"), 0, 1);
+            metricsGrid.add(createMetricCell("Minimaler Gewinn (Min):", String.format(Locale.US, "$%.2f", row.minProfit), row.minProfit >= 0 ? "#00e676" : "#ff5252"), 1, 1);
+
+            // Row 2
+            metricsGrid.add(createMetricCell("Durchschnittsgewinn (Mean):", String.format(Locale.US, "$%.2f", row.meanProfit), "#e0e0e0"), 0, 2);
+            metricsGrid.add(createMetricCell("Maximaler Gewinn (Max):", String.format(Locale.US, "$%.2f", row.maxProfit), "#00e676"), 1, 2);
+
+            detailsBox.getChildren().addAll(cardHeader, metricsGrid);
+            card.getChildren().addAll(miniChart, detailsBox);
+            cardsContainer.getChildren().add(card);
         }
 
-        VBox.setVgrow(chart, Priority.ALWAYS);
-        panel.getChildren().addAll(topBar, table, chart);
+        ScrollPane scrollPane = new ScrollPane(cardsContainer);
+        scrollPane.setFitToWidth(true);
+        scrollPane.setStyle("-fx-background: #0b0d13; -fx-background-color: transparent; -fx-viewport-border-color: transparent;");
+        VBox.setVgrow(scrollPane, Priority.ALWAYS);
+
+        panel.getChildren().addAll(topBar, summaryBar, scrollPane);
         return panel;
+    }
+
+    private static HBox createMetricCell(String label, String value, String colorHex) {
+        HBox cell = new HBox(6);
+        cell.setAlignment(Pos.CENTER_LEFT);
+        Label lbl = new Label(label);
+        lbl.setFont(Font.font("Segoe UI", FontWeight.NORMAL, 11));
+        lbl.setTextFill(Color.web("#7e889a"));
+
+        Label val = new Label(value);
+        val.setFont(Font.font("Segoe UI", FontWeight.BOLD, 12));
+        val.setTextFill(Color.web(colorHex));
+
+        cell.getChildren().addAll(lbl, val);
+        return cell;
     }
 
     public static void openRobustnessHtmlReport(CombinedPass pass, long sensitivityRunTimestamp) {
@@ -427,10 +528,10 @@ public class StrategyDetailsModalDialog {
             java.nio.file.Files.createDirectories(reportsDir);
             java.nio.file.Path targetFile = reportsDir.resolve(
                     "robustness_report_" + sensitivityRunTimestamp + "_Pass" + pass.getPassNumber() + ".html");
-            if (!java.nio.file.Files.exists(targetFile)) {
-                String htmlContent = buildStandaloneRobustnessHtml(pass);
-                java.nio.file.Files.writeString(targetFile, htmlContent, java.nio.charset.StandardCharsets.UTF_8);
-            }
+            
+            // Build fresh HTML report with full sensitivity tables and charts!
+            String htmlContent = buildStandaloneRobustnessHtml(pass, sensitivityRunTimestamp);
+            java.nio.file.Files.writeString(targetFile, htmlContent, java.nio.charset.StandardCharsets.UTF_8);
 
             openHtmlFileInBrowser(targetFile);
         } catch (Exception ex) {
@@ -453,31 +554,172 @@ public class StrategyDetailsModalDialog {
         }
     }
 
-    private static String buildStandaloneRobustnessHtml(CombinedPass pass) {
+    private static String buildStandaloneRobustnessHtml(CombinedPass pass, long sensitivityRunTimestamp) {
         String stratName = pass != null ? pass.getStrategyName() : "Strategy";
         int passNum = pass != null ? pass.getPassNumber() : 1;
-        return "<!DOCTYPE html>\n" +
-               "<html lang=\"en\">\n" +
-               "<head>\n" +
-               "    <meta charset=\"UTF-8\">\n" +
-               "    <title>Robustness Scanner Report - Pass #" + passNum + "</title>\n" +
-               "    <style>\n" +
-               "        body { background: #0b0d13; color: #00e5ff; font-family: Segoe UI, sans-serif; padding: 30px; text-align: center; }\n" +
-               "        h1 { color: #00e5ff; margin-bottom: 5px; }\n" +
-               "        p { color: #7e889a; font-size: 1.1em; }\n" +
-               "        .box { background: #121622; border: 1px solid #1e2432; border-radius: 8px; padding: 25px; max-width: 800px; margin: 30px auto; text-align: left; color: #e0e0e0; }\n" +
-               "    </style>\n" +
-               "</head>\n" +
-               "<body>\n" +
-               "    <h1>Robustness Scanner Report</h1>\n" +
-               "    <p>Strategy: <strong>" + stratName + "</strong> | Pass #" + passNum + "</p>\n" +
-               "    <div class=\"box\">\n" +
-               "        <h3 style=\"color: #00e5ff; margin-top:0;\">Robustness Scanner Status</h3>\n" +
-               "        <p>Green transparent areas represent tableaus (< 5% variance) on the base period. The Green Dot marks the original default value.</p>\n" +
-               "        <p>Der Stresstest für diesen Pass wurde erfolgreich abgeschlossen. Öffne den Reiter Controlling für die interaktiven 3D-Matrizen.</p>\n" +
-               "    </div>\n" +
-               "</body>\n" +
-               "</html>";
+
+        java.util.List<SensitivityRow> rows = new java.util.ArrayList<>();
+        try {
+            com.backtester.database.DatabaseManager db = com.backtester.database.DatabaseManager.getInstance();
+            String sql = "SELECT parameter_name, period, cv, verdict, base_value, base_profit, mean_profit, min_profit, max_profit, curve_json " +
+                         "FROM SENSITIVITY_DETAIL WHERE run_timestamp = ? AND pass_number = ? AND pass_name = ? " +
+                         "ORDER BY parameter_name, period";
+            try (java.sql.Connection conn = db.getConnection();
+                 java.sql.PreparedStatement pstmt = conn.prepareStatement(sql)) {
+                pstmt.setLong(1, sensitivityRunTimestamp);
+                pstmt.setInt(2, passNum);
+                pstmt.setString(3, stratName);
+                try (java.sql.ResultSet rs = pstmt.executeQuery()) {
+                    while (rs.next()) {
+                        rows.add(new SensitivityRow(
+                            rs.getString("parameter_name"),
+                            rs.getString("period"),
+                            rs.getDouble("cv"),
+                            rs.getString("verdict"),
+                            rs.getDouble("base_value"),
+                            rs.getDouble("base_profit"),
+                            rs.getDouble("mean_profit"),
+                            rs.getDouble("min_profit"),
+                            rs.getDouble("max_profit"),
+                            rs.getString("curve_json")
+                        ));
+                    }
+                }
+            }
+        } catch (Exception ex) {
+            log.error("Failed to load sensitivity details for HTML report, pass #" + passNum, ex);
+        }
+
+        int robustCount = 0, accCount = 0, fragileCount = 0;
+        for (SensitivityRow r : rows) {
+            String v = r.verdict != null ? r.verdict.toUpperCase(Locale.US) : "";
+            if ("ROBUST".equals(v)) robustCount++;
+            else if ("ACCEPTABLE".equals(v)) accCount++;
+            else fragileCount++;
+        }
+
+        StringBuilder html = new StringBuilder();
+        html.append("<!DOCTYPE html>\n<html lang=\"de\">\n<head>\n");
+        html.append("<meta charset=\"UTF-8\">\n<title>Robustness Scanner Report - ").append(stratName).append(" (Pass #").append(passNum).append(")</title>\n");
+        html.append("<script src=\"https://cdn.jsdelivr.net/npm/chart.js\"></script>\n");
+        html.append("<style>\n");
+        html.append("  body { background-color: #0b0d13; color: #e0e0e0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 0; padding: 24px; }\n");
+        html.append("  h1 { color: #00e5ff; margin-bottom: 4px; }\n");
+        html.append("  .subtitle { color: #7e889a; font-size: 1.1em; margin-bottom: 20px; }\n");
+        html.append("  .summary-bar { background: #121622; border: 1px solid #1e2432; padding: 12px 20px; border-radius: 8px; margin-bottom: 24px; display: flex; gap: 16px; align-items: center; }\n");
+        html.append("  .badge { padding: 4px 10px; border-radius: 12px; font-weight: bold; font-size: 0.9em; }\n");
+        html.append("  .badge-robust { background: #143820; color: #00e676; }\n");
+        html.append("  .badge-acceptable { background: #3d2b00; color: #ffb300; }\n");
+        html.append("  .badge-fragile { background: #3d0c11; color: #ff1744; }\n");
+        html.append("  table { width: 100%; border-collapse: collapse; background: #121622; border: 1px solid #1e2432; border-radius: 8px; overflow: hidden; margin-bottom: 30px; }\n");
+        html.append("  th, td { padding: 10px 14px; text-align: left; border-bottom: 1px solid #1e2432; font-size: 0.95em; }\n");
+        html.append("  th { background: #1a202c; color: #00e5ff; font-weight: bold; }\n");
+        html.append("  tr:hover { background: #181e2b; }\n");
+        html.append("  .card { background: #121622; border: 1px solid #1e2432; border-radius: 8px; padding: 16px; margin-bottom: 16px; display: flex; gap: 20px; align-items: center; }\n");
+        html.append("  .chart-box { width: 360px; height: 200px; flex-shrink: 0; }\n");
+        html.append("  .details-box { flex-grow: 1; }\n");
+        html.append("  .param-title { font-size: 1.2em; font-weight: bold; color: #00e5ff; margin-bottom: 8px; display: flex; align-items: center; gap: 12px; }\n");
+        html.append("  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 24px; font-size: 0.9em; margin-top: 10px; }\n");
+        html.append("  .metric-lbl { color: #7e889a; }\n");
+        html.append("  .metric-val { font-weight: bold; color: #ffffff; }\n");
+        html.append("</style>\n</head>\n<body>\n");
+
+        html.append("<h1>📈 Robustness Scanner Report</h1>\n");
+        html.append("<div class=\"subtitle\">Strategie: <strong>").append(stratName).append("</strong> | Pass #").append(passNum).append("</div>\n");
+
+        html.append("<div class=\"summary-bar\">\n");
+        html.append("  <span>Gesamt Parametersweeps: <strong>").append(rows.size()).append("</strong></span>\n");
+        html.append("  <span class=\"badge badge-robust\">🟢 Robust: ").append(robustCount).append("</span>\n");
+        html.append("  <span class=\"badge badge-acceptable\">🟡 Acceptable: ").append(accCount).append("</span>\n");
+        html.append("  <span class=\"badge badge-fragile\">🔴 Fragile: ").append(fragileCount).append("</span>\n");
+        html.append("</div>\n");
+
+        // Summary Table
+        html.append("<h2>📋 Parameter-Sensitivität Übersicht</h2>\n");
+        html.append("<table>\n<thead><tr><th>Parameter</th><th>Period</th><th>CV (%)</th><th>Verdict</th><th>Base Value</th><th>Base Profit</th><th>Min Profit</th><th>Max Profit</th></tr></thead>\n<tbody>\n");
+
+        for (SensitivityRow r : rows) {
+            String vUpper = r.verdict != null ? r.verdict.toUpperCase(Locale.US) : "";
+            String badgeCls = "ROBUST".equals(vUpper) ? "badge-robust" : ("ACCEPTABLE".equals(vUpper) ? "badge-acceptable" : "badge-fragile");
+            String symbol = "ROBUST".equals(vUpper) ? "🟢" : ("ACCEPTABLE".equals(vUpper) ? "🟡" : "🔴");
+            html.append("<tr>")
+                .append("<td><strong>").append(r.parameterName).append("</strong></td>")
+                .append("<td>").append(r.period).append("</td>")
+                .append("<td style=\"font-weight:bold; color:").append(r.cv < 30 ? "#00e676" : (r.cv <= 60 ? "#ffb300" : "#ff1744")).append(";\">").append(String.format(Locale.US, "%.2f%%", r.cv)).append("</td>")
+                .append("<td><span class=\"badge ").append(badgeCls).append("\">").append(symbol).append(" ").append(r.verdict).append("</span></td>")
+                .append("<td>").append(String.format(Locale.US, "%.4f", r.baseValue)).append("</td>")
+                .append("<td>$").append(String.format(Locale.US, "%.2f", r.baseProfit)).append("</td>")
+                .append("<td>$").append(String.format(Locale.US, "%.2f", r.minProfit)).append("</td>")
+                .append("<td>$").append(String.format(Locale.US, "%.2f", r.maxProfit)).append("</td>")
+                .append("</tr>\n");
+        }
+        html.append("</tbody>\n</table>\n");
+
+        // Parameter Sweep Cards with Charts
+        html.append("<h2>📊 Einzelne Parameter-Kennlinien</h2>\n");
+
+        for (int idx = 0; idx < rows.size(); idx++) {
+            SensitivityRow r = rows.get(idx);
+            String canvasId = "chart_" + idx;
+            String vUpper = r.verdict != null ? r.verdict.toUpperCase(Locale.US) : "";
+            String badgeCls = "ROBUST".equals(vUpper) ? "badge-robust" : ("ACCEPTABLE".equals(vUpper) ? "badge-acceptable" : "badge-fragile");
+            String symbol = "ROBUST".equals(vUpper) ? "🟢" : ("ACCEPTABLE".equals(vUpper) ? "🟡" : "🔴");
+
+            html.append("<div class=\"card\">\n");
+            html.append("  <div class=\"chart-box\"><canvas id=\"").append(canvasId).append("\"></canvas></div>\n");
+            html.append("  <div class=\"details-box\">\n");
+            html.append("    <div class=\"param-title\">").append(r.parameterName).append(" <span style=\"color:#ab47bc; font-size:0.8em;\">[").append(r.period).append("]</span> <span class=\"badge ").append(badgeCls).append("\">").append(symbol).append(" ").append(r.verdict).append("</span></div>\n");
+            html.append("    <div class=\"grid\">\n");
+            html.append("      <div><span class=\"metric-lbl\">Variationskoeffizient (CV):</span> <span class=\"metric-val\" style=\"color:").append(r.cv < 30 ? "#00e676" : (r.cv <= 60 ? "#ffb300" : "#ff1744")).append(";\">").append(String.format(Locale.US, "%.2f%%", r.cv)).append("</span></div>\n");
+            html.append("      <div><span class=\"metric-lbl\">Optimierter Basis-Wert:</span> <span class=\"metric-val\">").append(String.format(Locale.US, "%.4f", r.baseValue)).append("</span></div>\n");
+            html.append("      <div><span class=\"metric-lbl\">Basis-Gewinn:</span> <span class=\"metric-val\" style=\"color:#00e5ff;\">$").append(String.format(Locale.US, "%.2f", r.baseProfit)).append("</span></div>\n");
+            html.append("      <div><span class=\"metric-lbl\">Minimaler Gewinn:</span> <span class=\"metric-val\">$").append(String.format(Locale.US, "%.2f", r.minProfit)).append("</span></div>\n");
+            html.append("      <div><span class=\"metric-lbl\">Durchschnittsgewinn:</span> <span class=\"metric-val\">$").append(String.format(Locale.US, "%.2f", r.meanProfit)).append("</span></div>\n");
+            html.append("      <div><span class=\"metric-lbl\">Maximaler Gewinn:</span> <span class=\"metric-val\">$").append(String.format(Locale.US, "%.2f", r.maxProfit)).append("</span></div>\n");
+            html.append("    </div>\n");
+            html.append("  </div>\n");
+            html.append("</div>\n");
+        }
+
+        // Script to render Chart.js curves
+        html.append("<script>\n");
+        for (int idx = 0; idx < rows.size(); idx++) {
+            SensitivityRow r = rows.get(idx);
+            String canvasId = "chart_" + idx;
+            html.append("{\n");
+            html.append("  const ctx = document.getElementById('").append(canvasId).append("').getContext('2d');\n");
+            html.append("  let labels = []; let data = [];\n");
+            if (r.curveJson != null && !r.curveJson.isBlank()) {
+                try {
+                    com.google.gson.JsonArray arr = com.google.gson.JsonParser.parseString(r.curveJson).getAsJsonArray();
+                    html.append("  labels = [");
+                    for (int i = 0; i < arr.size(); i++) {
+                        com.google.gson.JsonObject obj = arr.get(i).getAsJsonObject();
+                        double pv = obj.has("paramValue") ? obj.get("paramValue").getAsDouble() : (obj.has("percent") ? obj.get("percent").getAsDouble() : i);
+                        html.append(String.format(Locale.US, "%.4f", pv)).append(i < arr.size() - 1 ? "," : "");
+                    }
+                    html.append("];\n  data = [");
+                    for (int i = 0; i < arr.size(); i++) {
+                        com.google.gson.JsonObject obj = arr.get(i).getAsJsonObject();
+                        double pr = obj.has("profit") ? obj.get("profit").getAsDouble() : 0.0;
+                        html.append(String.format(Locale.US, "%.2f", pr)).append(i < arr.size() - 1 ? "," : "");
+                    }
+                    html.append("];\n");
+                } catch (Exception ignored) {}
+            }
+            html.append("  new Chart(ctx, {\n");
+            html.append("    type: 'line',\n");
+            html.append("    data: {\n");
+            html.append("      labels: labels,\n");
+            html.append("      datasets: [{ label: 'Profit ($)', data: data, borderColor: '#ff9800', backgroundColor: 'rgba(255, 152, 0, 0.1)', borderWidth: 2, pointRadius: 4, pointBackgroundColor: '#ffffff' }]\n");
+            html.append("    },\n");
+            html.append("    options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { x: { ticks: { color: '#7e889a' } }, y: { ticks: { color: '#7e889a' } } } }\n");
+            html.append("  });\n");
+            html.append("}\n");
+        }
+        html.append("</script>\n</body>\n</html>");
+
+        return html.toString();
     }
 
     public static class SensitivityRow {

@@ -23,6 +23,10 @@ public class WorkflowTask {
     public static final int DEFAULT_OPTIMIZER_MODE = 2;
     public static final int DEFAULT_OPTIMIZER_CRITERION = 4;
     public static final int DEFAULT_OPTIMIZER_FORWARD_MODE = 1;
+    public static final double DEFAULT_ROBUSTNESS_SWEEP_PCT = 0.05;
+    public static final int DEFAULT_ROBUSTNESS_STEPS = 10;
+    public static final int DEFAULT_ROBUSTNESS_TIME_SHIFTS = 0;
+    public static final int DEFAULT_ROBUSTNESS_SHIFT_DAYS = 7;
 
     public enum TaskType {
         STRATEGY_SELECTION("Strategie-Auswahl", "EA, Symbol, Timeframe & Parameterbereiche festlegen", true),
@@ -111,6 +115,11 @@ public class WorkflowTask {
     private Double diversityTradeDiffPct;
     private Integer diversityMinDifferentParams;
     private Integer diversityMaxStrategies;
+    private Double robustnessSweepPct;
+    private Integer robustnessSteps;
+    private Integer robustnessTimeShifts;
+    private Integer robustnessShiftDays;
+    private String robustnessExcludedParams = "";
 
     public WorkflowTask() {
         this.id = UUID.randomUUID().toString();
@@ -189,9 +198,11 @@ public class WorkflowTask {
 
     public String getRetestSymbol() { return retestSymbol != null ? retestSymbol : ""; }
     public void setRetestSymbol(String retestSymbol) { this.retestSymbol = retestSymbol; }
+    public String getSymbol() { return getRetestSymbol(); }
 
     public String getRetestPeriod() { return retestPeriod != null ? retestPeriod : ""; }
     public void setRetestPeriod(String retestPeriod) { this.retestPeriod = retestPeriod; }
+    public String getPeriod() { return getRetestPeriod(); }
 
     public String getOptimizerOutputDirectory() {
         return optimizerOutputDirectory != null ? optimizerOutputDirectory : "";
@@ -335,6 +346,54 @@ public class WorkflowTask {
         this.diversityMaxStrategies = value;
     }
 
+    public double getRobustnessSweepPct() {
+        return robustnessSweepPct != null && validPercentage(robustnessSweepPct)
+                ? robustnessSweepPct : DEFAULT_ROBUSTNESS_SWEEP_PCT;
+    }
+
+    public void setRobustnessSweepPct(double value) {
+        requirePercentage(value, "Robustness Sweep Abweichung %");
+        this.robustnessSweepPct = value;
+    }
+
+    public int getRobustnessSteps() {
+        return robustnessSteps != null && robustnessSteps > 0
+                ? robustnessSteps : DEFAULT_ROBUSTNESS_STEPS;
+    }
+
+    public void setRobustnessSteps(int value) {
+        if (value < 1) throw new IllegalArgumentException("Mindestens 1 Sweep-Schritt ist erforderlich.");
+        this.robustnessSteps = value;
+    }
+
+    public int getRobustnessTimeShifts() {
+        return robustnessTimeShifts != null && robustnessTimeShifts >= 0
+                ? robustnessTimeShifts : DEFAULT_ROBUSTNESS_TIME_SHIFTS;
+    }
+
+    public void setRobustnessTimeShifts(int value) {
+        if (value < 0) throw new IllegalArgumentException("Time Shifts dürfen nicht negativ sein.");
+        this.robustnessTimeShifts = value;
+    }
+
+    public int getRobustnessShiftDays() {
+        return robustnessShiftDays != null && robustnessShiftDays > 0
+                ? robustnessShiftDays : DEFAULT_ROBUSTNESS_SHIFT_DAYS;
+    }
+
+    public void setRobustnessShiftDays(int value) {
+        if (value < 1) throw new IllegalArgumentException("Shift Tage müssen mindestens 1 betragen.");
+        this.robustnessShiftDays = value;
+    }
+
+    public String getRobustnessExcludedParams() {
+        return robustnessExcludedParams != null ? robustnessExcludedParams : "";
+    }
+
+    public void setRobustnessExcludedParams(String value) {
+        this.robustnessExcludedParams = value != null ? value.trim() : "";
+    }
+
     private static boolean validPercentage(Double value) {
         return value != null && Double.isFinite(value) && value >= 0.0 && value <= 1.0;
     }
@@ -373,6 +432,11 @@ public class WorkflowTask {
         copy.diversityTradeDiffPct = diversityTradeDiffPct;
         copy.diversityMinDifferentParams = diversityMinDifferentParams;
         copy.diversityMaxStrategies = diversityMaxStrategies;
+        copy.robustnessSweepPct = robustnessSweepPct;
+        copy.robustnessSteps = robustnessSteps;
+        copy.robustnessTimeShifts = robustnessTimeShifts;
+        copy.robustnessShiftDays = robustnessShiftDays;
+        copy.robustnessExcludedParams = robustnessExcludedParams;
 
         List<FilterCondition> conditionCopies = new ArrayList<>();
         for (FilterCondition condition : getFilterConditions()) {

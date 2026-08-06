@@ -3,6 +3,8 @@ package com.backtester.engine;
 import com.backtester.config.AppConfig;
 import com.backtester.config.MetaTraderPlatform;
 import com.backtester.report.BacktestResult;
+import com.backtester.report.BacktestArtifactReplayResolver;
+import com.backtester.report.BacktestStatisticsArtifact;
 import com.backtester.report.ReportParser;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -95,6 +97,11 @@ public class BacktestRunner {
             Path iniPath = outputDir.resolve("tester.ini");
             iniGenerator.generate(btConfig, iniPath, reportName);
             logMessage("Generated tester.ini (Report=" + reportName + ")");
+
+            // Preserve the exact effective preset with the report artifact. A
+            // later gallery replay must not depend on mutable EA defaults or a
+            // same-named preset that may have been overwritten meanwhile.
+            snapshotExpertParameters(btConfig, outputDir);
 
             // 2b. Clean up old report files from MetaTrader directory to avoid stale data
             cleanupOldReports(mt5Dir, reportName);
@@ -267,16 +274,18 @@ public class BacktestRunner {
 
             // ALWAYS write summary (so the results table shows something)
             writeSummary(outputDir, result, btConfig);
+            try {
+                BacktestStatisticsArtifact.write(outputDir, result, btConfig);
+                logMessage("Archived complete backtest statistics: "
+                        + BacktestStatisticsArtifact.FILE_NAME);
+            } catch (IOException ex) {
+                log.error("Failed to write structured backtest statistics", ex);
+            }
             
             if (result.isSuccess()) {
                 try {
-                    com.google.gson.JsonObject metrics = new com.google.gson.JsonObject();
-                    metrics.addProperty("profit", result.getTotalProfit());
-                    metrics.addProperty("drawdown", result.getMaxDrawdown());
-                    metrics.addProperty("trades", result.getTotalTrades());
-                    metrics.addProperty("winRate", result.getWinRate());
-                    metrics.addProperty("profitFactor", result.getProfitFactor());
-                    metrics.addProperty("sharpeRatio", result.getSharpeRatio());
+                    com.google.gson.JsonObject metrics =
+                            BacktestStatisticsArtifact.create(result, btConfig);
                     com.backtester.database.DatabaseManager.getInstance().saveRun(
                         "BACKTEST", 
                         result.getExpert(), 
@@ -669,16 +678,53 @@ public class BacktestRunner {
             writer.write("Status: " + (result.isSuccess() ? "SUCCESS" : "FAILED - " + result.getMessage()) + "\n");
             writer.write("\n--- Results ---\n");
             writer.write("Total Profit: " + result.getTotalProfit() + "\n");
+            writer.write("Gross Profit: " + result.getGrossProfit() + "\n");
+            writer.write("Gross Loss: " + result.getGrossLoss() + "\n");
             writer.write("Total Trades: " + result.getTotalTrades() + "\n");
+            writer.write("Profit Trades: " + result.getProfitTrades() + "\n");
+            writer.write("Loss Trades: " + result.getLossTrades() + "\n");
+            writer.write("Short Positions: " + result.getShortPositions() + "\n");
+            writer.write("Long Positions: " + result.getLongPositions() + "\n");
             writer.write("Win Rate: " + result.getWinRate() + "%\n");
-            writer.write("Max Drawdown: " + result.getMaxDrawdown() + "%\n");
+            writer.write("Max Drawdown: " + result.getMaxDrawdownPercent() + "%\n");
+            writer.write("Maximal Equity Drawdown: " + result.getMaxDrawdown() + "%\n");
+            writer.write("Maximal Equity Drawdown Absolute: " + result.getMaxDrawdownAbsolute() + "\n");
+            writer.write("Maximal Balance Drawdown: " + result.getBalanceDrawdown() + "%\n");
+            writer.write("Maximal Balance Drawdown Absolute: " + result.getBalanceDrawdownAbsolute() + "\n");
             writer.write("Profit Factor: " + result.getProfitFactor() + "\n");
             writer.write("Sharpe Ratio: " + result.getSharpeRatio() + "\n");
+            writer.write("Recovery Factor: " + result.getRecoveryFactor() + "\n");
+            writer.write("Expected Payoff: " + result.getExpectedPayoff() + "\n");
+            writer.write("Initial Deposit: " + result.getInitialDeposit() + "\n");
+            writer.write("Final Balance: " + result.getFinalBalance() + "\n");
+            writer.write("Largest Win: " + result.getLargestWin() + "\n");
+            writer.write("Largest Loss: " + result.getLargestLoss() + "\n");
+            writer.write("Average Win: " + result.getAverageWin() + "\n");
+            writer.write("Average Loss: " + result.getAverageLoss() + "\n");
+            writer.write("Equity History Points: "
+                    + (result.getEquityHistory() != null ? result.getEquityHistory().size() : 0) + "\n");
             writer.write("Output: " + outputDir + "\n");
             log.info("Summary written to {}", summaryFile);
         } catch (IOException e) {
             log.error("Failed to write summary", e);
         }
+    }
+
+    private void snapshotExpertParameters(BacktestConfig btConfig, Path outputDir) throws IOException {
+        String presetName = btConfig.getExpertParameters();
+        if (presetName == null || presetName.isBlank()) return;
+        Path leaf = Path.of(presetName.trim());
+        if (leaf.getNameCount() != 1) {
+            throw new IOException("Invalid ExpertParameters filename: " + presetName);
+        }
+        Path profilesDir = config.getTesterProfilesDir(btConfig.getExpert()).toAbsolutePath().normalize();
+        Path source = profilesDir.resolve(leaf).normalize();
+        if (!source.getParent().equals(profilesDir) || !Files.isRegularFile(source)) {
+            throw new IOException("ExpertParameters preset not found: " + source);
+        }
+        Path snapshot = outputDir.resolve(BacktestArtifactReplayResolver.PRESET_SNAPSHOT_FILE);
+        Files.copy(source, snapshot, StandardCopyOption.REPLACE_EXISTING);
+        logMessage("Archived exact ExpertParameters preset: " + snapshot.getFileName());
     }
 
     private void logMessage(String message) {

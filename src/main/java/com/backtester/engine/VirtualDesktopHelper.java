@@ -43,8 +43,14 @@ public class VirtualDesktopHelper {
             log.info("Starting terminal in NORMAL mode...");
             return startNormally(executable, args, workingDir);
         } else {
-            log.info("Starting terminal in VIRTUAL_DESKTOP mode...");
-            return startOnDesktop2(executable, args, workingDir);
+            int desktopIndex = 1;
+            if ("VIRTUAL_DESKTOP_1".equalsIgnoreCase(launchMode)) {
+                desktopIndex = 0;
+            } else if ("VIRTUAL_DESKTOP_3".equalsIgnoreCase(launchMode)) {
+                desktopIndex = 2;
+            }
+            log.info("Starting terminal on Virtual Desktop {} mode...", desktopIndex + 1);
+            return startOnDesktop(executable, args, workingDir, desktopIndex);
         }
     }
 
@@ -181,6 +187,10 @@ public class VirtualDesktopHelper {
      * @return The spawned Process (tracked by PID), or null if launch failed
      */
     public static Process startOnDesktop2(String executable, List<String> args, Path workingDir) {
+        return startOnDesktop(executable, args, workingDir, 1);
+    }
+
+    public static Process startOnDesktop(String executable, List<String> args, Path workingDir, int desktopIndex) {
         String os = System.getProperty("os.name").toLowerCase();
         if (!os.contains("win")) {
             return startNormally(executable, args, workingDir);
@@ -195,9 +205,10 @@ public class VirtualDesktopHelper {
                 }
             }
 
-            String psScript = buildPowerShellScript(executable, argString.toString());
+            int desktopNum = desktopIndex + 1;
+            String psScript = buildPowerShellScript(executable, argString.toString(), desktopIndex);
 
-            log.info("Starting process on Virtual Desktop 2 (move-window): {} {}", executable, argString);
+            log.info("Starting process on Virtual Desktop {} (move-window): {} {}", desktopNum, executable, argString);
 
             final long[] targetPid = new long[]{-1};
             executePowerShellScript(psScript, line -> {
@@ -210,7 +221,7 @@ public class VirtualDesktopHelper {
             }, workingDir);
 
             if (targetPid[0] > 0) {
-                log.info("Process successfully launched on Virtual Desktop 2 with PID: {}", targetPid[0]);
+                log.info("Process successfully launched on Virtual Desktop {} with PID: {}", desktopNum, targetPid[0]);
                 return ProcessHandle.of(targetPid[0])
                     .map(ph -> (Process) new PidProcess(ph))
                     .orElse(null);
@@ -220,39 +231,48 @@ public class VirtualDesktopHelper {
             }
 
         } catch (Exception e) {
-            log.error("Failed to start process on Desktop 2, falling back to normal start", e);
+            log.error("Failed to start process on Virtual Desktop {}, falling back to normal start", desktopIndex + 1, e);
             return startNormally(executable, args, workingDir);
         }
     }
 
-    public static void moveProcessToDesktop2(Process process) {
+    public static void moveProcessToDesktop(Process process, int desktopIndex) {
         if (process == null) return;
         String os = System.getProperty("os.name").toLowerCase();
         if (!os.contains("win")) return;
 
         long pid = process.pid();
+        int desktopNum = desktopIndex + 1;
         new Thread(() -> {
             try {
-                log.info("Moving process PID {} to Desktop 2 without switching desktop...", pid);
+                log.info("Moving process PID {} to Desktop {} without switching desktop...", pid, desktopNum);
                 String psScript =
-                    "Import-Module VirtualDesktop -WarningAction SilentlyContinue 3>$null\n" +
-                    "$count = Get-DesktopCount\n" +
-                    "if ($count -lt 2) { New-Desktop | Out-Null }\n" +
-                    "$d2 = Get-Desktop 1\n" +
-                    "for ($i = 0; $i -lt 40; $i++) {\n" +
-                    "    Start-Sleep -Milliseconds 250\n" +
-                    "    $p = Get-Process -Id " + pid + " -ErrorAction SilentlyContinue\n" +
-                    "    if ($p) { $p.Refresh() }\n" +
-                    "    if ($p -and $p.MainWindowHandle -ne 0) {\n" +
-                    "        Move-Window -Desktop $d2 -Hwnd $p.MainWindowHandle -ErrorAction SilentlyContinue\n" +
-                    "        break\n" +
-                    "    }\n" +
-                    "}\n";
+                    "Import-Module VirtualDesktop -WarningAction SilentlyContinue 3>$null; " +
+                    "$count = Get-DesktopCount; " +
+                    "if ($count -lt " + desktopNum + ") { " +
+                    "    for ($i = $count; $i -lt " + desktopNum + "; $i++) { " +
+                    "        New-Desktop | Out-Null; " +
+                    "    } " +
+                    "} " +
+                    "$targetDesktop = Get-Desktop " + desktopIndex + "; " +
+                    "$hwnd = 0; " +
+                    "for ($i = 0; $i -lt 40; $i++) { " +
+                    "    Start-Sleep -Milliseconds 150; " +
+                    "    $p = Get-Process -Id " + pid + " -ErrorAction SilentlyContinue; " +
+                    "    if ($p) { $p.Refresh(); if ($p.MainWindowHandle -ne 0) { $hwnd = $p.MainWindowHandle; break; } } " +
+                    "} " +
+                    "if ($hwnd -ne 0) { " +
+                    "    try { Move-Window -Desktop $targetDesktop -Hwnd $hwnd; Write-Host 'MOVED'; } catch { Write-Host \"MOVE_ERROR: $_\"; } " +
+                    "}";
                 executePowerShellScript(psScript, line -> log.info("[VD-Move] {}", line), null);
             } catch (Exception e) {
-                log.error("Failed to move process {} to Desktop 2", pid, e);
+                log.error("Failed to move process {} to Desktop {}", pid, desktopNum, e);
             }
         }, "VirtualDesktop-Move-Thread-" + pid).start();
+    }
+
+    public static void moveProcessToDesktop2(Process process) {
+        moveProcessToDesktop(process, 1);
     }
 
     private static void executePowerShellScript(String psScript, Consumer<String> lineConsumer, Path workingDir) {
@@ -284,47 +304,43 @@ public class VirtualDesktopHelper {
         }
     }
 
-    private static String buildPowerShellScript(String executable, String arguments) {
+    private static String buildPowerShellScript(String executable, String arguments, int desktopIndex) {
         String escapedExe = executable.replace("'", "''");
         String escapedArgs = arguments.replace("'", "''");
+        int targetNum = desktopIndex + 1;
 
-        return "Import-Module VirtualDesktop -WarningAction SilentlyContinue 3>$null\n" +
-            "$count = Get-DesktopCount\n" +
-            "Write-Output \"VD_STATUS: Current Virtual Desktop count = $count\"\n" +
-            "if ($count -lt 2) {\n" +
-            "    New-Desktop | Out-Null\n" +
-            "    Write-Output 'VD_STATUS: Created Virtual Desktop 2'\n" +
-            "}\n" +
-            "$d2 = Get-Desktop 1\n" +
-            "Write-Output \"VD_STATUS: Target desktop = Desktop 2 ($d2)\"\n" +
+        return "Import-Module VirtualDesktop -WarningAction SilentlyContinue 3>$null; " +
+            "$count = Get-DesktopCount; " +
+            "Write-Host \"VD_STATUS: Current Virtual Desktop count = $count\"; " +
+            "if ($count -lt " + targetNum + ") { " +
+            "    for ($i = $count; $i -lt " + targetNum + "; $i++) { " +
+            "        New-Desktop | Out-Null; " +
+            "    } " +
+            "    Write-Host 'VD_STATUS: Created Virtual Desktop " + targetNum + "'; " +
+            "} " +
+            "$targetDesktop = Get-Desktop " + desktopIndex + "; " +
+            "Write-Host \"VD_STATUS: Target desktop = Desktop " + targetNum + " ($targetDesktop)\"; " +
             (escapedArgs.isEmpty()
-                ? "$app = Start-Process -FilePath '" + escapedExe + "' -PassThru\n"
-                : "$app = Start-Process -FilePath '" + escapedExe + "' -ArgumentList '" + escapedArgs + "' -PassThru\n") +
-            "$spid = $app.Id\n" +
-            "Write-Output \"STARTED_PID:$spid\"\n" +
-            "for ($i = 0; $i -lt 120; $i++) {\n" +
-            "    Start-Sleep -Milliseconds 250\n" +
-            "    $procs = Get-Process -ErrorAction SilentlyContinue | Where-Object { ($_.Id -eq $spid -or $_.ProcessName -eq 'terminal64' -or $_.ProcessName -eq 'terminal') -and $_.ProcessName -notlike '*WindowsTerminal*' }\n" +
-            "    $moved = $false\n" +
-            "    foreach ($p in $procs) {\n" +
-            "        if ($p.MainWindowHandle -ne 0) {\n" +
-            "            try {\n" +
-            "                $h = [IntPtr]$p.MainWindowHandle\n" +
-            "                Write-Output \"VD_STATUS: Found window handle ($h) for MT5 process '$($p.ProcessName)' (PID $($p.Id)) after $($i * 250)ms\"\n" +
-            "                $d2.MoveWindow($h)\n" +
-            "                Write-Output \"VD_STATUS: Successfully moved MT5 window ($h) to Desktop 2\"\n" +
-            "                $moved = $true\n" +
-            "            } catch {\n" +
-            "                Write-Output \"VD_STATUS: Error moving MT5 window handle ($h): $_\"\n" +
-            "            }\n" +
-            "        }\n" +
-            "    }\n" +
-            "    if ($moved) { break }\n" +
-            "}\n" +
-            "if (-not $moved) {\n" +
-            "    Write-Output 'VD_STATUS: WARNUNG - Timeout nach 30s: Kein Hauptfenster-Handle für MT5 gefunden'\n" +
-            "}\n" +
-            "Write-Output 'MOVE_OK'\n";
+                ? "$app = Start-Process -FilePath '" + escapedExe + "' -PassThru; "
+                : "$app = Start-Process -FilePath '" + escapedExe + "' -ArgumentList '" + escapedArgs + "' -PassThru; ") +
+            "$spid = $app.Id; " +
+            "Write-Host \"STARTED_PID:$spid\"; " +
+            "$hwnd = 0; " +
+            "for ($i = 0; $i -lt 40; $i++) { " +
+            "  Start-Sleep -Milliseconds 150; " +
+            "  $p = Get-Process -Id $spid -ErrorAction SilentlyContinue; " +
+            "  if ($p) { " +
+            "    $p.Refresh(); " +
+            "    if ($p.MainWindowHandle -ne 0) { $hwnd = $p.MainWindowHandle; break; } " +
+            "  } " +
+            "} " +
+            "if ($hwnd -ne 0) { " +
+            "  try { " +
+            "    Move-Window -Desktop $targetDesktop -Hwnd $hwnd; " +
+            "    Write-Host \"VD_STATUS: Successfully moved MT5 window ($hwnd) to Desktop " + targetNum + "\"; " +
+            "    Write-Host 'MOVE_OK'; " +
+            "  } catch { Write-Host \"MOVE_ERROR: $_\"; } " +
+            "} else { Write-Host 'NO_HWND_FOUND'; }";
     }
 
     private static String buildHiddenPowerShellScript(String executable, String arguments) {

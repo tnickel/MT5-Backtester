@@ -194,6 +194,24 @@ public class DatabankManagerTest {
         assertTrue("CustomDB must be empty", manager.getDatabank("CustomDB").isEmpty());
     }
 
+    @Test
+    public void galleryLookupCopiesOnlyMatchingPassNumbers() {
+        DatabankManager manager = new DatabankManager();
+        CombinedPass first = pass(1, 10.0);
+        CombinedPass second = pass(2, 20.0);
+        CombinedPass third = pass(3, 30.0);
+        manager.setDatabankContent("data0", List.of(first, second, third));
+
+        CombinedPass renamedReference = pass(2, 999.0);
+        renamedReference.setStrategyName("Renamed strategy");
+        List<CombinedPass> matches = manager.getDatabankMatches("data0", List.of(renamedReference));
+
+        assertEquals(1, matches.size());
+        assertEquals(2, matches.get(0).getPassNumber());
+        assertEquals(20.0, matches.get(0).getBtProfit(), 0.001);
+        assertNotSame(second, matches.get(0));
+    }
+
     private static CombinedPass pass(int number, double profit) {
         OptimizationResult.Pass bt = new OptimizationResult.Pass();
         bt.setPassNumber(number);

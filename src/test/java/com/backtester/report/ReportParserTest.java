@@ -264,6 +264,42 @@ public class ReportParserTest {
     }
 
     @Test
+    public void testParseRelativeEquityDrawdownSeparatelyFromMaximalDrawdown() throws IOException {
+        String html = "<table>"
+                + "<tr><td>Rückgang Equity maximal</td><td>13 709.48 (24.94%)</td></tr>"
+                + "<tr><td>Rückgang Equity relativ</td><td>26.89% (7 707.20)</td></tr>"
+                + "</table>";
+
+        BacktestResult result = parseHtml(html);
+
+        assertEquals(24.94, result.getMaxDrawdown(), 0.001);
+        assertEquals(13709.48, result.getMaxDrawdownAbsolute(), 0.001);
+        assertEquals(26.89, result.getMaxDrawdownPercent(), 0.001);
+    }
+
+    @Test
+    public void testPreservesUnknownStatisticsFromResultsSection() throws IOException {
+        String html = "<table>"
+                + "<tr><td colspan=\"6\">Ergebnisse</td></tr>"
+                + "<tr><td>Qualität der Historie:</td><td>99%</td>"
+                + "<td>Balken:</td><td>298651</td><td>Ticks:</td><td>104559972</td></tr>"
+                + "<tr><td>Z-Score:</td><td>8.17 (99.74%)</td>"
+                + "<td>LR Korrelation:</td><td>0.96</td></tr>"
+                + "<tr><td colspan=\"6\">Orders</td></tr>"
+                + "<tr><td>2026.08.04 12:00</td><td>must not be captured</td></tr>"
+                + "</table>";
+
+        BacktestResult result = parseHtml(html);
+
+        assertEquals("99%", result.getRawStatistics().get("Qualität der Historie"));
+        assertEquals("298651", result.getRawStatistics().get("Balken"));
+        assertEquals("104559972", result.getRawStatistics().get("Ticks"));
+        assertEquals("8.17 (99.74%)", result.getRawStatistics().get("Z-Score"));
+        assertEquals("0.96", result.getRawStatistics().get("LR Korrelation"));
+        assertFalse(result.getRawStatistics().containsValue("must not be captured"));
+    }
+
+    @Test
     public void testParseMt4TradeHistory() throws IOException {
         String html = "<table>"
                 + "<tr><td>Initial deposit:</td><td>10000.00</td></tr>"

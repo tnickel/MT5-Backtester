@@ -203,4 +203,34 @@ public class CustomProjectTest {
         assertEquals("Diversitäts-Clustering", project.getTasks().get(0).getName());
         assertFalse(project.migrateLegacyTaskDefinitions());
     }
+
+    @Test
+    public void robustnessTaskSettingsAreTaskSpecificAndPersisted() {
+        WorkflowTask task = new WorkflowTask("Robustness CV", WorkflowTask.TaskType.ROBUSTNESS_CV);
+        task.setRobustnessSweepPct(0.15);
+        task.setRobustnessSteps(20);
+        task.setRobustnessTimeShifts(5);
+        task.setRobustnessShiftDays(14);
+        task.setRobustnessExcludedParams("Inp_Min_Lot, Inp_Max_Lot");
+
+        WorkflowTask copy = task.copyForPersistence();
+
+        assertEquals(0.15, copy.getRobustnessSweepPct(), 0.0001);
+        assertEquals(20, copy.getRobustnessSteps());
+        assertEquals(5, copy.getRobustnessTimeShifts());
+        assertEquals(14, copy.getRobustnessShiftDays());
+        assertEquals("Inp_Min_Lot, Inp_Max_Lot", copy.getRobustnessExcludedParams());
+    }
+
+    @Test
+    public void legacyRobustnessTaskUsesSafeDefaults() {
+        WorkflowTask task = new com.google.gson.Gson().fromJson(
+                "{\"name\":\"Legacy Robustness\",\"type\":\"ROBUSTNESS_CV\"}", WorkflowTask.class);
+
+        assertEquals(WorkflowTask.DEFAULT_ROBUSTNESS_SWEEP_PCT, task.getRobustnessSweepPct(), 0.0001);
+        assertEquals(WorkflowTask.DEFAULT_ROBUSTNESS_STEPS, task.getRobustnessSteps());
+        assertEquals(WorkflowTask.DEFAULT_ROBUSTNESS_TIME_SHIFTS, task.getRobustnessTimeShifts());
+        assertEquals(WorkflowTask.DEFAULT_ROBUSTNESS_SHIFT_DAYS, task.getRobustnessShiftDays());
+        assertEquals("", task.getRobustnessExcludedParams());
+    }
 }

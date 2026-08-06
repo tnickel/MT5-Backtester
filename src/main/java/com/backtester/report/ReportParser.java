@@ -114,6 +114,15 @@ public class ReportParser {
         LABEL_MAP.put("Maximaler Drawdown", "maxDrawdown"); // MT4 German
         LABEL_MAP.put("Maximal drawdown", "maxDrawdown"); // MT4 English
 
+        // Relative equity drawdown. MT5 reports both maximal drawdown
+        // (absolute amount plus percent at that point) and relative drawdown
+        // (largest percentage). The latter is the correct value for a DD-%
+        // column and can be larger than the percentage beside the maximal DD.
+        LABEL_MAP.put("Rückgang Equity relativ", "relativeEquityDrawdown");
+        LABEL_MAP.put("R\u00FCckgang Equity relativ", "relativeEquityDrawdown");
+        LABEL_MAP.put("Equity Drawdown Relative", "relativeEquityDrawdown");
+        LABEL_MAP.put("Relative Equity Drawdown", "relativeEquityDrawdown");
+
         // Max Drawdown (balance)
         LABEL_MAP.put("Rückgang Kontostand maximal", "maxBalanceDrawdown");
         LABEL_MAP.put("R\u00FCckgang Kontostand maximal", "maxBalanceDrawdown");
@@ -168,6 +177,7 @@ public class ReportParser {
             // Strip all HTML tags to get clean label-value pairs
             // But first, extract values from the structured HTML
             Map<String, String> extractedValues = extractValuesFromHtml(content);
+            result.setRawStatistics(extractRawStatistics(content));
 
             log.info("Extracted {} values from report", extractedValues.size());
             for (Map.Entry<String, String> entry : extractedValues.entrySet()) {
@@ -196,11 +206,16 @@ public class ReportParser {
             // Drawdown: format is "978.80 (9.76%)"
             String ddStr = extractedValues.getOrDefault("maxDrawdown", "0");
             result.setMaxDrawdown(parsePercentageValue(ddStr));
-            result.setMaxDrawdownAbsolute(parseNumber(ddStr));
+            result.setMaxDrawdownAbsolute(parseAbsoluteDrawdown(ddStr));
+
+            String relativeEquityDd = extractedValues.get("relativeEquityDrawdown");
+            if (relativeEquityDd != null && !relativeEquityDd.isBlank()) {
+                result.setMaxDrawdownPercent(parsePercentageValue(relativeEquityDd));
+            }
 
             String balDd = extractedValues.getOrDefault("maxBalanceDrawdown", "0");
             result.setBalanceDrawdown(parsePercentageValue(balDd));
-            result.setBalanceDrawdownAbsolute(parseNumber(balDd));
+            result.setBalanceDrawdownAbsolute(parseAbsoluteDrawdown(balDd));
             
             // If equity drawdown was 0 but balance drawdown is > 0, fallback
             if (result.getMaxDrawdown() == 0 && result.getBalanceDrawdown() > 0) {
@@ -219,6 +234,7 @@ public class ReportParser {
             result.setLargestLoss(parseNumber(extractedValues.getOrDefault("largestLoss", "0")));
             result.setAverageWin(parseNumber(extractedValues.getOrDefault("avgWin", "0")));
             result.setAverageLoss(parseNumber(extractedValues.getOrDefault("avgLoss", "0")));
+            result.setFinalBalance(result.getInitialDeposit() + result.getTotalProfit());
 
             // Parse trade history for equity curve
             List<double[]> equityHistory = parseTradeHistory(content, result.getInitialDeposit());
@@ -343,6 +359,58 @@ public class ReportParser {
         }
 
         return values;
+    }
+
+    /** Preserve every label/value pair from the MT results table. */
+    private Map<String, String> extractRawStatistics(String html) {
+        Map<String, String> statistics = new LinkedHashMap<>();
+        Matcher resultsHeader = Pattern.compile(
+                "<t[dh][^>]*>\\s*(?:<[^>]+>\\s*)*(?:Ergebnisse|Results)"
+                        + "\\s*(?:</[^>]+>\\s*)*</t[dh]>",
+                Pattern.CASE_INSENSITIVE | Pattern.DOTALL).matcher(html);
+        if (!resultsHeader.find()) return statistics;
+
+        int start = html.indexOf("</tr>", resultsHeader.end());
+        start = start >= 0 ? start + 5 : resultsHeader.end();
+        Matcher ordersHeader = Pattern.compile(
+                "<t[dh][^>]*>\\s*(?:<[^>]+>\\s*)*"
+                        + "(?:Orders|Auftr(?:&auml;|ä|ae)ge)"
+                        + "\\s*(?:</[^>]+>\\s*)*</t[dh]>",
+                Pattern.CASE_INSENSITIVE | Pattern.DOTALL).matcher(html);
+        int end = html.length();
+        if (ordersHeader.find(start)) {
+            int ordersRowStart = html.lastIndexOf("<tr", ordersHeader.start());
+            end = ordersRowStart >= start ? ordersRowStart : ordersHeader.start();
+        }
+        if (end <= start) return statistics;
+
+        String resultsSection = html.substring(start, end);
+        Matcher rowMatcher = Pattern.compile("<tr[^>]*>(.*?)</tr>",
+                Pattern.CASE_INSENSITIVE | Pattern.DOTALL).matcher(resultsSection);
+        while (rowMatcher.find()) {
+            List<String> cells = new ArrayList<>();
+            Matcher cellMatcher = Pattern.compile("<t[dh][^>]*>(.*?)</t[dh]>",
+                    Pattern.CASE_INSENSITIVE | Pattern.DOTALL).matcher(rowMatcher.group(1));
+            while (cellMatcher.find()) {
+                String cell = cleanHtmlCell(cellMatcher.group(1));
+                if (!cell.isBlank()) cells.add(cell);
+            }
+            for (int i = 0; i + 1 < cells.size(); i += 2) {
+                String label = cells.get(i).replaceFirst("\\s*:\\s*$", "").trim();
+                String value = cells.get(i + 1).trim();
+                if (!label.isBlank() && !value.isBlank()) statistics.putIfAbsent(label, value);
+            }
+        }
+        return statistics;
+    }
+
+    private String cleanHtmlCell(String value) {
+        return value.replace("&nbsp;", " ").replace("&#160;", " ")
+                .replace("&amp;", "&").replace("&auml;", "ä")
+                .replace("&ouml;", "ö").replace("&uuml;", "ü")
+                .replace("&Auml;", "Ä").replace("&Ouml;", "Ö")
+                .replace("&Uuml;", "Ü").replace("&szlig;", "ß")
+                .replaceAll("<[^>]+>", "").replaceAll("\\s+", " ").trim();
     }
 
     /**
@@ -505,16 +573,23 @@ public class ReportParser {
         return 0;
     }
 
+    private double parseAbsoluteDrawdown(String text) {
+        if (text == null || text.isBlank()) return 0;
+        int percentageDetails = text.indexOf('(');
+        String absolutePart = percentageDetails >= 0 ? text.substring(0, percentageDetails) : text;
+        return parseNumber(absolutePart);
+    }
+
     /**
      * Parse percentage from text like "978.80 (9.76%)" → 9.76
      * or "241 (77.00%)" → 77.00
      */
     private double parsePercentageValue(String text) {
         if (text == null || text.isEmpty()) return 0;
-        Matcher m = Pattern.compile("([\\d.]+)%").matcher(text);
+        Matcher m = Pattern.compile("([\\d.,]+)%").matcher(text);
         if (m.find()) {
             try {
-                return Double.parseDouble(m.group(1));
+                return Double.parseDouble(m.group(1).replace(',', '.'));
             } catch (NumberFormatException e) {
                 return 0;
             }

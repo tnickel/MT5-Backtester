@@ -766,12 +766,12 @@ public class EaParameterManager {
                     }
 
                     if (isMt4) {
-                        writer.write(param.getName() + "=" + param.getValue() + "\r\n");
+                        writer.write(param.getName() + "=" + EaParameter.normalizeMql5Value(param.getValue()) + "\r\n");
                         if (!param.isStringType()) {
                             writer.write(param.getName() + ",F=" + (param.isOptimizeEnabled() ? "1" : "0") + "\r\n");
-                            writer.write(param.getName() + ",1=" + param.getOptimizeStart() + "\r\n");
-                            writer.write(param.getName() + ",2=" + param.getOptimizeStep() + "\r\n");
-                            writer.write(param.getName() + ",3=" + param.getOptimizeEnd() + "\r\n");
+                            writer.write(param.getName() + ",1=" + EaParameter.normalizeMql5Value(param.getOptimizeStart()) + "\r\n");
+                            writer.write(param.getName() + ",2=" + EaParameter.normalizeMql5Value(param.getOptimizeStep()) + "\r\n");
+                            writer.write(param.getName() + ",3=" + EaParameter.normalizeMql5Value(param.getOptimizeEnd()) + "\r\n");
                         }
                     } else {
                         writer.write(param.toSetFileLine() + "\r\n");

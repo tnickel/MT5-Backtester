@@ -148,6 +148,21 @@ public class OptimizationReportParser {
             return;
         }
 
+        String reportFromDate = "";
+        String reportToDate = "";
+        try {
+            NodeList titleList = doc.getElementsByTagName("Title");
+            if (titleList.getLength() > 0) {
+                String titleText = titleList.item(0).getTextContent();
+                Pattern p = Pattern.compile("(\\d{4}[\\.\\-]\\d{2}[\\.\\-]\\d{2})\\s*\\-\\s*(\\d{4}[\\.\\-]\\d{2}[\\.\\-]\\d{2})");
+                Matcher m = p.matcher(titleText);
+                if (m.find()) {
+                    reportFromDate = m.group(1);
+                    reportToDate = m.group(2);
+                }
+            }
+        } catch (Exception ignored) {}
+
         List<String> columnHeaders = new ArrayList<>();
         boolean headersParsed = false;
         
@@ -194,6 +209,8 @@ public class OptimizationReportParser {
 
             // Parse data row
             OptimizationResult.Pass pass = new OptimizationResult.Pass();
+            pass.setFromDate(reportFromDate);
+            pass.setToDate(reportToDate);
             for (int col = 0; col < Math.min(cellValues.size(), columnHeaders.size()); col++) {
                 String header = columnHeaders.get(col);
                 String value = cellValues.get(col);

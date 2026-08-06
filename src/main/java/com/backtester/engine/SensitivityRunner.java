@@ -235,6 +235,11 @@ public class SensitivityRunner {
     }
 
     public void runSensitivityScan(List<SensitivityResult> targets, OptimizationConfig baseConfig, List<EaParameter> allEaParams) {
+        runSensitivityScan(targets, baseConfig, allEaParams, null, null, null, null, null);
+    }
+
+    public void runSensitivityScan(List<SensitivityResult> targets, OptimizationConfig baseConfig, List<EaParameter> allEaParams,
+                                   Double customSweepPct, Integer customSteps, Integer customTimeShifts, Integer customShiftDays, String excludedParamsStr) {
         cancelled = false;
         lastRunTimestamp = 0L;
         if (targets.isEmpty()) {
@@ -248,6 +253,15 @@ public class SensitivityRunner {
 
         int totalPasses = targets.size();
         int currentPassCount = 0;
+
+        java.util.Set<String> excludedSet = new java.util.HashSet<>();
+        if (excludedParamsStr != null && !excludedParamsStr.isBlank()) {
+            for (String token : excludedParamsStr.split("[,;\\s]+")) {
+                if (!token.isBlank()) {
+                    excludedSet.add(token.trim().toLowerCase(java.util.Locale.US));
+                }
+            }
+        }
 
         for (SensitivityResult target : targets) {
             if (cancelled) break;
@@ -269,6 +283,11 @@ public class SensitivityRunner {
 
             for (String paramName : optimizedParamNames) {
                 if (cancelled) break;
+
+                if (excludedSet.contains(paramName.toLowerCase(java.util.Locale.US))) {
+                    logMessage("Pass " + pass.getPassNumber() + ": Skipping excluded parameter '" + paramName + "' per task configuration.");
+                    continue;
+                }
 
                 // ----- Find the matching EaParameter definition -----
                 EaParameter originalParam = null;
@@ -332,11 +351,11 @@ public class SensitivityRunner {
                     
                     if (optimizedValues.containsKey(p.getName())) {
                         copy.setValue(optimizedValues.get(p.getName()));
-                        copy.setOptimizeEnabled(false);
                     } else {
                         copy.setValue(p.getValue());
-                        copy.setOptimizeEnabled(p.isOptimizeEnabled());
                     }
+                    // Crucial: Only the target paramName being swept must be optimizeEnabled = true in MT5 preset!
+                    copy.setOptimizeEnabled(false);
 
                     if (p.getName().equals(paramName)) {
                         try {
@@ -357,18 +376,19 @@ public class SensitivityRunner {
                             } catch (Exception ignored) {}
 
                             double start, end, step;
-                            if (hasOrigRange) {
+                            double effectiveSweepPct = (customSweepPct != null && customSweepPct > 0.0) ? customSweepPct : 0.05;
+                            int effectiveSteps = (customSteps != null && customSteps > 0) ? customSteps : 10;
+
+                            if (hasOrigRange && (customSweepPct == null || customSweepPct <= 0.0)) {
                                 step  = origStep;
-                                // Tighter sweep (2 steps instead of 5 steps) to assess local sensitivity fairly
                                 start = baseVal - 2 * step;
                                 end   = baseVal + 2 * step;
                                 start = Math.max(start, origStart);
                                 end   = Math.min(end, origEnd);
                             } else {
-                                // Tighter sweep (5% instead of 10%)
-                                start = baseVal * 0.95;
-                                end   = baseVal * 1.05;
-                                step  = (end - start) / 10.0;
+                                start = baseVal * (1.0 - effectiveSweepPct);
+                                end   = baseVal * (1.0 + effectiveSweepPct);
+                                step  = (end - start) / (double) effectiveSteps;
                             }
 
                             if (start > end) {

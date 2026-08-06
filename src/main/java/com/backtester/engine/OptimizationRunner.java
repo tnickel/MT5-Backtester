@@ -4,6 +4,7 @@ import com.backtester.config.AppConfig;
 import com.backtester.config.MetaTraderPlatform;
 import com.backtester.report.OptimizationReportParser;
 import com.backtester.report.OptimizationResult;
+import com.backtester.report.OptimizationDateRangeResolver;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -336,6 +337,9 @@ public class OptimizationRunner {
             }
         }
 
+        OptimizationDateRangeResolver.apply(result,
+                optConfig.getFromDate(), optConfig.getToDate(),
+                optConfig.getForwardMode(), optConfig.getForwardDate());
         return result;
     }
 

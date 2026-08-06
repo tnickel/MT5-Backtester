@@ -1,7 +1,9 @@
 package com.backtester.report;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * POJO holding parsed backtest results.
@@ -50,6 +52,8 @@ public class BacktestResult {
 
     // Equity history: each entry is [tradeNumber, balance, equity]
     private List<double[]> equityHistory = new ArrayList<>();
+    /** Original MT report result labels and values, retained for future metrics. */
+    private Map<String, String> rawStatistics = new LinkedHashMap<>();
 
     // Getters & Setters
 
@@ -157,6 +161,12 @@ public class BacktestResult {
 
     public List<double[]> getEquityHistory() { return equityHistory; }
     public void setEquityHistory(List<double[]> equityHistory) { this.equityHistory = equityHistory; }
+
+    public Map<String, String> getRawStatistics() { return rawStatistics; }
+    public void setRawStatistics(Map<String, String> rawStatistics) {
+        this.rawStatistics = rawStatistics != null
+                ? new LinkedHashMap<>(rawStatistics) : new LinkedHashMap<>();
+    }
 
     private transient int dbId = -1;
     public int getDbId() { return dbId; }

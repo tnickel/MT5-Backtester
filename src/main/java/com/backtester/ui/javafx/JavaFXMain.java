@@ -33,10 +33,14 @@ public class JavaFXMain extends Application {
 
         primaryStage.setScene(scene);
         primaryStage.show();
+
+        // Ensure HTTP server for HTML report interaction is running
+        com.backtester.server.LocalBacktestHttpServer.getInstance();
     }
 
     @Override
     public void stop() {
         if (mainView != null) mainView.shutdown();
+        com.backtester.server.LocalBacktestHttpServer.getInstance().stop();
     }
 }

@@ -87,6 +87,35 @@ public class DatabankManager {
         return copyValidPasses(databanks.get(storedName));
     }
 
+    /**
+     * Returns only rows that can correspond to the supplied references. This
+     * avoids cloning an entire optimizer databank when a small retest gallery
+     * needs metrics for just a few strategies.
+     */
+    public synchronized List<CombinedPass> getDatabankMatches(String name,
+                                                               Collection<CombinedPass> references) {
+        String storedName = findStoredName(name);
+        if (storedName == null || references == null || references.isEmpty()) return new ArrayList<>();
+
+        java.util.Set<String> identities = new java.util.HashSet<>();
+        java.util.Set<Integer> passNumbers = new java.util.HashSet<>();
+        for (CombinedPass reference : references) {
+            if (reference == null) continue;
+            identities.add(passIdentity(reference));
+            passNumbers.add(reference.getPassNumber());
+        }
+
+        List<CombinedPass> matches = new ArrayList<>();
+        for (CombinedPass candidate : databanks.get(storedName)) {
+            if (candidate == null || candidate.getBacktestPass() == null) continue;
+            if (identities.contains(passIdentity(candidate))
+                    || passNumbers.contains(candidate.getPassNumber())) {
+                matches.add(candidate.copy());
+            }
+        }
+        return matches;
+    }
+
     public synchronized void setDatabankContent(String name, List<CombinedPass> passes) {
         databanks.put(ensureDatabank(name), copyValidPasses(passes));
     }

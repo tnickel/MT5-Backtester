@@ -246,6 +246,25 @@ public class OptimizationResultTest {
                 manyTradesScore > recoveryPeakScore);
     }
 
+    @Test
+    public void testReportDirectoryPropagationAndCopy() {
+        OptimizationResult optResult = new OptimizationResult();
+        optResult.setOutputDirectory("backtest_reports/MyRunFolder_2026");
+
+        OptimizationResult.Pass pass1 = new OptimizationResult.Pass();
+        pass1.setPassNumber(1);
+        optResult.addPass(pass1);
+
+        assertEquals("backtest_reports/MyRunFolder_2026", pass1.getReportDirectory());
+
+        List<OptimizationResult.CombinedPass> combined = optResult.buildCombinedPasses(false);
+        assertEquals(1, combined.size());
+        assertEquals("backtest_reports/MyRunFolder_2026", combined.get(0).getReportDirectory());
+
+        OptimizationResult.CombinedPass copiedCombined = combined.get(0).copy();
+        assertEquals("backtest_reports/MyRunFolder_2026", copiedCombined.getReportDirectory());
+    }
+
     private static OptimizationResult.Pass createRankingPass(int passNumber, double profit,
                                                                int trades, double recovery) {
         OptimizationResult.Pass pass = new OptimizationResult.Pass();

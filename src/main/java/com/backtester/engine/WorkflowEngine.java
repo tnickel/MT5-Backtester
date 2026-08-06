@@ -730,16 +730,39 @@ public class WorkflowEngine {
         return runLongtermTest(null, logCallback, progressCallback);
     }
 
+    public List<CombinedPass> runLongtermTest(List<CombinedPass> inputPasses,
+                                              Consumer<String> logCallback,
+                                              Consumer<Integer> progressCallback) throws Exception {
+        return runLongtermTest(inputPasses, null, logCallback, progressCallback);
+    }
+
     /**
      * Runs a long-term retest for an explicit databank snapshot. A null input
      * retains the legacy wizard behaviour and builds candidates from optResult;
      * an explicit empty list remains empty and never resurrects stale results.
      */
     public List<CombinedPass> runLongtermTest(List<CombinedPass> inputPasses,
+                                              com.backtester.workflow.WorkflowTask task,
                                               Consumer<String> logCallback,
                                               Consumer<Integer> progressCallback) throws Exception {
         cancelRequested = false;
-        requireValidDateRange(getEffectiveLongtermFromDate(), getEffectiveLongtermToDate(), "Retest-Zeitraum");
+
+        String effSymbol = task != null && task.getSymbol() != null && !task.getSymbol().isBlank()
+                ? task.getSymbol() : this.symbol;
+        String effPeriod = task != null && task.getPeriod() != null && !task.getPeriod().isBlank()
+                ? task.getPeriod() : this.period;
+        int effModel = task != null ? task.getMt5Model() : this.tickModel;
+
+        LocalDate effFrom = getEffectiveLongtermFromDate();
+        if (task != null && task.getStartDate() != null && !task.getStartDate().isBlank()) {
+            try { effFrom = LocalDate.parse(task.getStartDate()); } catch (Exception ignored) {}
+        }
+        LocalDate effTo = getEffectiveLongtermToDate();
+        if (task != null && task.getEndDate() != null && !task.getEndDate().isBlank()) {
+            try { effTo = LocalDate.parse(task.getEndDate()); } catch (Exception ignored) {}
+        }
+
+        requireValidDateRange(effFrom, effTo, "Retest-Zeitraum");
         List<CombinedPass> allPasses;
         if (inputPasses != null) {
             allPasses = new ArrayList<>();
@@ -791,8 +814,8 @@ public class WorkflowEngine {
         }
 
         if (logCallback != null) {
-            logCallback.accept(String.format("Starte Retest für %d Kandidaten (%s bis %s)...",
-                    candidates.size(), getEffectiveLongtermFromDate(), getEffectiveLongtermToDate()));
+            logCallback.accept(String.format("Starte Retest für %d Kandidaten (%s bis %s, Modell=%d)...",
+                    candidates.size(), effFrom, effTo, effModel));
         }
 
         java.nio.file.Path presetsDir = config.getTesterProfilesDir(expert);
@@ -819,17 +842,22 @@ public class WorkflowEngine {
                 List<EaParameter> finalParams = buildFinalParams(cp);
                 eaParamManager.writeSetFile(presetFile, finalParams, expert);
 
+                log.info("[SETFILE-LOG] Workflow Retest Pass #{}: wrote {} parameters to {}", cp.getPassNumber(), finalParams.size(), presetFile);
+                for (EaParameter p : finalParams) {
+                    log.debug("[SETFILE-PARAM] Pass #{} | {} = {}", cp.getPassNumber(), p.getName(), p.getValue());
+                }
+
                 BacktestConfig btConfig = new BacktestConfig();
                 btConfig.setExpert(expert);
                 btConfig.setExpertParameters(presetFileName);
-                btConfig.setSymbol(symbol);
-                btConfig.setPeriod(period);
-                btConfig.setFromDate(getEffectiveLongtermFromDate());
-                btConfig.setToDate(getEffectiveLongtermToDate());
+                btConfig.setSymbol(effSymbol);
+                btConfig.setPeriod(effPeriod);
+                btConfig.setFromDate(effFrom);
+                btConfig.setToDate(effTo);
                 btConfig.setDeposit(deposit);
                 btConfig.setCurrency(currency);
                 btConfig.setLeverage(leverage);
-                btConfig.setModel(tickModel);
+                btConfig.setModel(effModel);
                 btConfig.setShutdownTerminal(true);
                 btConfig.setAutoKillMt5(true);
                 btConfig.setReportFileName("LongtermReport_Pass" + cp.getPassNumber());
@@ -845,6 +873,8 @@ public class WorkflowEngine {
                 if (btRes != null && btRes.isSuccess()) {
                     OptimizationResult.Pass ltPass = new OptimizationResult.Pass();
                     ltPass.setPassNumber(cp.getPassNumber());
+                    ltPass.setFromDate(getEffectiveLongtermFromDate().toString());
+                    ltPass.setToDate(getEffectiveLongtermToDate().toString());
                     ltPass.setProfit(btRes.getTotalProfit());
                     ltPass.setTotalTrades(btRes.getTotalTrades());
                     ltPass.setProfitFactor(btRes.getProfitFactor());
@@ -853,10 +883,12 @@ public class WorkflowEngine {
                     ltPass.setSharpeRatio(btRes.getSharpeRatio());
                     ltPass.setExpectedPayoff(btRes.getExpectedPayoff());
                     ltPass.setParameterValues(new LinkedHashMap<>(cp.getBacktestPass().getParameterValues()));
+                    ltPass.setReportDirectory(btRes.getOutputDirectory());
                     if (config.isSaveEquityHistoryInDatabank() && btRes.getEquityHistory() != null && !btRes.getEquityHistory().isEmpty()) {
                         ltPass.setEquityHistory(new ArrayList<>(btRes.getEquityHistory()));
                     }
                     cp.setLongtermPass(ltPass);
+                    cp.setReportDirectory(btRes.getOutputDirectory());
                     successfulCandidates.add(cp);
                 } else if (logCallback != null) {
                     String detail = btRes != null ? btRes.getMessage() : "kein Ergebnis";
@@ -961,6 +993,10 @@ public class WorkflowEngine {
     }
 
     public List<SensitivityResult> runStep4(Consumer<String> logCallback, Consumer<Integer> progressCallback) throws Exception {
+        return runStep4(logCallback, progressCallback, null);
+    }
+
+    public List<SensitivityResult> runStep4(Consumer<String> logCallback, Consumer<Integer> progressCallback, com.backtester.workflow.WorkflowTask task) throws Exception {
         if (selectedDiversePasses == null || selectedDiversePasses.isEmpty()) {
             throw new IllegalStateException("Keine ausgewählten Strategien für die Sensitivitätsanalyse vorhanden. Bitte führe zuerst Schritt 3 aus.");
         }
@@ -989,9 +1025,34 @@ public class WorkflowEngine {
         currentSensitivityRunner = new SensitivityRunner(config);
         currentSensitivityRunner.setLogCallback(logCallback);
         currentSensitivityRunner.setProgressCallback(progressCallback);
+        currentSensitivityRunner.setResultUpdateCallback(updatedTarget -> {
+            synchronized (this) {
+                this.sensitivityRunTimestamp = currentSensitivityRunner.getLastRunTimestamp();
+                this.sensitivityResults = new ArrayList<>(targets);
+                this.lastActiveStep = Math.max(this.lastActiveStep, 4);
+                saveState();
+            }
+        });
 
-        // We run sweeps based on the current state's EA parameters
-        currentSensitivityRunner.runSensitivityScan(targets, baseConfig, eaParameters);
+        Double sweepPct = task != null ? task.getRobustnessSweepPct() : null;
+        Integer steps = task != null ? task.getRobustnessSteps() : null;
+        Integer timeShifts = task != null ? task.getRobustnessTimeShifts() : null;
+        Integer shiftDays = task != null ? task.getRobustnessShiftDays() : null;
+        String excludedParams = task != null ? task.getRobustnessExcludedParams() : null;
+
+        try {
+            // We run sweeps based on the current state's EA parameters
+            currentSensitivityRunner.runSensitivityScan(targets, baseConfig, eaParameters, sweepPct, steps, timeShifts, shiftDays, excludedParams);
+        } finally {
+            synchronized (this) {
+                this.sensitivityRunTimestamp = currentSensitivityRunner.getLastRunTimestamp();
+                this.sensitivityResults = new ArrayList<>(targets);
+                if (targets.stream().anyMatch(result -> result != null && (!result.getParameterCVs().isEmpty() || !result.getParameterCVsFw().isEmpty()))) {
+                    this.lastActiveStep = Math.max(this.lastActiveStep, 4);
+                }
+                saveState();
+            }
+        }
 
         if (currentSensitivityRunner.isCancelled()) {
             throw new java.util.concurrent.CancellationException("Sensitivitätsanalyse wurde abgebrochen.");
@@ -1004,10 +1065,6 @@ public class WorkflowEngine {
                     "Der Robustness-Lauf lieferte keine Sensitivitätsdaten. Prüfe die optimierten EA-Parameter und MT5-Berichte.");
         }
 
-        sensitivityRunTimestamp = currentSensitivityRunner.getLastRunTimestamp();
-        sensitivityResults = targets;
-        this.lastActiveStep = Math.max(this.lastActiveStep, 4);
-        saveState();
         return sensitivityResults;
     }
 

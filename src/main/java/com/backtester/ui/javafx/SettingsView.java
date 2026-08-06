@@ -120,7 +120,9 @@ public class SettingsView {
         grid.add(new Label("Start-Modus (MT5):"), 0, 3);
         launchModeCombo = new ComboBox<>(FXCollections.observableArrayList(
             "Normal (Sichtbar)",
+            "Virtueller Desktop 1",
             "Virtueller Desktop 2",
+            "Virtueller Desktop 3",
             "Headless (Unsichtbar /hide)"
         ));
         String currentMode = config.get("mt5.launch.mode", "HEADLESS");
@@ -128,6 +130,10 @@ public class SettingsView {
             launchModeCombo.setValue("Headless (Unsichtbar /hide)");
         } else if ("NORMAL".equalsIgnoreCase(currentMode)) {
             launchModeCombo.setValue("Normal (Sichtbar)");
+        } else if ("VIRTUAL_DESKTOP_1".equalsIgnoreCase(currentMode)) {
+            launchModeCombo.setValue("Virtueller Desktop 1");
+        } else if ("VIRTUAL_DESKTOP_3".equalsIgnoreCase(currentMode)) {
+            launchModeCombo.setValue("Virtueller Desktop 3");
         } else {
             launchModeCombo.setValue("Virtueller Desktop 2");
         }
@@ -291,12 +297,18 @@ public class SettingsView {
         config.setMt5TerminalPath(mt5Path);
         config.setMt4TerminalPath(mt4Path);
         config.set("mt5.portable.mode", String.valueOf(portableCheckbox.isSelected()));
-        String selectedMode = "VIRTUAL_DESKTOP";
+        String selectedMode = "VIRTUAL_DESKTOP_2";
         String val = launchModeCombo.getValue();
         if ("Headless (Unsichtbar /hide)".equals(val)) {
             selectedMode = "HEADLESS";
         } else if ("Normal (Sichtbar)".equals(val)) {
             selectedMode = "NORMAL";
+        } else if ("Virtueller Desktop 1".equals(val)) {
+            selectedMode = "VIRTUAL_DESKTOP_1";
+        } else if ("Virtueller Desktop 3".equals(val)) {
+            selectedMode = "VIRTUAL_DESKTOP_3";
+        } else {
+            selectedMode = "VIRTUAL_DESKTOP_2";
         }
         config.set("mt5.launch.mode", selectedMode);
         config.setReportsDirectory(outputDirField.getText().trim());

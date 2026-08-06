@@ -24,8 +24,10 @@ import javafx.concurrent.Task;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.control.*;
+import com.backtester.config.EaParameterManager;
 import javafx.scene.control.cell.CheckBoxTableCell;
 import javafx.scene.control.cell.ComboBoxTableCell;
+import javafx.scene.control.cell.PropertyValueFactory;
 import javafx.scene.control.cell.TextFieldTableCell;
 import javafx.scene.input.KeyCode;
 import javafx.scene.layout.*;
@@ -63,6 +65,7 @@ public class ProjectWorkflowEditorView {
     private CustomProject project;
     private final WorkflowEngine engine;
     private final DatabankManager databankManager;
+    private final EaParameterManager eaParamManager = new EaParameterManager();
     private final CustomProjectSaveCoordinator projectSaveCoordinator;
     private static final org.slf4j.Logger logger = org.slf4j.LoggerFactory.getLogger(ProjectWorkflowEditorView.class);
     private Runnable onBackToOverviewCallback;
@@ -125,6 +128,15 @@ public class ProjectWorkflowEditorView {
     private Spinner<Integer> diversityMinDiffParamsSpinner;
     private Spinner<Integer> diversityMaxStrategiesSpinner;
     private boolean updatingDiversityControls;
+    private Tab robustnessSubTab;
+    private Tab robustnessParamsSubTab;
+    private TableView<SweptParamInfo> robustnessParamsTable;
+    private TextField robustnessSweepPctField;
+    private Spinner<Integer> robustnessStepsSpinner;
+    private Spinner<Integer> robustnessTimeShiftsSpinner;
+    private Spinner<Integer> robustnessShiftDaysSpinner;
+    private TextField robustnessExcludedParamsField;
+    private boolean updatingRobustnessControls;
     private Label currentTaskSettingsHeader;
 
     // Bottom Fixed Databank Panel Components
@@ -410,8 +422,18 @@ public class ProjectWorkflowEditorView {
         diversitySubTab.setClosable(false);
         diversitySubTab.setContent(createDiversitySubTab());
 
+        // Sub-Tab 7: Robustness Settings
+        robustnessSubTab = new Tab("Robustness Settings");
+        robustnessSubTab.setClosable(false);
+        robustnessSubTab.setContent(createRobustnessSubTab());
+
+        // Sub-Tab 8: Swept Parameters Overview
+        robustnessParamsSubTab = new Tab("Swept Parameters");
+        robustnessParamsSubTab.setClosable(false);
+        robustnessParamsSubTab.setContent(createRobustnessParamsSubTab());
+
         fullSettingsSubTabPane.getTabs().addAll(
-            strategySelectionTab, optimizerSettingsTab, retestSubTab, dataSubTab, rankingSubTab, diversitySubTab
+            strategySelectionTab, optimizerSettingsTab, retestSubTab, dataSubTab, rankingSubTab, diversitySubTab, robustnessSubTab, robustnessParamsSubTab
         );
         box.getChildren().addAll(currentTaskSettingsHeader, taskIdentityRow, fullSettingsSubTabPane);
 
@@ -916,6 +938,245 @@ public class ProjectWorkflowEditorView {
         }
     }
 
+    private VBox createRobustnessSubTab() {
+        VBox panel = new VBox(15);
+        panel.setPadding(new Insets(20));
+        panel.setStyle("-fx-background-color: rgba(26, 30, 40, 0.85); -fx-border-color: #2e3545; -fx-border-radius: 6;");
+
+        Label heading = new Label("Parameter-Sensitivity Sweeps & Stresstests (Robustness CV)");
+        heading.setFont(Font.font("Segoe UI", FontWeight.BOLD, 15));
+        heading.setTextFill(Color.web("#00e5ff"));
+
+        GridPane grid = new GridPane();
+        grid.setHgap(15);
+        grid.setVgap(15);
+
+        grid.add(new Label("Sweep Abweichung %:"), 0, 0);
+        robustnessSweepPctField = new TextField(String.format(Locale.US, "%.0f",
+                WorkflowTask.DEFAULT_ROBUSTNESS_SWEEP_PCT * 100));
+        robustnessSweepPctField.setPromptText("z.B. 5 oder 10");
+        robustnessSweepPctField.setOnAction(e -> commitRobustnessPercentage(robustnessSweepPctField));
+        robustnessSweepPctField.focusedProperty().addListener((obs, wasFocused, isFocused) -> {
+            if (wasFocused && !isFocused) commitRobustnessPercentage(robustnessSweepPctField);
+        });
+        grid.add(robustnessSweepPctField, 1, 0);
+
+        grid.add(new Label("Sweep Schritte (Punkte):"), 2, 0);
+        robustnessStepsSpinner = new Spinner<>(1, 100, WorkflowTask.DEFAULT_ROBUSTNESS_STEPS, 1);
+        robustnessStepsSpinner.setEditable(true);
+        robustnessStepsSpinner.valueProperty().addListener((obs, oldValue, newValue) -> {
+            if (!updatingRobustnessControls && selectedTask != null && newValue != null) {
+                selectedTask.setRobustnessSteps(newValue);
+                saveProject();
+            }
+        });
+        grid.add(robustnessStepsSpinner, 3, 0);
+
+        grid.add(new Label("Time Shifts (Anzahl):"), 0, 1);
+        robustnessTimeShiftsSpinner = new Spinner<>(0, 100, WorkflowTask.DEFAULT_ROBUSTNESS_TIME_SHIFTS, 1);
+        robustnessTimeShiftsSpinner.setEditable(true);
+        robustnessTimeShiftsSpinner.valueProperty().addListener((obs, oldValue, newValue) -> {
+            if (!updatingRobustnessControls && selectedTask != null && newValue != null) {
+                selectedTask.setRobustnessTimeShifts(newValue);
+                saveProject();
+            }
+        });
+        grid.add(robustnessTimeShiftsSpinner, 1, 1);
+
+        grid.add(new Label("Shift Tage (Period):"), 2, 1);
+        robustnessShiftDaysSpinner = new Spinner<>(1, 365, WorkflowTask.DEFAULT_ROBUSTNESS_SHIFT_DAYS, 1);
+        robustnessShiftDaysSpinner.setEditable(true);
+        robustnessShiftDaysSpinner.valueProperty().addListener((obs, oldValue, newValue) -> {
+            if (!updatingRobustnessControls && selectedTask != null && newValue != null) {
+                selectedTask.setRobustnessShiftDays(newValue);
+                saveProject();
+            }
+        });
+        grid.add(robustnessShiftDaysSpinner, 3, 1);
+
+        grid.add(new Label("Ausgeschlossene Parameter:"), 0, 2);
+        robustnessExcludedParamsField = new TextField();
+        robustnessExcludedParamsField.setPromptText("z.B. Inp_Min_Lot, Inp_Max_Lot (kommagetrennt)");
+        robustnessExcludedParamsField.setOnAction(e -> {
+            if (!updatingRobustnessControls && selectedTask != null) {
+                selectedTask.setRobustnessExcludedParams(robustnessExcludedParamsField.getText());
+                saveProject();
+                updateRobustnessParamsTable();
+            }
+        });
+        robustnessExcludedParamsField.textProperty().addListener((obs, oldText, newText) -> {
+            if (!updatingRobustnessControls && selectedTask != null) {
+                selectedTask.setRobustnessExcludedParams(newText);
+                saveProject();
+                updateRobustnessParamsTable();
+            }
+        });
+        grid.add(robustnessExcludedParamsField, 1, 2, 3, 1);
+
+        Label infoLabel = new Label(
+                "Info: Der Parameter-Sensitivity Sweep variiert alle optimierten numerischen Parameter einzeln " +
+                "um die eingestellte prozentuale Abweichung. Parameter in der Ausschlussliste oder mit weniger als 4 Werten " +
+                "(Booleans/Enums) werden automatisch übersprungen."
+        );
+        infoLabel.setWrapText(true);
+        infoLabel.setStyle("-fx-text-fill: #7e889a; -fx-font-size: 12px;");
+
+        panel.getChildren().addAll(heading, grid, new Separator(), infoLabel);
+        return panel;
+    }
+
+    private void commitRobustnessPercentage(TextField field) {
+        if (updatingRobustnessControls || selectedTask == null || field == null) return;
+        double currentValue = selectedTask.getRobustnessSweepPct();
+        try {
+            double percentage = Double.parseDouble(field.getText().trim().replace(',', '.'));
+            double fraction = percentage / 100.0;
+            selectedTask.setRobustnessSweepPct(fraction);
+            field.setText(String.format(Locale.US, "%.0f", percentage));
+            field.setStyle("");
+            saveProject();
+        } catch (RuntimeException ex) {
+            field.setText(String.format(Locale.US, "%.0f", currentValue * 100));
+            field.setStyle("-fx-border-color: #ff5252;");
+        }
+    }
+
+    private VBox createRobustnessParamsSubTab() {
+        VBox panel = new VBox(15);
+        panel.setPadding(new Insets(20));
+        panel.setStyle("-fx-background-color: rgba(26, 30, 40, 0.85); -fx-border-color: #2e3545; -fx-border-radius: 6;");
+
+        Label heading = new Label("Vorschau aller EA-Parameter & Sweep-Status");
+        heading.setFont(Font.font("Segoe UI", FontWeight.BOLD, 15));
+        heading.setTextFill(Color.web("#00e5ff"));
+
+        Label subtitle = new Label("Hier wird in Echtzeit angezeigt, welche EA-Parameter beim Robustness Test gesweept werden und welche durch Typ-Filter oder die Ausschlussliste übersprungen werden.");
+        subtitle.setWrapText(true);
+        subtitle.setStyle("-fx-text-fill: #9aa4b5; -fx-font-size: 12px;");
+
+        robustnessParamsTable = new TableView<>();
+        robustnessParamsTable.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY);
+        robustnessParamsTable.setStyle("-fx-background-color: #121620; -fx-base: #121620;");
+        robustnessParamsTable.setPrefHeight(380);
+
+        TableColumn<SweptParamInfo, String> nameCol = new TableColumn<>("Parameter Name");
+        nameCol.setCellValueFactory(new PropertyValueFactory<>("name"));
+        nameCol.setPrefWidth(220);
+
+        TableColumn<SweptParamInfo, String> typeCol = new TableColumn<>("Datentyp");
+        typeCol.setCellValueFactory(new PropertyValueFactory<>("type"));
+        typeCol.setPrefWidth(140);
+
+        TableColumn<SweptParamInfo, String> valCol = new TableColumn<>("Aktueller Wert");
+        valCol.setCellValueFactory(new PropertyValueFactory<>("currentValue"));
+        valCol.setPrefWidth(140);
+
+        TableColumn<SweptParamInfo, String> statusCol = new TableColumn<>("Sweep-Status");
+        statusCol.setCellValueFactory(new PropertyValueFactory<>("status"));
+        statusCol.setPrefWidth(280);
+        statusCol.setCellFactory(col -> new TableCell<SweptParamInfo, String>() {
+            @Override
+            protected void updateItem(String item, boolean empty) {
+                super.updateItem(item, empty);
+                if (empty || item == null) {
+                    setText(null);
+                    setGraphic(null);
+                } else {
+                    SweptParamInfo row = getTableView().getItems().get(getIndex());
+                    Label badge = new Label(item);
+                    badge.setStyle("-fx-font-weight: bold; -fx-padding: 3 8 3 8; -fx-background-radius: 4; " +
+                            "-fx-background-color: " + (row != null ? row.getStatusColor() : "#2e3545") + "; -fx-text-fill: white;");
+                    setGraphic(badge);
+                }
+            }
+        });
+
+        robustnessParamsTable.getColumns().addAll(nameCol, typeCol, valCol, statusCol);
+
+        panel.getChildren().addAll(heading, subtitle, robustnessParamsTable);
+        return panel;
+    }
+
+    public void updateRobustnessParamsTable() {
+        if (robustnessParamsTable == null) return;
+
+        String currentExpert = (project != null && project.getExpert() != null && !project.getExpert().isBlank())
+                ? project.getExpert() : engine.getExpert();
+
+        List<com.backtester.config.EaParameter> params = eaParamManager.getEffectiveParameters(currentExpert);
+        if (params == null || params.isEmpty()) {
+            params = engine.getEaParameters();
+        }
+
+        Set<String> excludedSet = new java.util.HashSet<>();
+        if (robustnessExcludedParamsField != null && robustnessExcludedParamsField.getText() != null) {
+            for (String token : robustnessExcludedParamsField.getText().split("[,;\\s]+")) {
+                if (!token.isBlank()) {
+                    excludedSet.add(token.trim().toLowerCase(Locale.US));
+                }
+            }
+        }
+
+        ObservableList<SweptParamInfo> items = FXCollections.observableArrayList();
+        if (params != null) {
+            for (com.backtester.config.EaParameter p : params) {
+                String name = p.getName();
+                String val = p.getValue() != null ? p.getValue() : "";
+                String typeStr;
+                String status;
+                String colorHex;
+
+                if (p.isStringType()) {
+                    typeStr = "Enum / Selection / Text";
+                    status = "🔴 Übersprungen (Typ: Text/Enum)";
+                    colorHex = "#883333";
+                } else if (name.toLowerCase(Locale.US).startsWith("inp_use_") || val.equalsIgnoreCase("true") || val.equalsIgnoreCase("false")) {
+                    typeStr = "Boolean (Switch)";
+                    status = "🔴 Übersprungen (Typ: Boolean)";
+                    colorHex = "#883333";
+                } else if (excludedSet.contains(name.toLowerCase(Locale.US))) {
+                    typeStr = "Numerisch";
+                    status = "⚠️ Ausgeschlossen (Ausschlussliste)";
+                    colorHex = "#aa6600";
+                } else if (p.isOptimizeEnabled()) {
+                    typeStr = "Numerisch (Optimierbar)";
+                    status = "🟢 Wird gesweept (Numerisch & Optimiert)";
+                    colorHex = "#1e8449";
+                } else {
+                    typeStr = "Numerisch (Statisch)";
+                    status = "🟢 Wird gesweept (Numerisch)";
+                    colorHex = "#1e8449";
+                }
+
+                items.add(new SweptParamInfo(name, typeStr, val, status, colorHex));
+            }
+        }
+
+        robustnessParamsTable.setItems(items);
+    }
+
+    public static class SweptParamInfo {
+        private final String name;
+        private final String type;
+        private final String currentValue;
+        private final String status;
+        private final String statusColor;
+
+        public SweptParamInfo(String name, String type, String currentValue, String status, String statusColor) {
+            this.name = name;
+            this.type = type;
+            this.currentValue = currentValue;
+            this.status = status;
+            this.statusColor = statusColor;
+        }
+
+        public String getName() { return name; }
+        public String getType() { return type; }
+        public String getCurrentValue() { return currentValue; }
+        public String getStatus() { return status; }
+        public String getStatusColor() { return statusColor; }
+    }
+
     private VBox createStrategySelectionSubTab() {
         VBox panel = new VBox(15);
         panel.setPadding(new Insets(20));
@@ -1135,6 +1396,15 @@ public class ProjectWorkflowEditorView {
         compareDatabanksBtn.setStyle("-fx-background-color: transparent; -fx-text-fill: #76ff03; -fx-font-weight: bold; -fx-cursor: hand;");
         compareDatabanksBtn.setOnAction(e -> DatabankComparisonDialog.show(root.getScene().getWindow(), databankManager));
 
+        Button showEquityCurvesBtn = new Button("📈 Equitykurven alle anzeigen");
+        showEquityCurvesBtn.setStyle("-fx-background-color: transparent; -fx-text-fill: #00e5ff; -fx-font-weight: bold; -fx-cursor: hand;");
+        showEquityCurvesBtn.setTooltip(new Tooltip("Alle Equitykurven und Backtest-Grafiken der aktuellen Databank anzeigen"));
+        showEquityCurvesBtn.setOnAction(e -> {
+            Tab activeTab = bottomDatabankTabPane.getSelectionModel().getSelectedItem();
+            String currentDbName = activeTab != null ? activeTab.getText().replaceAll("\\s*\\(\\d+\\)$", "") : DatabankManager.RESULTS;
+            DatabankEquityGalleryDialog.show(root.getScene().getWindow(), databankManager, currentDbName, project);
+        });
+
         Button backupBtn = new Button("💾 Backup");
         backupBtn.setStyle("-fx-background-color: transparent; -fx-text-fill: #b388ff; -fx-font-weight: bold; -fx-cursor: hand;");
         backupBtn.setTooltip(new Tooltip("Projekt und Databanken in eine Datei exportieren"));
@@ -1146,7 +1416,7 @@ public class ProjectWorkflowEditorView {
         restoreBtn.setOnAction(e -> restoreProject());
 
         bar.getChildren().addAll(newDatabankBtn, clearCurrentDbBtn, clearAllBtn, deleteDatabankBtn,
-                deleteSelectedStratsBtn, configColumnsBtn, scoreWeightsBtn, compareDatabanksBtn, backupBtn, restoreBtn, persistDatabanksCheckBox);
+                deleteSelectedStratsBtn, configColumnsBtn, scoreWeightsBtn, compareDatabanksBtn, showEquityCurvesBtn, backupBtn, restoreBtn, persistDatabanksCheckBox);
 
         bottomDatabankTabPane = new TabPane();
         VBox.setVgrow(bottomDatabankTabPane, Priority.ALWAYS);
@@ -1851,8 +2121,11 @@ public class ProjectWorkflowEditorView {
                     break;
                 case ROBUSTNESS_CV:
                     if (dataSubTab != null) fullSettingsSubTabPane.getTabs().add(dataSubTab);
+                    if (robustnessSubTab != null) fullSettingsSubTabPane.getTabs().add(robustnessSubTab);
+                    if (robustnessParamsSubTab != null) fullSettingsSubTabPane.getTabs().add(robustnessParamsSubTab);
                     if (retestSubTab != null) fullSettingsSubTabPane.getTabs().add(retestSubTab);
                     if (rankingSubTab != null) fullSettingsSubTabPane.getTabs().add(rankingSubTab);
+                    updateRobustnessParamsTable();
                     break;
                 case PRE_FILTER:
                     if (rankingSubTab != null) fullSettingsSubTabPane.getTabs().add(rankingSubTab);
@@ -2300,10 +2573,16 @@ public class ProjectWorkflowEditorView {
                         }
                         break;
                     case RETESTER:
+                        long retStartMs = System.currentTimeMillis();
+                        int retTotal = inputPasses != null ? inputPasses.size() : 1;
                         outputPasses = engine.runLongtermTest(
                             inputPasses,
+                            task,
                             msg -> logToConsole("RETESTER", msg),
-                            pct -> updateProgressUI((double) pct / 100.0, task.getName() + " " + pct + "%")
+                            pct -> {
+                                int curr = Math.min(retTotal, Math.max(0, (int) Math.round(((double) pct / 100.0) * retTotal)));
+                                updateProgressUI((double) pct / 100.0, formatProgressWithEta(task.getName(), curr, retTotal, retStartMs));
+                            }
                         );
                         break;
                     case PRE_FILTER:
@@ -2320,9 +2599,16 @@ public class ProjectWorkflowEditorView {
                     case ROBUSTNESS_CV:
                         engine.setSelectedDiversePasses(inputPasses);
                         task.setSensitivityRunTimestamp(0L);
+                        long robStartMs = System.currentTimeMillis();
+                        int robTotal = inputPasses != null ? inputPasses.size() : 1;
+                        updateProgressUI(0.0, formatProgressWithEta("Robustness Test", 0, robTotal, robStartMs));
                         engine.runStep4(
                             msg -> logToConsole("STRESS", msg),
-                            pct -> updateProgressUI((double) pct / 100.0, "Robustness " + pct + "%")
+                            pct -> {
+                                int curr = Math.min(robTotal, Math.max(0, (int) Math.round(((double) pct / 100.0) * robTotal)));
+                                updateProgressUI((double) pct / 100.0, formatProgressWithEta("Robustness Test", curr, robTotal, robStartMs));
+                            },
+                            task
                         );
                         task.setSensitivityRunTimestamp(engine.getSensitivityRunTimestamp());
                         outputPasses = new ArrayList<>(inputPasses);
@@ -2364,6 +2650,13 @@ public class ProjectWorkflowEditorView {
                 task.setLastExecutionLog(message);
                 logger.error("Task '" + task.getName() + "' fehlgeschlagen", error);
                 logToConsole("ERROR", "Task '" + task.getName() + "' fehlgeschlagen: " + message);
+                Platform.runLater(() -> {
+                    Alert alert = new Alert(Alert.AlertType.ERROR, "Task '" + task.getName() + "' fehlgeschlagen:\n\n" + message, ButtonType.OK);
+                    alert.setTitle("Task-Fehler");
+                    alert.setHeaderText("Fehler bei Task-Ausführung");
+                    if (root.getScene() != null) alert.initOwner(root.getScene().getWindow());
+                    alert.showAndWait();
+                });
                 cleanupExecutionState();
             }
             @Override
@@ -2458,10 +2751,17 @@ public class ProjectWorkflowEditorView {
                                 }
                                 break;
                             case RETESTER:
+                                long loopRetStartMs = System.currentTimeMillis();
+                                int loopRetTotal = inputPasses != null ? inputPasses.size() : 1;
                                 currentPipelinePasses = engine.runLongtermTest(
                                     inputPasses,
+                                    task,
                                     msg -> logToConsole("RETESTER", msg),
-                                    pct -> updateProgressUI((double) currentIdx / total, task.getName() + " " + pct + "%")
+                                    pct -> {
+                                        int curr = Math.min(loopRetTotal, Math.max(0, (int) Math.round(((double) pct / 100.0) * loopRetTotal)));
+                                        double overallProgress = ((double) currentIdx + ((double) pct / 100.0)) / total;
+                                        updateProgressUI(overallProgress, formatProgressWithEta(task.getName(), curr, loopRetTotal, loopRetStartMs));
+                                    }
                                 );
                                 break;
                             case PRE_FILTER:
@@ -2478,9 +2778,17 @@ public class ProjectWorkflowEditorView {
                             case ROBUSTNESS_CV:
                                 engine.setSelectedDiversePasses(inputPasses);
                                 task.setSensitivityRunTimestamp(0L);
+                                long loopRobStartMs = System.currentTimeMillis();
+                                int loopRobTotal = inputPasses != null ? inputPasses.size() : 1;
+                                updateProgressUI((double) currentIdx / total, formatProgressWithEta("Robustness Test", 0, loopRobTotal, loopRobStartMs));
                                 engine.runStep4(
                                     msg -> logToConsole("STRESS", msg),
-                                    pct -> updateProgressUI((double) currentIdx / total, "Robustness " + pct + "%")
+                                    pct -> {
+                                        int curr = Math.min(loopRobTotal, Math.max(0, (int) Math.round(((double) pct / 100.0) * loopRobTotal)));
+                                        double overallProgress = ((double) currentIdx + ((double) pct / 100.0)) / total;
+                                        updateProgressUI(overallProgress, formatProgressWithEta("Robustness Test", curr, loopRobTotal, loopRobStartMs));
+                                    },
+                                    task
                                 );
                                 task.setSensitivityRunTimestamp(engine.getSensitivityRunTimestamp());
                                 currentPipelinePasses = new ArrayList<>(inputPasses);
@@ -2536,6 +2844,13 @@ public class ProjectWorkflowEditorView {
                 String message = error != null && error.getMessage() != null ? error.getMessage() : "Unbekannter Fehler";
                 logger.error("Projektlauf fehlgeschlagen", error);
                 logToConsole("ERROR", "Projektlauf fehlgeschlagen: " + message);
+                Platform.runLater(() -> {
+                    Alert alert = new Alert(Alert.AlertType.ERROR, "Projektlauf fehlgeschlagen:\n\n" + message, ButtonType.OK);
+                    alert.setTitle("Workflow-Fehler");
+                    alert.setHeaderText("Fehler bei Workflow-Ausführung");
+                    if (root.getScene() != null) alert.initOwner(root.getScene().getWindow());
+                    alert.showAndWait();
+                });
                 cleanupExecutionState();
             }
 
@@ -2858,6 +3173,36 @@ public class ProjectWorkflowEditorView {
                 consoleLog.appendText("[" + tag + "] " + msg + "\n");
             }
         });
+    }
+
+    private String formatProgressWithEta(String taskName, int current, int total, long startTimeMs) {
+        if (total <= 0) return taskName + " (" + current + "%)";
+        int pct = (int) Math.min(100, Math.max(0, Math.round(((double) current / total) * 100.0)));
+        StringBuilder sb = new StringBuilder();
+        sb.append(taskName).append(": Strategie ").append(current).append(" / ").append(total).append(" (").append(pct).append("%)");
+
+        if (current > 0 && startTimeMs > 0) {
+            long elapsedMs = System.currentTimeMillis() - startTimeMs;
+            double avgMsPerStrategy = (double) elapsedMs / current;
+            int remainingStrategies = total - current;
+            long remainingSec = Math.max(0, Math.round((remainingStrategies * avgMsPerStrategy) / 1000.0));
+
+            long mins = remainingSec / 60;
+            long secs = remainingSec % 60;
+            double avgSec = avgMsPerStrategy / 1000.0;
+
+            sb.append(" | Restzeit: ");
+            if (mins > 0) {
+                sb.append(String.format(Locale.US, "%02dm %02ds", mins, secs));
+            } else {
+                sb.append(String.format(Locale.US, "%ds", secs));
+            }
+            sb.append(String.format(Locale.US, " (Ø %.1fs/Strat.)", avgSec));
+        } else {
+            sb.append(" | Restzeit: Berechne...");
+        }
+
+        return sb.toString();
     }
 
     private void updateProgressUI(double progress, String label) {

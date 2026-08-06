@@ -87,34 +87,63 @@ public class Main {
             }
 
             if (hasTerminal64 || hasTerminal) {
-                log.info("Found leftover MetaTrader process(es), killing them...");
-                if (hasTerminal64) {
-                    Process kill64 = new ProcessBuilder("taskkill", "/F", "/IM", "terminal64.exe")
-                        .redirectErrorStream(true).start();
-                    String killOutput64 = new String(kill64.getInputStream().readAllBytes()).trim();
-                    kill64.waitFor();
-                    log.info("MT5 cleanup: {}", killOutput64);
+                log.info("Found running MetaTrader process(es). Asking user for confirmation before killing...");
+                boolean isCli = "true".equals(System.getProperty("backtester.cli")) || java.awt.GraphicsEnvironment.isHeadless();
+                boolean shouldKill = false;
 
-                    // Also kill any leftover metatester64.exe processes
+                if (isCli) {
+                    log.info("CLI Mode: MetaTrader process running, auto-terminating for batch processing...");
+                    shouldKill = true;
+                } else {
                     try {
-                        Process killAgents = new ProcessBuilder("taskkill", "/F", "/IM", "metatester64.exe")
-                            .redirectErrorStream(true).start();
-                        killAgents.waitFor();
-                        log.info("Tester agents cleanup completed.");
-                    } catch (Exception ex) {
-                        log.warn("Failed to kill leftover tester agents: {}", ex.getMessage());
-                    }
-                }
-                if (hasTerminal) {
-                    Process kill = new ProcessBuilder("taskkill", "/F", "/IM", "terminal.exe")
-                        .redirectErrorStream(true).start();
-                    String killOutput = new String(kill.getInputStream().readAllBytes()).trim();
-                    kill.waitFor();
-                    log.info("MT4 cleanup: {}", killOutput);
+                        FlatDarkLaf.setup();
+                    } catch (Exception ignored) {}
+
+                    int choice = JOptionPane.showConfirmDialog(
+                        null,
+                        "Es wurde eine laufende MetaTrader-Instanz auf Ihrem System gefunden (terminal64.exe / terminal.exe).\n\n" +
+                        "Möchten Sie den MetaTrader-Prozess beenden?\n\n" +
+                        "⚠️ ACHTUNG: Falls im MetaTrader aktuell eine Optimierung, ein Backtest oder Trading läuft,\n" +
+                        "gehen ungespeicherte Ergebnisse verloren!",
+                        "MetaTrader 5 — Prozess beenden?",
+                        JOptionPane.YES_NO_OPTION,
+                        JOptionPane.WARNING_MESSAGE
+                    );
+                    shouldKill = (choice == JOptionPane.YES_OPTION);
                 }
 
-                // Show notification to user for 3 seconds
-                showMt5KillNotification();
+                if (shouldKill) {
+                    log.info("User confirmed process termination. Killing MetaTrader process(es)...");
+                    if (hasTerminal64) {
+                        Process kill64 = new ProcessBuilder("taskkill", "/F", "/IM", "terminal64.exe")
+                            .redirectErrorStream(true).start();
+                        String killOutput64 = new String(kill64.getInputStream().readAllBytes()).trim();
+                        kill64.waitFor();
+                        log.info("MT5 cleanup: {}", killOutput64);
+
+                        // Also kill any leftover metatester64.exe processes
+                        try {
+                            Process killAgents = new ProcessBuilder("taskkill", "/F", "/IM", "metatester64.exe")
+                                .redirectErrorStream(true).start();
+                            killAgents.waitFor();
+                            log.info("Tester agents cleanup completed.");
+                        } catch (Exception ex) {
+                            log.warn("Failed to kill leftover tester agents: {}", ex.getMessage());
+                        }
+                    }
+                    if (hasTerminal) {
+                        Process kill = new ProcessBuilder("taskkill", "/F", "/IM", "terminal.exe")
+                            .redirectErrorStream(true).start();
+                        String killOutput = new String(kill.getInputStream().readAllBytes()).trim();
+                        kill.waitFor();
+                        log.info("MT4 cleanup: {}", killOutput);
+                    }
+
+                    // Show notification to user for 3 seconds
+                    showMt5KillNotification();
+                } else {
+                    log.info("User declined to kill MetaTrader process. Keeping running instance intact.");
+                }
             } else {
                 log.info("No leftover MetaTrader processes found.");
             }
