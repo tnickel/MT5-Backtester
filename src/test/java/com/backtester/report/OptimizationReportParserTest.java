@@ -97,6 +97,38 @@ public class OptimizationReportParserTest {
         assertEquals(712.71, result.getPasses().get(0).getDrawdown(), 0.001);
     }
 
+    /**
+     * Without this link a pass cannot find the preset archived with its run, and
+     * parameter reconstruction falls back to the mutable EA configuration.
+     */
+    @Test
+    public void parsedPassesAreLinkedToTheRunOutputDirectory() throws Exception {
+        Path file = tempFolder.newFile("opt_linked.xml").toPath();
+        Files.writeString(file, spreadsheet(
+                row("Pass", "Result", "Profit", "Equity DD %", "Trades", "Inp_Grid_Step"),
+                row("9704", "1.93", "1652.58", "7.1271", "350", "350")));
+
+        OptimizationResult result = new OptimizationResult();
+        result.setOutputDirectory("C:/reports/OPT_run");
+        new OptimizationReportParser().parse(file, result);
+
+        assertEquals("C:/reports/OPT_run", result.getPasses().get(0).getReportDirectory());
+    }
+
+    @Test
+    public void parsedForwardPassesAreLinkedToTheRunOutputDirectory() throws Exception {
+        Path file = tempFolder.newFile("fwd_linked.xml").toPath();
+        Files.writeString(file, spreadsheet(
+                row("Pass", "Forward Result", "Back Result", "Profit", "Trades", "Inp_Grid_Step"),
+                row("9704", "1.83", "1.93", "1392.19", "314", "350")));
+
+        OptimizationResult result = new OptimizationResult();
+        result.setOutputDirectory("C:/reports/OPT_run");
+        new OptimizationReportParser().parseForward(file, result);
+
+        assertEquals("C:/reports/OPT_run", result.getForwardPasses().get(0).getReportDirectory());
+    }
+
     private static String row(String... cells) {
         StringBuilder sb = new StringBuilder("<Row>");
         for (String cell : cells) {

@@ -358,20 +358,29 @@ public class OptimizationResult {
     public String getOutputDirectory() { return outputDirectory; }
     public void setOutputDirectory(String outputDirectory) {
         this.outputDirectory = outputDirectory;
-        if (outputDirectory != null && !outputDirectory.isEmpty()) {
-            if (passes != null) {
-                for (Pass p : passes) {
-                    if (p != null && (p.getReportDirectory() == null || p.getReportDirectory().isEmpty())) {
-                        p.setReportDirectory(outputDirectory);
-                    }
-                }
-            }
-            if (forwardPasses != null) {
-                for (Pass p : forwardPasses) {
-                    if (p != null && (p.getReportDirectory() == null || p.getReportDirectory().isEmpty())) {
-                        p.setReportDirectory(outputDirectory);
-                    }
-                }
+        linkPassesToOutputDirectory();
+    }
+
+    /**
+     * Points every pass without a report directory at this run's output directory.
+     *
+     * <p>Must be called again once parsing has finished: the output directory is
+     * known before the report exists, so the back-fill inside the setter runs over
+     * an empty list. Without the link a pass cannot find the preset archived with
+     * its run, and parameter reconstruction silently falls back to the mutable EA
+     * configuration.
+     */
+    public void linkPassesToOutputDirectory() {
+        if (outputDirectory == null || outputDirectory.isEmpty()) return;
+        linkAll(passes);
+        linkAll(forwardPasses);
+    }
+
+    private void linkAll(List<Pass> target) {
+        if (target == null) return;
+        for (Pass p : target) {
+            if (p != null && (p.getReportDirectory() == null || p.getReportDirectory().isEmpty())) {
+                p.setReportDirectory(outputDirectory);
             }
         }
     }

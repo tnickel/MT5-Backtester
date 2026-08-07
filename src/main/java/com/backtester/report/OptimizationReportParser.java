@@ -46,8 +46,6 @@ public class OptimizationReportParser {
         Matcher rowMatcher = rowPattern.matcher(content);
         List<String> columnHeaders = new ArrayList<>();
         boolean headersParsed = false;
-        
-        List<OptimizationResult.Pass> passes = result.getPasses();
 
         while (rowMatcher.find()) {
             String rowContent = rowMatcher.group(1);
@@ -129,7 +127,9 @@ public class OptimizationReportParser {
                 pass.setRecoveryFactor(pass.getProfit() / pass.getDrawdown());
             }
 
-            passes.add(pass);
+            // addPass, not passes.add: it links the pass to the run's report
+            // directory, which is what later resolves the archived preset.
+            result.addPass(pass);
         }
     }
 
@@ -165,8 +165,6 @@ public class OptimizationReportParser {
 
         List<String> columnHeaders = new ArrayList<>();
         boolean headersParsed = false;
-        
-        List<OptimizationResult.Pass> passes = isForward ? result.getForwardPasses() : result.getPasses();
 
         for (int i = 0; i < rowNodes.getLength(); i++) {
             Element row = (Element) rowNodes.item(i);
@@ -245,7 +243,13 @@ public class OptimizationReportParser {
                     // Ignore parsing errors for individual cells
                 }
             }
-            passes.add(pass);
+            // addPass/addForwardPass, not passes.add: they link the pass to the
+            // run's report directory, which is what later resolves the archived preset.
+            if (isForward) {
+                result.addForwardPass(pass);
+            } else {
+                result.addPass(pass);
+            }
         }
     }
     

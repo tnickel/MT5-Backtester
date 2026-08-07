@@ -324,6 +324,7 @@ public class OptimizationRunner {
                 }
             }
 
+            result.linkPassesToOutputDirectory();
             injectUnreportedOptimizedParameters(result, presetSnapshot);
 
             String modelName = (optConfig.getModel() >= 0 && optConfig.getModel() < OptimizationConfig.MODEL_NAMES.length)
