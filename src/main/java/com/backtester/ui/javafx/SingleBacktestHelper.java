@@ -9,6 +9,7 @@ import com.backtester.report.BacktestResult;
 import com.backtester.report.BacktestArtifactReplayResolver;
 import com.backtester.report.OptimizationResult.CombinedPass;
 import com.backtester.report.OptimizationResult.Pass;
+import com.backtester.report.PassPresetResolver;
 import com.backtester.workflow.CustomProject;
 import com.backtester.workflow.WorkflowTask;
 import javafx.concurrent.Task;
@@ -25,7 +26,6 @@ import java.nio.file.StandardCopyOption;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Locale;
-import java.util.Map;
 
 /**
  * Helper to launch a single verification backtest in MetaTrader for a selected strategy pass
@@ -207,11 +207,27 @@ public class SingleBacktestHelper {
         if (fromDate == null) fromDate = LocalDate.now().minusYears(5);
         if (toDate == null) toDate = LocalDate.now();
 
-        runSingleBacktestInMetaTrader(pass, expert, symbol, period, fromDate, toDate, parentWindow);
+        int modelId = 0;
+        String modelStr = pass.getTickModel();
+        if ((modelStr == null || modelStr.isBlank()) && project != null && dbName != null && !dbName.isBlank()) {
+            WorkflowTask originTask = project.findOriginTaskForDatabank(dbName);
+            if (originTask != null) {
+                modelId = originTask.getMt5Model();
+            }
+        } else if (modelStr != null && !modelStr.isBlank()) {
+            modelId = parseModelToId(modelStr);
+        }
+
+        runSingleBacktestInMetaTrader(pass, expert, symbol, period, fromDate, toDate, parentWindow, modelId);
     }
 
     public static void runSingleBacktestInMetaTrader(Pass pass, String customExpert, String passSymbol, String customPeriod,
                                                      LocalDate customFromDate, LocalDate customToDate, Window parentWindow) {
+        runSingleBacktestInMetaTrader(pass, customExpert, passSymbol, customPeriod, customFromDate, customToDate, parentWindow, 0);
+    }
+
+    public static void runSingleBacktestInMetaTrader(Pass pass, String customExpert, String passSymbol, String customPeriod,
+                                                     LocalDate customFromDate, LocalDate customToDate, Window parentWindow, int modelId) {
         if (pass == null) return;
 
         AppConfig config = AppConfig.getInstance();
@@ -226,7 +242,10 @@ public class SingleBacktestHelper {
         String period = customPeriod != null && !customPeriod.isBlank()
                 ? customPeriod : config.get("app.period", "H1");
 
-        List<EaParameter> baseParams = eaParamManager.getEffectiveParameters(expert);
+        // Never rebuild from the current EA config: it lacks the parameters MT5
+        // omitted from the optimization report and is rewritten by MT5 itself.
+        PassPresetResolver.Resolution resolution = PassPresetResolver.resolve(pass, expert);
+        List<EaParameter> baseParams = resolution.parameters();
         if (baseParams == null || baseParams.isEmpty()) {
             Alert alert = new Alert(Alert.AlertType.ERROR, "Konnte Parameter für EA '" + expert + "' nicht laden.", ButtonType.OK);
             if (parentWindow != null) alert.initOwner(parentWindow);
@@ -234,26 +253,7 @@ public class SingleBacktestHelper {
             return;
         }
 
-        Map<String, String> passVals = pass.getParameterValues();
         int passNum = pass.getPassNumber();
-        double btDd = pass.getDrawdownPercent();
-        int ddPct = Double.isNaN(btDd) ? 0 : (int) Math.round(btDd);
-
-        if (passVals != null) {
-            for (EaParameter param : baseParams) {
-                if (passVals.containsKey(param.getName())) {
-                    param.setValue(passVals.get(param.getName()));
-                }
-                if (param.getName().equalsIgnoreCase("Inp_Magic_Number") || param.getName().equalsIgnoreCase("MagicNumber")) {
-                    param.setValue(String.valueOf(passNum));
-                }
-                if (param.getName().equalsIgnoreCase("Inp_Order_Comment") || param.getName().equalsIgnoreCase("OrderComment")) {
-                    param.setValue(String.format("%dproz_Pass%d", ddPct, passNum));
-                }
-                param.setOptimizeEnabled(false);
-            }
-        }
-
         String eaName = EaParameterManager.extractEaBaseName(expert);
         String presetFileName = "Backtester_" + eaName + "_Verify_Pass" + pass.getPassNumber() + ".set";
         Path presetsDir = config.getTesterProfilesDir(expert);
@@ -278,7 +278,7 @@ public class SingleBacktestHelper {
         btConfig.setExpertParameters(presetFileName);
         btConfig.setSymbol(symbol);
         btConfig.setPeriod(period);
-        btConfig.setModel(0); // Every Tick / OHLC M1
+        btConfig.setModel(modelId);
 
         LocalDate fromDate = customFromDate != null ? customFromDate : LocalDate.now().minusYears(5);
         LocalDate toDate = customToDate != null ? customToDate : LocalDate.now();
@@ -292,17 +292,40 @@ public class SingleBacktestHelper {
         // CRITICAL REQUIREMENT: Terminal stays open after backtest finishes
         btConfig.setShutdownTerminal(false);
 
-        String messageText = String.format(
-                "Einzel-Backtest für Pass #%d gestartet.\n\nEA: %s | Symbol: %s | Period: %s\nZeitraum: %s bis %s\n\nMetaTrader wird geöffnet und bleibt nach dem Test geöffnet.",
+        StringBuilder messageText = new StringBuilder(String.format(
+                "Einzel-Backtest für Pass #%d gestartet.\n\nEA: %s | Symbol: %s | Period: %s\nZeitraum: %s bis %s\nModell: %s\nParameter-Quelle: %s",
                 pass.getPassNumber(),
                 expert,
                 symbol,
                 period,
                 fromDate.toString(),
-                toDate.toString()
-        );
+                toDate.toString(),
+                BacktestConfig.MODEL_NAMES[Math.max(0, Math.min(modelId, BacktestConfig.MODEL_NAMES.length - 1))],
+                describeParameterSource(resolution)));
 
-        launchBacktest(btConfig, messageText, parentWindow, pass);
+        // The original run's model is the only fair comparison baseline; a different
+        // model alone can change the trade count by a large factor.
+        int originalModel = PassPresetResolver.readTesterModel(pass.getReportDirectory());
+        if (originalModel >= 0 && originalModel != modelId
+                && originalModel < BacktestConfig.MODEL_NAMES.length) {
+            messageText.append("\n\n⚠ Der Original-Lauf verwendete das Modell '")
+                    .append(BacktestConfig.MODEL_NAMES[originalModel])
+                    .append("'. Abweichende Modelle liefern abweichende Trade-Zahlen.");
+        }
+        if (resolution.warning() != null) {
+            messageText.append("\n\n⚠ ").append(resolution.warning());
+        }
+        messageText.append("\n\nMetaTrader wird geöffnet und bleibt nach dem Test geöffnet.");
+
+        launchBacktest(btConfig, messageText.toString(), parentWindow, pass);
+    }
+
+    private static String describeParameterSource(PassPresetResolver.Resolution resolution) {
+        return switch (resolution.fidelity()) {
+            case EXACT_SNAPSHOT -> "Original-Preset des Laufs (exakt)";
+            case OPTIMIZATION_BASE -> "Optimierungs-Preset + Report-Werte";
+            case CURRENT_CONFIG -> "aktuelle EA-Konfiguration (unvollständig)";
+        };
     }
 
     private static void launchBacktest(BacktestConfig btConfig, String messageText, Window parentWindow) {
@@ -328,7 +351,11 @@ public class SingleBacktestHelper {
             @Override
             protected BacktestResult call() throws Exception {
                 BacktestResult res = runner.runBacktest(btConfig);
-                if (res != null && res.getOutputDirectory() != null && targetPass != null) {
+                // Keep the link to the run that produced the stored metrics. Pointing
+                // the pass at this verification run would detach its numbers from
+                // their source and make the original preset unrecoverable.
+                if (res != null && res.getOutputDirectory() != null && targetPass != null
+                        && targetPass.getReportDirectory().isBlank()) {
                     targetPass.setReportDirectory(res.getOutputDirectory());
                 }
                 return res;
@@ -375,6 +402,17 @@ public class SingleBacktestHelper {
             if ((dbLower.contains("langzeit") || dbLower.contains("retest")) && t.getType() == WorkflowTask.TaskType.RETESTER) return t;
         }
         return project.getTasks().isEmpty() ? null : project.getTasks().get(0);
+    }
+
+    public static int parseModelToId(String modelStr) {
+        if (modelStr == null || modelStr.isBlank()) return 0;
+        String m = modelStr.trim();
+        if (m.equals("0") || m.equalsIgnoreCase("Every Tick") || m.equalsIgnoreCase("MODEL_EVERY_TICK")) return 0;
+        if (m.equals("1") || m.equalsIgnoreCase("1 Minute OHLC") || m.equalsIgnoreCase("OHLC_M1") || m.equalsIgnoreCase("MODEL_OHLC_M1")) return 1;
+        if (m.equals("2") || m.equalsIgnoreCase("Open Prices") || m.equalsIgnoreCase("MODEL_OPEN_PRICES")) return 2;
+        if (m.equals("3") || m.equalsIgnoreCase("Math Calculations") || m.equalsIgnoreCase("MODEL_MATH_CALCULATIONS")) return 3;
+        if (m.equals("4") || m.equalsIgnoreCase("Real Ticks") || m.equalsIgnoreCase("Every Tick Real Ticks") || m.equalsIgnoreCase("MODEL_REAL_TICKS")) return 4;
+        return 0;
     }
 
     private static LocalDate parseDateOrNull(String dateStr) {

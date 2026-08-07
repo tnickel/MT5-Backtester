@@ -1097,7 +1097,9 @@ public class ControllingView {
             if (passVal != null && !passVal.isEmpty()) {
                 p.setValue(passVal);
             } else {
-                p.setValue(base.getValue());
+                // An optimized parameter without a report column was held constant at
+                // its optimize start; MT5 never read the value field for it.
+                p.setValue(com.backtester.report.PassPresetResolver.effectiveBaseValue(base));
             }
             p.setOptimizeEnabled(false);
             finalParams.add(p);

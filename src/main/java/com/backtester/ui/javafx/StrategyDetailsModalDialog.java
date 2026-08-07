@@ -80,6 +80,14 @@ public class StrategyDetailsModalDialog {
         Region spacer = new Region();
         HBox.setHgrow(spacer, Priority.ALWAYS);
 
+        Button viewSetfileBtn = new Button("👁 Setfile anzeigen");
+        viewSetfileBtn.setStyle("-fx-background-color: #1e293b; -fx-text-fill: #00e5ff; -fx-border-color: #00e5ff; -fx-border-radius: 4; -fx-font-weight: bold; -fx-cursor: hand;");
+        viewSetfileBtn.setOnAction(e -> SetfileDialogHelper.showSetfileViewDialog(pass, project, stage));
+
+        Button downloadSetfileBtn = new Button("💾 Setfile download");
+        downloadSetfileBtn.setStyle("-fx-background-color: #1e293b; -fx-text-fill: #10b981; -fx-border-color: #10b981; -fx-border-radius: 4; -fx-font-weight: bold; -fx-cursor: hand;");
+        downloadSetfileBtn.setOnAction(e -> SetfileDialogHelper.downloadSetfile(pass, project, stage));
+
         Button runBtBtn = new Button("▶ Einzel-Backtest im MetaTrader (Terminal bleibt offen)");
         runBtBtn.setStyle("-fx-background-color: #00bcd4; -fx-text-fill: white; -fx-font-weight: bold; -fx-cursor: hand;");
         runBtBtn.setOnAction(e -> SingleBacktestHelper.runSingleBacktestInMetaTrader(pass, dbName, project, stage));
@@ -88,7 +96,7 @@ public class StrategyDetailsModalDialog {
         closeBtn.getStyleClass().add("button-cancel");
         closeBtn.setOnAction(e -> stage.close());
 
-        header.getChildren().addAll(titleLabel, passBadge, scoreBadge, spacer, runBtBtn, closeBtn);
+        header.getChildren().addAll(titleLabel, passBadge, scoreBadge, spacer, viewSetfileBtn, downloadSetfileBtn, runBtBtn, closeBtn);
         root.setTop(header);
 
         TabPane tabPane = new TabPane();
@@ -96,7 +104,7 @@ public class StrategyDetailsModalDialog {
 
         Tab overviewTab = new Tab("Overview & Metrics");
         overviewTab.setClosable(false);
-        overviewTab.setContent(createOverviewTabContent(pass));
+        overviewTab.setContent(createOverviewTabContent(pass, dbName, project));
 
         Tab paramsTab = new Tab("EA Parameters");
         paramsTab.setClosable(false);
@@ -127,7 +135,7 @@ public class StrategyDetailsModalDialog {
         stage.show();
     }
 
-    private static VBox createOverviewTabContent(CombinedPass pass) {
+    private static VBox createOverviewTabContent(CombinedPass pass, String dbName, com.backtester.workflow.CustomProject project) {
         VBox panel = new VBox(15);
         panel.setPadding(new Insets(20));
 
@@ -155,6 +163,18 @@ public class StrategyDetailsModalDialog {
         grid.add(btDateLbl, 1, row);
         grid.add(fwDateLbl, 2, row);
         grid.add(ltDateLbl, 3, row);
+        row++;
+
+        grid.add(new Label("Backtest Quality:"), 0, row);
+        Label btModelLbl = new Label(formatTickModelQuality(pass.getBacktestPass(), dbName, project));
+        btModelLbl.setStyle("-fx-text-fill: #00e5ff; -fx-font-weight: bold;");
+        Label fwModelLbl = new Label(pass.getForwardPass() != null ? formatTickModelQuality(pass.getForwardPass(), dbName, project) : "-");
+        fwModelLbl.setStyle("-fx-text-fill: #00e5ff; -fx-font-weight: bold;");
+        Label ltModelLbl = new Label(pass.getLongtermPass() != null ? formatTickModelQuality(pass.getLongtermPass(), dbName, project) : "-");
+        ltModelLbl.setStyle("-fx-text-fill: #a78bfa; -fx-font-weight: bold;");
+        grid.add(btModelLbl, 1, row);
+        grid.add(fwModelLbl, 2, row);
+        grid.add(ltModelLbl, 3, row);
         row++;
 
         grid.add(new Label("Net Profit:"), 0, row);
@@ -763,5 +783,55 @@ public class StrategyDetailsModalDialog {
         if (val > 0) l.setTextFill(Color.web("#00e676"));
         else if (val < 0) l.setTextFill(Color.web("#ff5252"));
         return l;
+    }
+
+    /**
+     * The tester.ini archived with the report is the only authoritative record of
+     * the simulation model, so it wins over the value cached on the pass and over
+     * the task configuration, both of which can drift. When nothing is known the
+     * method says so instead of naming a plausible model.
+     */
+    private static String formatTickModelQuality(Pass pass, String dbName, com.backtester.workflow.CustomProject project) {
+        if (pass == null) return "-";
+
+        String model = null;
+        int reportedModel = com.backtester.report.PassPresetResolver.readTesterModel(pass.getReportDirectory());
+        if (reportedModel >= 0 && reportedModel < com.backtester.engine.OptimizationConfig.MODEL_NAMES.length) {
+            model = com.backtester.engine.OptimizationConfig.MODEL_NAMES[reportedModel];
+        }
+        if (model == null || model.trim().isEmpty()) {
+            model = pass.getTickModel();
+        }
+        if (model == null || model.trim().isEmpty()) {
+            if (project != null && dbName != null && !dbName.isBlank()) {
+                com.backtester.workflow.WorkflowTask originTask = project.findOriginTaskForDatabank(dbName);
+                if (originTask != null) {
+                    int mt5Model = originTask.getMt5Model();
+                    if (mt5Model >= 0 && mt5Model < com.backtester.engine.OptimizationConfig.MODEL_NAMES.length) {
+                        model = com.backtester.engine.OptimizationConfig.MODEL_NAMES[mt5Model];
+                    }
+                }
+            }
+        }
+        if (model == null || model.trim().isEmpty()) {
+            return "unbekannt";
+        }
+        String m = model.trim();
+        if (m.equals("0") || m.equalsIgnoreCase("Every Tick") || m.equalsIgnoreCase("MODEL_EVERY_TICK")) {
+            return "Every Tick (Ticksimulation)";
+        }
+        if (m.equals("1") || m.equalsIgnoreCase("1 Minute OHLC") || m.equalsIgnoreCase("OHLC_M1") || m.equalsIgnoreCase("MODEL_OHLC_M1")) {
+            return "1 Minute OHLC (Fast OHLC)";
+        }
+        if (m.equals("2") || m.equalsIgnoreCase("Open Prices") || m.equalsIgnoreCase("MODEL_OPEN_PRICES")) {
+            return "Open Prices Only";
+        }
+        if (m.equals("3") || m.equalsIgnoreCase("Math Calculations") || m.equalsIgnoreCase("MODEL_MATH_CALCULATIONS")) {
+            return "Math Calculations";
+        }
+        if (m.equals("4") || m.equalsIgnoreCase("Real Ticks") || m.equalsIgnoreCase("Every Tick Real Ticks") || m.equalsIgnoreCase("MODEL_REAL_TICKS")) {
+            return "Real Ticks (Echte Ticks)";
+        }
+        return m;
     }
 }

@@ -24,12 +24,16 @@ public class OptimizationResult {
         private double balance;
         private String fromDate = "";
         private String toDate = "";
+        private String tickModel = "";
         private Map<String, String> parameterValues = new LinkedHashMap<>();
 
         public String getFromDate() { return fromDate; }
         public void setFromDate(String fromDate) { this.fromDate = fromDate != null ? fromDate : ""; }
         public String getToDate() { return toDate; }
         public void setToDate(String toDate) { this.toDate = toDate != null ? toDate : ""; }
+
+        public String getTickModel() { return tickModel != null ? tickModel : ""; }
+        public void setTickModel(String tickModel) { this.tickModel = tickModel != null ? tickModel : ""; }
 
         public String getDateRange() {
             if (!fromDate.isEmpty() && !toDate.isEmpty()) {
@@ -116,6 +120,7 @@ public class OptimizationResult {
             copy.setBalance(balance);
             copy.setFromDate(fromDate);
             copy.setToDate(toDate);
+            copy.setTickModel(tickModel);
             copy.setReportDirectory(reportDirectory);
             copy.setParameterValues(parameterValues != null
                     ? new LinkedHashMap<>(parameterValues) : new LinkedHashMap<>());

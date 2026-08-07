@@ -2781,21 +2781,22 @@ public class WorkflowView {
         // 2. Prepare parameter override file
         String eaName = EaParameterManager.extractEaBaseName(expert);
         EaParameterManager eaParamManager = new EaParameterManager();
-        List<EaParameter> params = eaParamManager.getEffectiveParameters(expert);
-        if (params != null) {
-            Map<String, String> passVals = cp.getBacktestPass().getParameterValues();
-            for (EaParameter p : params) {
-                if (passVals.containsKey(p.getName())) {
-                    p.setValue(passVals.get(p.getName()));
-                }
-            }
+        com.backtester.report.PassPresetResolver.Resolution resolution =
+                com.backtester.report.PassPresetResolver.resolve(cp, expert);
+        List<EaParameter> params = resolution.parameters();
+        if (params != null && !params.isEmpty()) {
             Path mt5Dir = AppConfig.getInstance().getMt5InstallDir();
             if (mt5Dir != null) {
                 Path presetsDir = mt5Dir.resolve("MQL5").resolve("Profiles").resolve("Tester");
-                Path destFile = presetsDir.resolve("Backtester_" + eaName + ".set");
-                eaParamManager.writeSetFile(destFile, params, eaName);
-                btConfig.setExpertParameters("Backtester_" + eaName + ".set");
+                // A dedicated name: Backtester_<EA>.set is the optimizer's preset and
+                // overwriting it would destroy the record of the run being verified.
+                String presetFileName = "Backtester_" + eaName + "_Verify_Pass" + cp.getPassNumber() + ".set";
+                eaParamManager.writeSetFile(presetsDir.resolve(presetFileName), params, eaName);
+                btConfig.setExpertParameters(presetFileName);
             }
+        }
+        if (resolution.warning() != null) {
+            new Alert(Alert.AlertType.WARNING, resolution.warning()).show();
         }
 
         // 3. Create dialog for logs and progress

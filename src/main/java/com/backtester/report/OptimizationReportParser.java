@@ -237,7 +237,7 @@ public class OptimizationReportParser {
                         pass.setSharpeRatio(parseDouble(value));
                     } else if (header.equalsIgnoreCase("Custom")) {
                         pass.setCustomCriterion(parseDouble(value));
-                    } else {
+                    } else if (!isBuiltinMetric(header)) {
                         // It's an EA parameter
                         pass.setParameter(header, value);
                     }
@@ -249,6 +249,14 @@ public class OptimizationReportParser {
         }
     }
     
+    /**
+     * Column names MT5 writes itself. Anything else is an EA input.
+     *
+     * <p>This is the single gate for the metric/parameter decision: the row parser
+     * only stores a column as a parameter when this returns {@code false}. The
+     * forward report replaces "Result" with "Forward Result" and "Back Result",
+     * which would otherwise be stored as fake EA parameters.
+     */
     private boolean isBuiltinMetric(String header) {
         String h = header.toLowerCase();
         return h.equals("pass") || h.equals("result") || h.equals("profit") || 
@@ -256,7 +264,8 @@ public class OptimizationReportParser {
                h.equals("expected payoff") || h.equals("drawdown") || h.equals("drawdown $") || 
                h.equals("drawdown %") || h.equals("recovery factor") || h.equals("sharpe ratio") || 
                h.equals("custom") || h.equals("custom criterion") || h.equals("equity dd %") ||
-               h.equals("margin level");
+               h.equals("equity dd $") || h.equals("margin level") ||
+               h.equals("forward result") || h.equals("back result");
     }
     
     private double parseDouble(String val) {

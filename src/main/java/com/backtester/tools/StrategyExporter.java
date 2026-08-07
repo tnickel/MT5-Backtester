@@ -373,7 +373,9 @@ public class StrategyExporter {
                     if (passVal != null && !passVal.isEmpty()) {
                         p.setValue(passVal);
                     } else {
-                        p.setValue(base.getValue());
+                        // An optimized parameter without a report column was held constant
+                        // at its optimize start; MT5 never read the value field for it.
+                        p.setValue(com.backtester.report.PassPresetResolver.effectiveBaseValue(base));
                     }
                     if (isMagicNumberParameter(p.getName())) {
                         p.setValue(String.valueOf(sc.combinedPass.getPassNumber()));

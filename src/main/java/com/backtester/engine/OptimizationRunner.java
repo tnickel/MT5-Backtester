@@ -1,7 +1,10 @@
 package com.backtester.engine;
 
 import com.backtester.config.AppConfig;
+import com.backtester.config.EaParameter;
+import com.backtester.config.EaParameterManager;
 import com.backtester.config.MetaTraderPlatform;
+import com.backtester.report.BacktestArtifactReplayResolver;
 import com.backtester.report.OptimizationReportParser;
 import com.backtester.report.OptimizationResult;
 import com.backtester.report.OptimizationDateRangeResolver;
@@ -74,6 +77,7 @@ public class OptimizationRunner {
         if (optConfig.getToDate() != null) result.setToDate(optConfig.getToDate().toString());
 
         tailer = null;
+        Path presetSnapshot = null;
         MetaTraderPlatform platform = config.getPlatform(optConfig.getExpert());
 
         // Pre-flight: check for stale MetaTrader processes from previous runs
@@ -101,6 +105,12 @@ public class OptimizationRunner {
             Path iniPath = outputDir.resolve("tester.ini");
             iniGenerator.generateForOptimization(optConfig, iniPath, REPORT_FILENAME);
             logMessage("Generated optimization tester.ini");
+
+            // 3b. Archive the preset this run is about to use. The shared
+            // Backtester_<EA>.set is overwritten by the next optimization, and the
+            // report only lists parameters that actually varied — without this
+            // copy a pass can never be reproduced.
+            presetSnapshot = snapshotExpertParameters(optConfig, outputDir);
 
             // 4. Copy tester.ini to MetaTrader directory to avoid path-with-spaces issues
             // (Java's ProcessBuilder quotes the entire /config: argument when the path has spaces,
@@ -314,6 +324,27 @@ public class OptimizationRunner {
                 }
             }
 
+            injectUnreportedOptimizedParameters(result, presetSnapshot);
+
+            String modelName = (optConfig.getModel() >= 0 && optConfig.getModel() < OptimizationConfig.MODEL_NAMES.length)
+                    ? OptimizationConfig.MODEL_NAMES[optConfig.getModel()]
+                    : String.valueOf(optConfig.getModel());
+
+            if (result.getPasses() != null) {
+                for (OptimizationResult.Pass p : result.getPasses()) {
+                    if (p.getTickModel() == null || p.getTickModel().isEmpty()) {
+                        p.setTickModel(modelName);
+                    }
+                }
+            }
+            if (result.getForwardPasses() != null) {
+                for (OptimizationResult.Pass p : result.getForwardPasses()) {
+                    if (p.getTickModel() == null || p.getTickModel().isEmpty()) {
+                        p.setTickModel(modelName);
+                    }
+                }
+            }
+
         } catch (InterruptedException e) {
             logMessage("Optimization interrupted.");
             Thread.currentThread().interrupt();
@@ -341,6 +372,86 @@ public class OptimizationRunner {
                 optConfig.getFromDate(), optConfig.getToDate(),
                 optConfig.getForwardMode(), optConfig.getForwardDate());
         return result;
+    }
+
+    /**
+     * Copies the preset the optimization is started with into its report
+     * directory, so the run stays reproducible after the shared preset file has
+     * been overwritten by a later run.
+     */
+    private Path snapshotExpertParameters(OptimizationConfig optConfig, Path outputDir) {
+        String presetName = optConfig.getExpertParameters();
+        if (presetName == null || presetName.isBlank()) {
+            logMessage("Warning: optimization has no ExpertParameters preset — passes will not be reproducible.");
+            return null;
+        }
+        try {
+            Path leaf = Path.of(presetName.trim());
+            if (leaf.getNameCount() != 1) {
+                throw new IOException("Invalid ExpertParameters filename: " + presetName);
+            }
+            Path profilesDir = config.getTesterProfilesDir(optConfig.getExpert()).toAbsolutePath().normalize();
+            Path source = profilesDir.resolve(leaf).normalize();
+            if (!source.getParent().equals(profilesDir) || !Files.isRegularFile(source)) {
+                throw new IOException("ExpertParameters preset not found: " + source);
+            }
+            Path snapshot = outputDir.resolve(BacktestArtifactReplayResolver.PRESET_SNAPSHOT_FILE);
+            Files.copy(source, snapshot, StandardCopyOption.REPLACE_EXISTING);
+            logMessage("Archived optimization preset: " + snapshot.getFileName());
+            return snapshot;
+        } catch (Exception e) {
+            log.error("Failed to archive optimization preset", e);
+            logMessage("Warning: could not archive the optimization preset — passes will not be reproducible: "
+                    + e.getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * MT5 omits a report column for every optimized parameter whose range
+     * collapses to a single value, because it is constant across all passes. Its
+     * real value is the optimize start, which is otherwise lost. Writing it into
+     * each pass keeps the pass self-contained even after the report directory is gone.
+     */
+    private void injectUnreportedOptimizedParameters(OptimizationResult result, Path presetSnapshot) {
+        if (presetSnapshot == null || result == null) return;
+        java.util.List<OptimizationResult.Pass> passes = result.getPasses();
+        if (passes == null || passes.isEmpty()) return;
+
+        try {
+            java.util.List<EaParameter> preset = new EaParameterManager().readSetFile(presetSnapshot);
+            if (preset == null || preset.isEmpty()) return;
+
+            java.util.Set<String> reported = new java.util.HashSet<>();
+            for (OptimizationResult.Pass p : passes) {
+                if (p.getParameterValues() != null) {
+                    reported.addAll(p.getParameterValues().keySet());
+                }
+            }
+
+            java.util.Map<String, String> constants = new java.util.LinkedHashMap<>();
+            for (EaParameter p : preset) {
+                if (!p.isOptimizeEnabled() || p.isStringType()) continue;
+                if (reported.contains(p.getName())) continue;
+                String start = p.getOptimizeStart();
+                if (start == null || start.isBlank()) continue;
+                constants.put(p.getName(), EaParameter.normalizeMql5Value(start.trim()));
+            }
+            if (constants.isEmpty()) return;
+
+            for (OptimizationResult.Pass p : passes) {
+                constants.forEach(p::setParameter);
+            }
+            if (result.getForwardPasses() != null) {
+                for (OptimizationResult.Pass p : result.getForwardPasses()) {
+                    constants.forEach(p::setParameter);
+                }
+            }
+            logMessage("Recovered " + constants.size()
+                    + " optimized parameter(s) that MT5 omitted from the report: " + constants);
+        } catch (Exception e) {
+            log.warn("Could not recover unreported optimized parameters", e);
+        }
     }
 
     static Path resolveOutputDirectory(OptimizationConfig optConfig, Path defaultBaseDirectory,

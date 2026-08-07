@@ -25,6 +25,7 @@ public class CustomProject {
     private String period = "H1";
     private long createdTimestamp;
     private long lastRunTimestamp;
+    private int sortOrder = 0;
     private List<WorkflowTask> tasks;
     private boolean saveDatabanksPersistently = true;
     private Map<String, List<CombinedPass>> databanks = new HashMap<>();
@@ -43,6 +44,29 @@ public class CustomProject {
         this.expert = expert;
         this.symbol = symbol;
         this.period = period;
+    }
+
+    public int getSortOrder() { return sortOrder; }
+    public void setSortOrder(int sortOrder) { this.sortOrder = sortOrder; }
+
+    public CustomProject cloneProject(String newName, String newSymbol, String newPeriod) {
+        CustomProject clone = new CustomProject();
+        clone.setName(newName != null && !newName.isBlank() ? newName : getName() + " (Kopie)");
+        clone.setExpert(getExpert());
+        clone.setSymbol(newSymbol != null && !newSymbol.isBlank() ? newSymbol : getSymbol());
+        clone.setPeriod(newPeriod != null && !newPeriod.isBlank() ? newPeriod : getPeriod());
+        clone.setSaveDatabanksPersistently(isSaveDatabanksPersistently());
+        
+        List<WorkflowTask> clonedTasks = new ArrayList<>();
+        if (tasks != null) {
+            for (WorkflowTask t : tasks) {
+                if (t != null) {
+                    clonedTasks.add(t.copyForPersistence());
+                }
+            }
+        }
+        clone.setTasks(clonedTasks);
+        return clone;
     }
 
     public String getId() { return id; }
@@ -93,6 +117,32 @@ public class CustomProject {
         if (this.tasks != null) {
             this.tasks.remove(task);
         }
+    }
+
+    public WorkflowTask findOriginTaskForDatabank(String dbName) {
+        if (dbName == null || dbName.isBlank() || tasks == null || tasks.isEmpty()) return null;
+        String currentDb = dbName.trim();
+        int maxDepth = 20;
+        while (currentDb != null && !currentDb.isBlank() && maxDepth-- > 0) {
+            String targetToMatch = currentDb;
+            WorkflowTask matchingTask = null;
+            for (WorkflowTask t : tasks) {
+                if (t != null && t.getTargetDatabank() != null && t.getTargetDatabank().equalsIgnoreCase(targetToMatch)) {
+                    matchingTask = t;
+                    break;
+                }
+            }
+            if (matchingTask == null) break;
+            if (matchingTask.getType() == WorkflowTask.TaskType.OPTIMIZER || matchingTask.getType() == WorkflowTask.TaskType.RETESTER) {
+                return matchingTask;
+            }
+            String source = matchingTask.getSourceDatabank();
+            if (source == null || source.isBlank() || source.equalsIgnoreCase(currentDb)) {
+                return matchingTask;
+            }
+            currentDb = source.trim();
+        }
+        return null;
     }
 
     public boolean moveTaskUp(int index) {

@@ -254,6 +254,24 @@ public class DatabaseManager {
                 log.warn("Could not migrate WORKFLOW_STATE for validation/ki-gate columns", e);
             }
 
+            // Migration: CUSTOM_PROJECTS sort_order column
+            try {
+                ResultSet rs = stmt.executeQuery("PRAGMA table_info(CUSTOM_PROJECTS)");
+                boolean hasSortOrder = false;
+                while (rs.next()) {
+                    if ("sort_order".equalsIgnoreCase(rs.getString("name"))) {
+                        hasSortOrder = true;
+                        break;
+                    }
+                }
+                if (!hasSortOrder) {
+                    log.info("Migrating CUSTOM_PROJECTS: adding sort_order column...");
+                    stmt.execute("ALTER TABLE CUSTOM_PROJECTS ADD COLUMN sort_order INTEGER DEFAULT 0");
+                }
+            } catch (Exception e) {
+                log.warn("Could not migrate CUSTOM_PROJECTS for sort_order column", e);
+            }
+
             // Check if SENSITIVITY_DETAIL has the new 'verdict' column, otherwise recreate it
             try {
                 ResultSet rs = stmt.executeQuery("PRAGMA table_info(SENSITIVITY_DETAIL)");
@@ -1272,6 +1290,7 @@ public class DatabaseManager {
         return map;
     }
 
+
     public static String translatePortugueseParameter(String rawName) {
         if (rawName == null || rawName.isEmpty()) return "";
         
@@ -1456,8 +1475,8 @@ public class DatabaseManager {
 
     public boolean saveCustomProject(com.backtester.workflow.CustomProject project) {
         if (project == null || project.getId() == null) return false;
-        String sql = "INSERT INTO CUSTOM_PROJECTS (id, name, expert, symbol, period, created_timestamp, last_run_timestamp, project_json) " +
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?) " +
+        String sql = "INSERT INTO CUSTOM_PROJECTS (id, name, expert, symbol, period, created_timestamp, last_run_timestamp, sort_order, project_json) " +
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) " +
                 "ON CONFLICT(id) DO UPDATE SET " +
                 "name = excluded.name, " +
                 "expert = excluded.expert, " +
@@ -1465,6 +1484,7 @@ public class DatabaseManager {
                 "period = excluded.period, " +
                 "created_timestamp = excluded.created_timestamp, " +
                 "last_run_timestamp = excluded.last_run_timestamp, " +
+                "sort_order = excluded.sort_order, " +
                 "project_json = excluded.project_json;";
         try (Connection conn = connect(); PreparedStatement pstmt = conn.prepareStatement(sql)) {
             com.google.gson.Gson gson = createCustomProjectGson();
@@ -1477,7 +1497,8 @@ public class DatabaseManager {
             pstmt.setString(5, project.getPeriod());
             pstmt.setLong(6, project.getCreatedTimestamp());
             pstmt.setLong(7, project.getLastRunTimestamp());
-            pstmt.setString(8, json);
+            pstmt.setInt(8, project.getSortOrder());
+            pstmt.setString(9, json);
             pstmt.executeUpdate();
             log.info("Saved custom project: {} ({})", project.getName(), project.getId());
             return true;
@@ -1489,7 +1510,7 @@ public class DatabaseManager {
 
     public List<com.backtester.workflow.CustomProject> getAllCustomProjects() {
         List<com.backtester.workflow.CustomProject> list = new ArrayList<>();
-        String sql = "SELECT project_json FROM CUSTOM_PROJECTS ORDER BY last_run_timestamp DESC, created_timestamp DESC;";
+        String sql = "SELECT project_json FROM CUSTOM_PROJECTS ORDER BY sort_order ASC, created_timestamp DESC;";
         try (Connection conn = connect(); Statement stmt = conn.createStatement(); ResultSet rs = stmt.executeQuery(sql)) {
             com.google.gson.Gson gson = createCustomProjectGson();
             while (rs.next()) {

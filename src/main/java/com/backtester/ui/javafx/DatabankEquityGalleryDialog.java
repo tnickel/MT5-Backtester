@@ -379,11 +379,19 @@ public class DatabankEquityGalleryDialog {
         Region spacer = new Region();
         HBox.setHgrow(spacer, Priority.ALWAYS);
 
+        Button viewSetfileBtn = new Button("👁 Setfile anzeigen");
+        viewSetfileBtn.setStyle("-fx-background-color: #1e293b; -fx-text-fill: #00e5ff; -fx-border-color: #00e5ff; -fx-border-radius: 4; -fx-font-weight: bold; -fx-cursor: hand; -fx-padding: 6 12;");
+        viewSetfileBtn.setOnAction(e -> SetfileDialogHelper.showSetfileViewDialog(pass, project, stage));
+
+        Button downloadSetfileBtn = new Button("💾 Setfile download");
+        downloadSetfileBtn.setStyle("-fx-background-color: #1e293b; -fx-text-fill: #10b981; -fx-border-color: #10b981; -fx-border-radius: 4; -fx-font-weight: bold; -fx-cursor: hand; -fx-padding: 6 12;");
+        downloadSetfileBtn.setOnAction(e -> SetfileDialogHelper.downloadSetfile(pass, project, stage));
+
         Button detailsBtn = new Button("▶ Details & MT5 Einzel-Backtest");
         detailsBtn.setStyle("-fx-background-color: #00bcd4; -fx-text-fill: white; -fx-font-weight: bold; -fx-cursor: hand; -fx-padding: 6 12; -fx-background-radius: 4;");
         detailsBtn.setOnAction(e -> StrategyDetailsModalDialog.show(pass, dbName, project, stage, 0));
 
-        cardHeader.getChildren().addAll(nameLbl, passBadge, scoreBadge, profitBadge, spacer, detailsBtn);
+        cardHeader.getChildren().addAll(nameLbl, passBadge, scoreBadge, profitBadge, spacer, viewSetfileBtn, downloadSetfileBtn, detailsBtn);
 
         // Expanded Metrics Grid (All available statistics)
         GridPane grid = new GridPane();

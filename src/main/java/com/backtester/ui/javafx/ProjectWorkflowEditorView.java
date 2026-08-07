@@ -264,6 +264,19 @@ public class ProjectWorkflowEditorView {
         projectTitleLabel = new Label("");
         projectTitleLabel.setFont(Font.font("Segoe UI", FontWeight.BOLD, 18));
         projectTitleLabel.setTextFill(Color.web("#e6e9f0"));
+        projectTitleLabel.setStyle("-fx-cursor: hand;");
+        projectTitleLabel.setTooltip(new Tooltip("Doppelklick zum Umbenennen"));
+        projectTitleLabel.setOnMouseClicked(e -> {
+            if (e.getClickCount() == 2) renameCurrentProject();
+        });
+
+        Button renameTitleBtn = new Button("✏");
+        renameTitleBtn.setStyle("-fx-background-color: transparent; -fx-text-fill: #94a3b8; -fx-font-size: 14px; -fx-cursor: hand; -fx-padding: 0 4;");
+        renameTitleBtn.setTooltip(new Tooltip("Workflow umbenennen"));
+        renameTitleBtn.setOnAction(e -> renameCurrentProject());
+
+        HBox titleBox = new HBox(6, projectTitleLabel, renameTitleBtn);
+        titleBox.setAlignment(Pos.CENTER_LEFT);
 
         Region spacer = new Region();
         HBox.setHgrow(spacer, Priority.ALWAYS);
@@ -290,8 +303,38 @@ public class ProjectWorkflowEditorView {
             });
         });
 
-        bar.getChildren().addAll(backBtn, projectTitleLabel, spacer, startBtn, stopBtn, resetBtn, saveBtn);
+        Button cloneBtn = new Button("📋 Clone");
+        cloneBtn.setStyle("-fx-background-color: #1e2432; -fx-text-fill: #00e5ff; -fx-font-weight: bold; -fx-cursor: hand; -fx-border-color: #00e5ff; -fx-border-radius: 4;");
+        cloneBtn.setTooltip(new Tooltip("Diesen Workflow duplizieren (mit neuem Währungspaar & Timeframe)"));
+        cloneBtn.setOnAction(e -> {
+            CustomProjectsOverviewView overviewView = new CustomProjectsOverviewView();
+            overviewView.setOnOpenProjectCallback(newProj -> loadProject(newProj));
+            overviewView.showCloneWorkflowDialog(project);
+        });
+
+        bar.getChildren().addAll(backBtn, titleBox, spacer, startBtn, stopBtn, resetBtn, saveBtn, cloneBtn);
         return bar;
+    }
+
+    private void renameCurrentProject() {
+        if (project == null) return;
+        TextInputDialog dialog = new TextInputDialog(project.getName());
+        dialog.setTitle("Workflow umbenennen");
+        dialog.setHeaderText("Geben Sie einen neuen Namen für den aktuellen Workflow ein:");
+        dialog.setContentText("Neuer Name:");
+
+        dialog.getDialogPane().setStyle("-fx-background-color: #0b0d13;");
+        if (root.getScene() != null && !root.getScene().getStylesheets().isEmpty()) {
+            dialog.getDialogPane().getStylesheets().addAll(root.getScene().getStylesheets());
+        }
+
+        dialog.showAndWait().ifPresent(newName -> {
+            if (!newName.trim().isEmpty() && !newName.trim().equals(project.getName())) {
+                project.setName(newName.trim());
+                projectTitleLabel.setText("/ " + project.getName());
+                saveProject();
+            }
+        });
     }
 
     private VBox createLeftTaskPanel() {
@@ -855,9 +898,20 @@ public class ProjectWorkflowEditorView {
         panel.setPadding(new Insets(20));
         panel.setStyle("-fx-background-color: rgba(26, 30, 40, 0.85); -fx-border-color: #2e3545; -fx-border-radius: 6;");
 
+        HBox headerBox = new HBox(15);
+        headerBox.setAlignment(Pos.CENTER_LEFT);
         Label heading = new Label("Diversitäts-Clustering der ausgewählten Quell-Databank");
         heading.setFont(Font.font("Segoe UI", FontWeight.BOLD, 15));
         heading.setTextFill(Color.web("#00e5ff"));
+
+        Region spacer = new Region();
+        HBox.setHgrow(spacer, Priority.ALWAYS);
+
+        Button resetDefaultsBtn = new Button("Standards setzen");
+        resetDefaultsBtn.setStyle("-fx-background-color: #1e293b; -fx-text-fill: #00e5ff; -fx-border-color: #00e5ff; -fx-border-radius: 4; -fx-cursor: hand; -fx-font-weight: bold;");
+        resetDefaultsBtn.setOnAction(e -> applyRecommendedDiversityDefaults());
+
+        headerBox.getChildren().addAll(heading, spacer, resetDefaultsBtn);
 
         GridPane grid = new GridPane();
         grid.setHgap(15);
@@ -913,8 +967,33 @@ public class ProjectWorkflowEditorView {
         sourceInfo.setWrapText(true);
         sourceInfo.setStyle("-fx-text-fill: #7e889a; -fx-font-size: 12px;");
 
-        panel.getChildren().addAll(heading, grid, new Separator(), sourceInfo);
+        panel.getChildren().addAll(headerBox, grid, new Separator(), sourceInfo);
         return panel;
+    }
+
+    private void applyRecommendedDiversityDefaults() {
+        updatingDiversityControls = true;
+        try {
+            double defaultParamDiff = WorkflowTask.DEFAULT_DIVERSITY_PARAM_DIFF_PCT;
+            double defaultTradeDiff = WorkflowTask.DEFAULT_DIVERSITY_TRADE_DIFF_PCT;
+            int defaultMinParams = WorkflowTask.DEFAULT_DIVERSITY_MIN_DIFFERENT_PARAMS;
+            int defaultMaxStrats = WorkflowTask.DEFAULT_DIVERSITY_MAX_STRATEGIES;
+
+            diversityParamDiffField.setText(String.format(Locale.US, "%.0f", defaultParamDiff * 100));
+            diversityTradeDiffField.setText(String.format(Locale.US, "%.0f", defaultTradeDiff * 100));
+            diversityMinDiffParamsSpinner.getValueFactory().setValue(defaultMinParams);
+            diversityMaxStrategiesSpinner.getValueFactory().setValue(defaultMaxStrats);
+
+            if (selectedTask != null) {
+                selectedTask.setDiversityParamDiffPct(defaultParamDiff);
+                selectedTask.setDiversityTradeDiffPct(defaultTradeDiff);
+                selectedTask.setDiversityMinDifferentParams(defaultMinParams);
+                selectedTask.setDiversityMaxStrategies(defaultMaxStrats);
+                saveProject();
+            }
+        } finally {
+            updatingDiversityControls = false;
+        }
     }
 
     private void commitDiversityPercentage(TextField field, boolean parameterDifference) {
@@ -2570,6 +2649,17 @@ public class ProjectWorkflowEditorView {
                         );
                         if (engine.getOptResult() != null) {
                             outputPasses = engine.getOptResult().buildCombinedPasses(engine.getForwardMode() > 0, engine.loadScoreWeightsFromDb());
+                            String modelName = com.backtester.engine.OptimizationConfig.MODEL_NAMES[task.getMt5Model()];
+                            if (outputPasses != null) {
+                                for (CombinedPass cp : outputPasses) {
+                                    if (cp.getBacktestPass() != null) {
+                                        cp.getBacktestPass().setTickModel(modelName);
+                                    }
+                                    if (cp.getForwardPass() != null) {
+                                        cp.getForwardPass().setTickModel(modelName);
+                                    }
+                                }
+                            }
                         }
                         break;
                     case RETESTER:

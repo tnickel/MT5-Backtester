@@ -53,4 +53,60 @@ public class OptimizationReportParserTest {
         assertEquals(8, pass2.getTotalTrades());
         assertEquals("40", pass2.getParameterValues().get("takeProfit"));
     }
+
+    /**
+     * The forward report replaces the "Result" column with "Forward Result" and
+     * "Back Result". Both are MT5 metrics and must not end up in the parameter map,
+     * where they would look like EA inputs.
+     */
+    @Test
+    public void forwardMetricColumnsAreNotStoredAsEaParameters() throws Exception {
+        Path file = tempFolder.newFile("opt_forward.xml").toPath();
+        Files.writeString(file, spreadsheet(
+                row("Pass", "Forward Result", "Back Result", "Profit", "Equity DD %", "Trades", "Inp_Grid_Step"),
+                row("9704", "1.83", "1.93", "1392.19", "6.7633", "314", "350")));
+
+        OptimizationReportParser parser = new OptimizationReportParser();
+        OptimizationResult result = new OptimizationResult();
+        parser.parseForward(file, result);
+
+        assertEquals(1, result.getForwardPasses().size());
+        OptimizationResult.Pass pass = result.getForwardPasses().get(0);
+        assertEquals(9704, pass.getPassNumber());
+        assertEquals(1392.19, pass.getProfit(), 0.001);
+        assertEquals(314, pass.getTotalTrades());
+        assertEquals(6.7633, pass.getDrawdownPercent(), 0.001);
+        assertEquals("350", pass.getParameterValues().get("Inp_Grid_Step"));
+        assertEquals(1, pass.getParameterValues().size());
+        assertFalse(pass.getParameterValues().containsKey("Forward Result"));
+        assertFalse(pass.getParameterValues().containsKey("Back Result"));
+    }
+
+    @Test
+    public void unreportedMetricColumnsStayOutOfParameterNames() throws Exception {
+        Path file = tempFolder.newFile("opt_metrics.xml").toPath();
+        Files.writeString(file, spreadsheet(
+                row("Pass", "Result", "Profit", "Equity DD $", "Equity DD %", "Trades", "Inp_Grid_Step"),
+                row("1", "1.93", "1652.58", "712.71", "7.1271", "350", "350")));
+
+        OptimizationReportParser parser = new OptimizationReportParser();
+        OptimizationResult result = new OptimizationResult();
+        parser.parse(file, result);
+
+        assertEquals(List.of("Inp_Grid_Step"), result.getParameterNames());
+        assertEquals(712.71, result.getPasses().get(0).getDrawdown(), 0.001);
+    }
+
+    private static String row(String... cells) {
+        StringBuilder sb = new StringBuilder("<Row>");
+        for (String cell : cells) {
+            sb.append("<Cell><Data ss:Type=\"String\">").append(cell).append("</Data></Cell>");
+        }
+        return sb.append("</Row>").toString();
+    }
+
+    private static String spreadsheet(String... rows) {
+        return "<?xml version=\"1.0\"?><Workbook xmlns:ss=\"urn:schemas-microsoft-com:office:spreadsheet\">"
+                + "<Worksheet><Table>" + String.join("", rows) + "</Table></Worksheet></Workbook>";
+    }
 }

@@ -157,6 +157,10 @@ public class AppConfig {
         return p.isAbsolute() ? p : basePath.resolve(p);
     }
 
+    public Path getReportsDir() {
+        return getReportsDirectory();
+    }
+
     public void setReportsDirectory(String path) {
         set("output.directory", path);
     }

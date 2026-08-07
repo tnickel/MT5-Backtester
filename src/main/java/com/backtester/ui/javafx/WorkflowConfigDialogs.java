@@ -1472,10 +1472,17 @@ public class WorkflowConfigDialogs {
         grid.add(maxLtDdField, 3, 8);
 
         // Diversity delta thresholds
+        HBox sepBox = new HBox(10);
+        sepBox.setAlignment(Pos.CENTER_LEFT);
         Label sepLabel = new Label("DIVERSITÄTS-METRIKEN (ÄHNLICHKEITS-SCHWELLWERTE)");
         sepLabel.setFont(Font.font("Segoe UI", FontWeight.BOLD, 12));
         sepLabel.setTextFill(Color.web("#ffd740"));
-        grid.add(sepLabel, 0, 9, 4, 1);
+
+        Button defaultBtn = new Button("Standards setzen");
+        defaultBtn.setStyle("-fx-background-color: #1e293b; -fx-text-fill: #ffd740; -fx-border-color: #ffd740; -fx-border-radius: 4; -fx-cursor: hand; -fx-font-size: 11px;");
+        
+        sepBox.getChildren().addAll(sepLabel, defaultBtn);
+        grid.add(sepBox, 0, 9, 4, 1);
 
         grid.add(new Label("Param Differenz %:"), 0, 10);
         TextField paramDiffField = new TextField(String.format(Locale.US, "%.0f", engine.getParamDiffPct() * 100));
@@ -1490,7 +1497,7 @@ public class WorkflowConfigDialogs {
         grid.add(minDiffParamsSpin, 1, 11);
 
         grid.add(new Label("Max. Strategien (Ziel):"), 2, 11);
-        Spinner<Integer> maxStratsSpin = new Spinner<>(1, 20, engine.getMaxStrategiesToSelect(), 1);
+        Spinner<Integer> maxStratsSpin = new Spinner<>(1, 10000, engine.getMaxStrategiesToSelect(), 1);
         grid.add(maxStratsSpin, 3, 11);
 
         layout.getChildren().add(grid);

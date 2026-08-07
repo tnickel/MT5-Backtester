@@ -59,10 +59,10 @@ public class WorkflowEngine {
     private double minFwRecovery = 1.0;
     private double maxBtDd = 100.0;
     private double maxFwDd = 100.0;
-    private double paramDiffPct = 0.10;
-    private double tradeDiffPct = 0.15;
-    private int minDifferentParams = 2;
-    private int maxStrategiesToSelect = 5;
+    private double paramDiffPct = com.backtester.workflow.WorkflowTask.DEFAULT_DIVERSITY_PARAM_DIFF_PCT;
+    private double tradeDiffPct = com.backtester.workflow.WorkflowTask.DEFAULT_DIVERSITY_TRADE_DIFF_PCT;
+    private int minDifferentParams = com.backtester.workflow.WorkflowTask.DEFAULT_DIVERSITY_MIN_DIFFERENT_PARAMS;
+    private int maxStrategiesToSelect = com.backtester.workflow.WorkflowTask.DEFAULT_DIVERSITY_MAX_STRATEGIES;
 
     // Long-Term Test State & Dual-Filter Kriterien
     private LocalDate longtermFromDate = LocalDate.now().minusYears(7);
@@ -1471,6 +1471,15 @@ public class WorkflowEngine {
      * the pass values over the base EA parameters. Magic number and order
      * comment are stamped with the pass identity — same rules as the export.
      */
+    /**
+     * Builds the concrete preset of one pass.
+     *
+     * <p>The base value must come from {@link com.backtester.report.PassPresetResolver#effectiveBaseValue}:
+     * for a parameter that was optimized, MT5 ignored the value field of the .set
+     * line and used the optimize start. Parameters whose range collapsed to a
+     * single value get no report column at all, so taking the value field for them
+     * silently substituted an unrelated setting.
+     */
     private List<EaParameter> buildFinalParams(CombinedPass cp) {
         int passNum = cp.getPassNumber();
         double btDd = cp.getBtDd();
@@ -1485,7 +1494,7 @@ public class WorkflowEngine {
             if (passVal != null && !passVal.isEmpty()) {
                 p.setValue(passVal);
             } else {
-                p.setValue(base.getValue());
+                p.setValue(com.backtester.report.PassPresetResolver.effectiveBaseValue(base));
             }
             if (isMagicNumberParameter(p.getName())) {
                 p.setValue(String.valueOf(passNum));
@@ -2018,6 +2027,7 @@ public class WorkflowEngine {
         }
     }
 
+
     private static boolean meetsMinimum(double value, double minimum) {
         return Double.isFinite(value) && value >= minimum;
     }
@@ -2044,6 +2054,11 @@ public class WorkflowEngine {
         int trades2 = useRetestTrades ? cp2.getLtTrades() : cp2.getBtTrades();
         double tradeDiff = (double) Math.abs(trades1 - trades2) / Math.max(trades1, 1);
         boolean tradesSimilar = tradeDiff < tradeDiffPct;
+
+        double profit1 = useRetestTrades ? cp1.getLtProfit() : cp1.getBtProfit();
+        double profit2 = useRetestTrades ? cp2.getLtProfit() : cp2.getBtProfit();
+        double maxProfitAbs = Math.max(Math.abs(profit1), Math.abs(profit2));
+        double profitDiff = maxProfitAbs > 0 ? Math.abs(profit1 - profit2) / maxProfitAbs : 0.0;
 
         // Compare parameters
         Map<String, String> params1 = cp1.getBacktestPass().getParameterValues();
@@ -2135,6 +2150,12 @@ public class WorkflowEngine {
             if (avgDiff < paramDiffPct) {
                 return tradesSimilar; // similar parameters => similar passes if trades are also similar
             }
+        }
+
+        // If trade count and profit are practically identical (e.g. tradeDiff < 1% & profitDiff < 1%),
+        // minor parameter shifts are on a performance plateau and do not represent a diverse strategy.
+        if (tradeDiff < 0.01 && profitDiff < 0.01 && differentParamsCount <= minDifferentParams) {
+            return true;
         }
 
         // Similar if trade counts are close AND the number of significantly different parameters is low

@@ -16,10 +16,10 @@ public class WorkflowTask {
     public static final int MODE_OHLC_M1 = 1;
     public static final int MODE_REAL_TICKS = 2;
     public static final int MODE_OPEN_PRICES = 3;
-    public static final double DEFAULT_DIVERSITY_PARAM_DIFF_PCT = 0.10;
-    public static final double DEFAULT_DIVERSITY_TRADE_DIFF_PCT = 0.15;
-    public static final int DEFAULT_DIVERSITY_MIN_DIFFERENT_PARAMS = 2;
-    public static final int DEFAULT_DIVERSITY_MAX_STRATEGIES = 5;
+    public static final double DEFAULT_DIVERSITY_PARAM_DIFF_PCT = 0.15;
+    public static final double DEFAULT_DIVERSITY_TRADE_DIFF_PCT = 0.10;
+    public static final int DEFAULT_DIVERSITY_MIN_DIFFERENT_PARAMS = 3;
+    public static final int DEFAULT_DIVERSITY_MAX_STRATEGIES = 20;
     public static final int DEFAULT_OPTIMIZER_MODE = 2;
     public static final int DEFAULT_OPTIMIZER_CRITERION = 4;
     public static final int DEFAULT_OPTIMIZER_FORWARD_MODE = 1;
