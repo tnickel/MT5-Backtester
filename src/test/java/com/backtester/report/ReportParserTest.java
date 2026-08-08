@@ -122,6 +122,18 @@ public class ReportParserTest {
     }
 
     @Test
+    public void shortTradesWonMapsToShortPositionsNotTotalWon() throws IOException {
+        String html = "<table>"
+                + "<tr><td>Profit Trades:</td><td><b>241 (77.00%)</b></td></tr>"
+                + "<tr><td>Short Trades Won:</td><td><b>110 (70.00%)</b></td></tr>"
+                + "</table>";
+
+        BacktestResult res = parseHtml(html);
+        assertEquals(241, res.getProfitTrades());
+        assertEquals(110, res.getShortPositions());
+    }
+
+    @Test
     public void testParseLargestAvgWinLoss() throws IOException {
         String html = "<table>"
                 + "<tr><td>Largest profit trade:</td><td><b>150.00</b></td></tr>"

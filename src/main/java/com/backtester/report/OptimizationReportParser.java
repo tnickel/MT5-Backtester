@@ -91,10 +91,11 @@ public class OptimizationReportParser {
                     } else if ((header.contains("drawdown") || header.contains("rückgang")) && header.contains("%")) {
                         pass.setDrawdownPercent(parsePercentage(value));
                     } else if (header.contains("drawdown") || header.contains("rückgang")) {
-                        double ddVal = parsePercentage(value);
+                        // Absolute DD column — use locale-aware parseDouble, not parsePercentage
+                        double ddVal = parseDouble(value);
                         pass.setDrawdown(ddVal);
                         if (pass.getDrawdownPercent() == 0 && value.contains("%")) {
-                            pass.setDrawdownPercent(ddVal);
+                            pass.setDrawdownPercent(parsePercentage(value));
                         }
                     } else if (header.contains("input") || header.contains("parameter") || header.contains("eingabevariablen")) {
                         inputsVal = value;
@@ -139,6 +140,13 @@ public class OptimizationReportParser {
         DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
         // Ignore namespaces to simplify parsing
         factory.setNamespaceAware(false);
+        // Harden against XXE from crafted report files under the MT tree
+        factory.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
+        factory.setFeature("http://xml.org/sax/features/external-general-entities", false);
+        factory.setFeature("http://xml.org/sax/features/external-parameter-entities", false);
+        factory.setFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false);
+        factory.setXIncludeAware(false);
+        factory.setExpandEntityReferences(false);
         DocumentBuilder builder = factory.newDocumentBuilder();
         Document doc = builder.parse(xmlFile.toFile());
 
@@ -273,22 +281,28 @@ public class OptimizationReportParser {
     }
     
     private double parseDouble(String val) {
-        if (val == null || val.isEmpty()) return 0.0;
-        return Double.parseDouble(val.replace(" ", "")); // e.g. "1 000.50"
+        return parseLocaleNumber(val);
     }
 
     private static double parsePercentage(String value) {
         if (value == null || value.trim().isEmpty()) return 0.0;
-        java.util.regex.Matcher m = java.util.regex.Pattern.compile("([\\d.]+)\\s*%").matcher(value);
+        // Accept English "2.00%" and German "2,00%"
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile("([\\d.,]+)\\s*%").matcher(value);
         if (m.find()) {
-            try {
-                return Double.parseDouble(m.group(1));
-            } catch (NumberFormatException e) {
-                // ignore
-            }
+            return parseLocaleNumber(m.group(1));
+        }
+        return parseLocaleNumber(value);
+    }
+
+    private static double parseLocaleNumber(String val) {
+        if (val == null || val.isEmpty()) return 0.0;
+        String cleaned = val.replaceAll("[^\\d.,\\-]", "");
+        if (cleaned.contains(",") && cleaned.indexOf(',') > cleaned.lastIndexOf('.')) {
+            cleaned = cleaned.replace(".", "").replace(",", ".");
+        } else {
+            cleaned = cleaned.replace(",", "");
         }
         try {
-            String cleaned = value.replaceAll("[^\\d.]", "");
             return cleaned.isEmpty() ? 0.0 : Double.parseDouble(cleaned);
         } catch (NumberFormatException e) {
             return 0.0;

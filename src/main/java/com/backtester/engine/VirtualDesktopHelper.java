@@ -418,7 +418,8 @@ public class VirtualDesktopHelper {
         @Override
         public int waitFor() throws InterruptedException {
             handle.onExit().join();
-            return 0;
+            // ProcessHandle does not expose OS exit codes — report unknown, not fake success
+            return -1;
         }
 
         public boolean waitFor(long timeout, TimeUnit unit) throws InterruptedException {
@@ -435,7 +436,8 @@ public class VirtualDesktopHelper {
         @Override
         public int exitValue() {
             if (handle.isAlive()) throw new IllegalThreadStateException("Process is still running");
-            return 0;
+            // ProcessHandle does not expose OS exit codes — report unknown, not fake success
+            return -1;
         }
 
         @Override

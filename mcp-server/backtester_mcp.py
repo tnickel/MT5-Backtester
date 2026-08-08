@@ -158,7 +158,7 @@ def get_robust_strategies() -> str:
                 ROUND(AVG(CASE WHEN period = 'BT' THEN cv END), 2) as avg_cv_bt,
                 ROUND(AVG(CASE WHEN period = 'FW' THEN cv END), 2) as avg_cv_fw
             FROM SENSITIVITY_DETAIL
-            GROUP BY pass_number
+            GROUP BY pass_number, pass_name, expert_name, symbol
             ORDER BY avg_cv ASC
         """).fetchall()
         
@@ -251,6 +251,8 @@ def query_database(sql_query: str) -> str:
       Spalten: id, run_type, expert_name, timestamp, result_json, html_path
     - OPTIMIZATION_STATE: Aktueller Zustand der Optimierung (JSON-Blobs)
     - EA_SAVED_CONFIGS: Gespeicherte EA-Konfigurationen
+
+    Nicht verfügbar (Secrets): APP_SETTINGS (enthält API-Keys).
     
     Args:
         sql_query: SQL SELECT-Abfrage. Nur lesende Zugriffe erlaubt.
@@ -259,6 +261,19 @@ def query_database(sql_query: str) -> str:
     normalized = sql_query.strip().upper()
     if not normalized.startswith("SELECT"):
         return "Fehler: Nur SELECT-Abfragen sind erlaubt. Keine Schreibzugriffe möglich."
+
+    # Block secret tables / key names even for read-only SELECT
+    blocked_markers = (
+        "APP_SETTINGS",
+        "OPENROUTER_API_KEY",
+        "OPENROUTER API KEY",
+    )
+    for marker in blocked_markers:
+        if marker in normalized:
+            return (
+                "Fehler: Abfragen auf APP_SETTINGS / API-Keys sind aus Sicherheitsgründen "
+                "gesperrt. Secrets werden nicht über MCP exponiert."
+            )
     
     conn = get_db()
     try:

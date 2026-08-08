@@ -54,6 +54,30 @@ public class OptimizationReportParserTest {
         assertEquals("40", pass2.getParameterValues().get("takeProfit"));
     }
 
+    @Test
+    public void testParseHtmlOptimizationGermanDecimals() throws Exception {
+        String html = "<html><body>"
+                + "<table>"
+                + "  <tr class=header><td>Pass</td><td>Profit</td><td>Trades</td><td>Profit Factor</td><td>Expected Payoff</td><td>Drawdown $</td><td>Drawdown %</td><td>Inputs</td></tr>"
+                + "  <tr align=right><td>1</td><td>1.234,56</td><td>15</td><td>1,75</td><td>33,37</td><td>200,00</td><td>2,00%</td><td>lot=0.10;</td></tr>"
+                + "</table>"
+                + "</body></html>";
+
+        Path file = tempFolder.newFile("opt_report_de.htm").toPath();
+        Files.writeString(file, html);
+
+        OptimizationReportParser parser = new OptimizationReportParser();
+        OptimizationResult result = new OptimizationResult();
+        parser.parseHtml(file, result);
+
+        assertEquals(1, result.getPasses().size());
+        OptimizationResult.Pass pass = result.getPasses().get(0);
+        assertEquals(1234.56, pass.getProfit(), 0.001);
+        assertEquals(1.75, pass.getProfitFactor(), 0.001);
+        assertEquals(200.0, pass.getDrawdown(), 0.001);
+        assertEquals(2.0, pass.getDrawdownPercent(), 0.001);
+    }
+
     /**
      * The forward report replaces the "Result" column with "Forward Result" and
      * "Back Result". Both are MT5 metrics and must not end up in the parameter map,

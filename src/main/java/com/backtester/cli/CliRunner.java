@@ -141,9 +141,9 @@ public class CliRunner {
                         destSet = mtInstallDir.resolve("scraper_temp.set");
                         log.info("Copying SET parameter file: {} -> {}", srcSet, destSet);
                         Files.copy(srcSet, destSet, StandardCopyOption.REPLACE_EXISTING);
-                        
-                        // Copy to MQL5/Profiles/Tester as well (standard location for MT5 parameter files)
-                        Path profilesSet = mtInstallDir.resolve("MQL5").resolve("Profiles").resolve("Tester").resolve("scraper_temp.set");
+
+                        // Platform-aware presets dir: MT5 → MQL5/Profiles/Tester, MT4 → tester/
+                        Path profilesSet = appConfig.getTesterProfilesDir(run.expert_path).resolve("scraper_temp.set");
                         try {
                             Files.createDirectories(profilesSet.getParent());
                             Files.copy(srcSet, profilesSet, StandardCopyOption.REPLACE_EXISTING);

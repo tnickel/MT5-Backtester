@@ -195,32 +195,33 @@ public class BacktestRunner {
                     }
                 }
 
-                if (!finished) {
-                    if (!tailer.hasCriticalFailure()) {
-                        logMessage("WARNING: Backtest timed out after " + config.getBacktestTimeoutMinutes() + " minutes (freeze protection), terminating...");
-                        currentProcess.destroyForcibly();
-                    }
-                    return null;
-                }
-
                 if (cancelled) {
                     logMessage("Backtest was cancelled.");
                     return null;
                 }
 
-                int exitCode = currentProcess.exitValue();
-                long elapsedMs = System.currentTimeMillis() - startTime;
-                logMessage(platformName + " terminated with exit code: " + exitCode + " (after " + (elapsedMs / 1000) + "s)");
+                if (!finished) {
+                    if (!tailer.hasCriticalFailure()) {
+                        logMessage("WARNING: Backtest timed out after " + config.getBacktestTimeoutMinutes() + " minutes (freeze protection), terminating...");
+                        currentProcess.destroyForcibly();
+                    }
+                    // Salvage: report may already exist even after timeout/critical kill
+                    logMessage("Attempting to salvage report after incomplete " + platformName + " run...");
+                } else {
+                    int exitCode = currentProcess.exitValue();
+                    long elapsedMs = System.currentTimeMillis() - startTime;
+                    logMessage(platformName + " terminated with exit code: " + exitCode + " (after " + (elapsedMs / 1000) + "s)");
 
-                // If MT5 exited suspiciously fast (< 10 seconds), it may have delegated
-                // to an already-running instance. Wait for the actual MT5 process and report.
-                if (elapsedMs < 10_000) {
-                    logMessage("WARNING: " + platformName + " exited very quickly (" + (elapsedMs / 1000) + "s) - possible delegation to existing instance.");
-                    logMessage("Waiting for actual " + platformName + " process and report file...");
-                    boolean reportAppeared = waitForReportFile(mt5Dir, reportName, config.getBacktestTimeoutMinutes() * 60, platform, tailer);
-                    if (!reportAppeared && !cancelled) {
-                        logMessage("ERROR: " + platformName + " process delegation detected but no report was produced.");
-                        logMessage("TIP: Make sure no other " + platformName + " instance is running before starting a backtest.");
+                    // If MT5 exited suspiciously fast (< 10 seconds), it may have delegated
+                    // to an already-running instance. Wait for the actual MT5 process and report.
+                    if (elapsedMs < 10_000) {
+                        logMessage("WARNING: " + platformName + " exited very quickly (" + (elapsedMs / 1000) + "s) - possible delegation to existing instance.");
+                        logMessage("Waiting for actual " + platformName + " process and report file...");
+                        boolean reportAppeared = waitForReportFile(mt5Dir, reportName, config.getBacktestTimeoutMinutes() * 60, platform, tailer);
+                        if (!reportAppeared && !cancelled) {
+                            logMessage("ERROR: " + platformName + " process delegation detected but no report was produced.");
+                            logMessage("TIP: Make sure no other " + platformName + " instance is running before starting a backtest.");
+                        }
                     }
                 }
             } else {

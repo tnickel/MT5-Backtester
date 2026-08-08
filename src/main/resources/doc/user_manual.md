@@ -253,3 +253,22 @@ Ab Version 1.2.0 verfuegt der Backtester ueber einen intelligenten Prozessschutz
 - **Nur eigene Prozesse**: Es werden ausschliesslich MT5-Prozesse erkannt und beendet, die **von diesem Backtester** gestartet wurden. Fremde MT5-Instanzen (z.B. Ihr manuelles Trading-Terminal) bleiben unberuehrt.
 - **Benutzer-Dialog**: Wird ein alter Prozess gefunden, erscheint ein Dialogfenster mit der Frage, ob der alte Prozess beendet werden soll. Bei Bestaetigung wird er sauber beendet; bei Ablehnung wird der neue Lauf abgebrochen.
 - **Typisches Szenario**: Sie brechen einen Multi-Backtest ab und starten sofort einen neuen. Der alte MT5 hat sich noch nicht vollstaendig geschlossen. Der Process Guard erkennt dies und bietet Ihnen an, den alten Prozess sauber zu beenden, bevor der neue gestartet wird.
+
+---
+
+### 11. MetaTrader-Sektions-Header, Sicherheits-Härtung & Lokalisierung
+Ab Version 1.2.6 verfügt der Backtester über weitere wesentliche Systemerweiterungen:
+
+- **MetaTrader-Style Sektions-Header in Parameter-Tabellen**:
+  In allen Parameter-Dialogen und Tabellen (Workflow, Optimizer, Multi-Backtest, Single Backtest) werden Sektions-Überschriften im MetaTrader 5 Stil gerendert (dunkelblauer Hintergrund `#152238`, Ordner-Icon `📁`, Cyan-Text `#00e5ff` und ohne Checkboxen/Eingabefelder).
+- **Verlustfreier `.set`-Datei Import**:
+  Beim Laden von `.set`-Dateien werden geladene Parameter-Werte, Suchräume und Optimierungs-Checkboxen (`||Y`) absolut priorisiert und nicht mehr durch alte Tabellenwerte überschrieben.
+- **Entkopplung von OpenRouter API-Keys**:
+  API-Keys verbleiben strikt in der lokalen Datenbank (`APP_SETTINGS`) und werden nicht mehr in freigegebene Strategie-JSONs oder Datenbank-Exporte kopiert.
+- **Deutsches Zahlenformat in MT5-HTML-Reports**:
+  Tausendertrennpunkte und Kommas in deutschen MT5-Reports (z.B. `1.234,56` oder `2,00%`) werden vom Report-Parser automatisch erkannt und korrekt konvertiert.
+- **Prozess-Buffer Schutz gegen 64KB Deadlocks**:
+  Externe MT5-Prozesse werden asynchron im Hintergrund gepuffert und eingelesen, sodass selbst bei riesigen Optimierungs-Logs keine Prozess-Blockaden entstehen.
+- **MCP-Server Sicherheitsabschirmung**:
+  Die Datenbank-Schnittstelle des MCP-Servers sperrt selektiv Lese- und Schreibzugriffe auf vertrauliche Tabellen wie `APP_SETTINGS`, um Secret-Leaks zu unterbinden.
+

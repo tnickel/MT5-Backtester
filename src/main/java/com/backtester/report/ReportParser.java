@@ -82,7 +82,7 @@ public class ReportParser {
         LABEL_MAP.put("Gewonnene Trades", "wonTrades"); // value: "241 (77.00%)"
         LABEL_MAP.put("Profit Trades", "wonTrades");
         LABEL_MAP.put("Won trades", "wonTrades");
-        LABEL_MAP.put("Short Trades Won", "wonTrades");
+        LABEL_MAP.put("Short Trades Won", "shortPositions"); // short-side only, not total won
         LABEL_MAP.put("Profit trades (% of total)", "wonTrades"); // MT4 English
         LABEL_MAP.put("Gewonnene Trades (% von allen)", "wonTrades"); // MT4 German
 

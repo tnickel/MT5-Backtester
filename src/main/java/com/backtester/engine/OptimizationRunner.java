@@ -11,7 +11,9 @@ import com.backtester.report.OptimizationDateRangeResolver;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.BufferedReader;
 import java.io.IOException;
+import java.io.InputStreamReader;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -169,9 +171,26 @@ public class OptimizationRunner {
                 return result;
             }
 
+            // Asynchronous stream consumer (prevents 64KB buffer deadlock on piped IO)
+            String platformName = platform.getName();
+            Thread outputConsumer = new Thread(() -> {
+                try (BufferedReader reader = new BufferedReader(
+                        new InputStreamReader(currentProcess.getInputStream()))) {
+                    String line;
+                    while ((line = reader.readLine()) != null) {
+                        logMessage("[" + platformName + "] " + line);
+                    }
+                } catch (IOException e) {
+                    if (!cancelled) {
+                        log.error("Error reading " + platformName + " output", e);
+                    }
+                }
+            }, "MT-Opt-Output-Consumer");
+            outputConsumer.setDaemon(true);
+            outputConsumer.start();
+
             // Wait for completion
             Path reportFile = getOptimizationReportPath(mt5Dir, platform);
-            String platformName = platform.getName();
             if (optConfig.isShutdownTerminal()) {
                 boolean finished = false;
                 long lastProgressTime = System.currentTimeMillis();
@@ -527,20 +546,28 @@ public class OptimizationRunner {
         if (tailer != null && (System.currentTimeMillis() - tailer.getLastActivityTime()) < 30_000) {
             return true;
         }
-        return isMt5ProcessRunning();
+        return isMt5ProcessRunning(mt5Dir);
     }
 
-    private boolean isMt5ProcessRunning() {
+    /**
+     * True only if a terminal/terminal64 process is still alive for this install path.
+     * Avoids treating unrelated MetaTrader instances on the machine as "still running".
+     */
+    private boolean isMt5ProcessRunning(Path mt5Dir) {
+        if (mt5Dir == null) return false;
         try {
+            String prefix = mt5Dir.toAbsolutePath().normalize().toString().toLowerCase();
             return ProcessHandle.allProcesses()
                 .anyMatch(ph -> {
                     if (!ph.isAlive()) return false;
                     java.util.Optional<String> cmd = ph.info().command();
-                    if (cmd.isPresent()) {
-                        String name = cmd.get().toLowerCase();
-                        return name.contains("terminal64") || name.contains("terminal");
-                    }
-                    return false;
+                    if (cmd.isEmpty()) return false;
+                    String path = cmd.get().toLowerCase().replace('/', '\\');
+                    boolean isTerminal = path.endsWith("\\terminal64.exe")
+                            || path.endsWith("\\terminal.exe")
+                            || path.endsWith("terminal64.exe")
+                            || path.endsWith("terminal.exe");
+                    return isTerminal && path.startsWith(prefix);
                 });
         } catch (Exception e) {
             return false;

@@ -313,7 +313,8 @@ public class WorkflowEngine {
             sc.tradeDiffPct = this.tradeDiffPct;
             sc.minDifferentParams = this.minDifferentParams;
             sc.maxStrategiesToSelect = this.maxStrategiesToSelect;
-            sc.openRouterApiKey = this.openRouterApiKey;
+            // API key lives only in APP_SETTINGS — never duplicate into strategy JSON
+            sc.openRouterApiKey = null;
             sc.openRouterModel = this.openRouterModel;
             sc.openRouterPrompt = this.openRouterPrompt;
             sc.validationFromDate = this.validationFromDate != null ? this.validationFromDate.toString() : null;
@@ -377,7 +378,11 @@ public class WorkflowEngine {
             this.tradeDiffPct = sc.tradeDiffPct;
             this.minDifferentParams = sc.minDifferentParams;
             this.maxStrategiesToSelect = sc.maxStrategiesToSelect;
-            this.openRouterApiKey = sc.openRouterApiKey != null ? sc.openRouterApiKey : "";
+            // Prefer APP_SETTINGS; migrate legacy keys still stored in strategy JSON once
+            if (sc.openRouterApiKey != null && !sc.openRouterApiKey.isEmpty()) {
+                this.openRouterApiKey = sc.openRouterApiKey;
+                DatabaseManager.getInstance().saveSetting(LlmAnalysisService.SETTING_API_KEY, this.openRouterApiKey);
+            }
             this.openRouterModel = sc.openRouterModel != null ? sc.openRouterModel : LlmAnalysisService.DEFAULT_MODEL;
             this.openRouterPrompt = sc.openRouterPrompt != null ? sc.openRouterPrompt : LlmAnalysisService.DEFAULT_PROMPT;
             this.validationFromDate = sc.validationFromDate != null ? LocalDate.parse(sc.validationFromDate) : null;
@@ -1630,7 +1635,8 @@ public class WorkflowEngine {
                 // Set file (parameter merge shared with Step-7 validation)
                 java.nio.file.Path setFile = exportPath.resolve(baseFileName + ".set");
                 List<EaParameter> finalParams = buildFinalParams(cp);
-                eaParamManager.writeSetFile(setFile, finalParams, eaName);
+                // Pass full expert path (keep .ex4/.ex5) so writeSetFile picks MT4 vs MT5 format
+                eaParamManager.writeSetFile(setFile, finalParams, getExpert());
                 log.info("Exported preset file to {}", setFile);
 
                 // PDF file
