@@ -325,16 +325,19 @@ public class VirtualDesktopHelper {
                 : "$app = Start-Process -FilePath '" + escapedExe + "' -ArgumentList '" + escapedArgs + "' -PassThru; ") +
             "$spid = $app.Id; " +
             "Write-Host \"STARTED_PID:$spid\"; " +
-            "$hwnd = 0; " +
-            "for ($i = 0; $i -lt 40; $i++) { " +
-            "  Start-Sleep -Milliseconds 150; " +
+            "$hwnd = [IntPtr]::Zero; " +
+            "for ($i = 0; $i -lt 50; $i++) { " +
+            "  Start-Sleep -Milliseconds 200; " +
             "  $p = Get-Process -Id $spid -ErrorAction SilentlyContinue; " +
             "  if ($p) { " +
             "    $p.Refresh(); " +
-            "    if ($p.MainWindowHandle -ne 0) { $hwnd = $p.MainWindowHandle; break; } " +
+            "    if ($p.MainWindowHandle -ne [IntPtr]::Zero -and $p.MainWindowHandle -ne 0) { " +
+            "      $hwnd = $p.MainWindowHandle; " +
+            "      break; " +
+            "    } " +
             "  } " +
             "} " +
-            "if ($hwnd -ne 0) { " +
+            "if ($hwnd -ne [IntPtr]::Zero -and $hwnd -ne 0) { " +
             "  try { " +
             "    Move-Window -Desktop $targetDesktop -Hwnd $hwnd; " +
             "    Write-Host \"VD_STATUS: Successfully moved MT5 window ($hwnd) to Desktop " + targetNum + "\"; " +

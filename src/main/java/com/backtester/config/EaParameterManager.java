@@ -166,18 +166,7 @@ public class EaParameterManager {
                     cp.setDefaultValue(dp.getValue());
                     merged.add(cp);
                 } else {
-                    EaParameter cpMissing = new EaParameter();
-                    cpMissing.setName(dp.getName());
-                    cpMissing.setValue(dp.getValue());
-                    cpMissing.setDefaultValue(dp.getValue());
-                    cpMissing.setSection(dp.getSection());
-                    cpMissing.setOptimizeStart(dp.getOptimizeStart());
-                    cpMissing.setOptimizeStep(dp.getOptimizeStep());
-                    cpMissing.setOptimizeEnd(dp.getOptimizeEnd());
-                    cpMissing.setOptimizeEnabled(dp.isOptimizeEnabled());
-                    cpMissing.setStringType(dp.isStringType());
-                    cpMissing.setRawLine(dp.getRawLine());
-                    merged.add(cpMissing);
+                    merged.add(dp.copy());
                 }
             }
             // Append any custom parameters that were not in defaults
@@ -191,74 +180,140 @@ public class EaParameterManager {
             // Return a copy of defaults (so editing doesn't affect the default source)
             List<EaParameter> copy = new ArrayList<>();
             for (EaParameter dp : defaults) {
-                EaParameter cp = new EaParameter();
-                cp.setName(dp.getName());
-                cp.setValue(dp.getValue());
-                cp.setDefaultValue(dp.getValue());
-                cp.setSection(dp.getSection());
-                cp.setOptimizeStart(dp.getOptimizeStart());
-                cp.setOptimizeStep(dp.getOptimizeStep());
-                cp.setOptimizeEnd(dp.getOptimizeEnd());
-                cp.setOptimizeEnabled(dp.isOptimizeEnabled());
-                cp.setStringType(dp.isStringType());
-                cp.setRawLine(dp.getRawLine());
-                copy.add(cp);
+                copy.add(dp.copy());
             }
             result = copy;
         }
 
         if (result != null) {
             applyTranslations(expertPath, result);
+            result = ensureSectionHeaders(result);
         }
         return result;
     }
 
     /**
-     * Merges parameters loaded from a .set file with existing parameters already shown in the UI.
-     * Parameters from the loaded file update existing ones (by name), but existing parameters
-     * not present in the loaded file are preserved with their current values.
-     * This prevents new parameters from disappearing when an older .set file is loaded.
-     *
-     * @param loadedParams   parameters parsed from the loaded .set file
-     * @param existingParams parameters currently shown in the UI table
-     * @return merged list: loaded values applied on top of existing, with missing ones preserved
+     * Ensures that a list of parameters contains section header rows (isSectionHeader() == true)
+     * at section transitions if the parameters have section names defined.
      */
-    public List<EaParameter> mergeLoadedWithExisting(List<EaParameter> loadedParams, List<EaParameter> existingParams) {
-        if (loadedParams == null || loadedParams.isEmpty()) return existingParams;
-        if (existingParams == null || existingParams.isEmpty()) return loadedParams;
+    public List<EaParameter> ensureSectionHeaders(List<EaParameter> params) {
+        if (params == null || params.isEmpty()) return params;
 
-        Map<String, EaParameter> loadedMap = new LinkedHashMap<>();
-        for (EaParameter lp : loadedParams) {
-            loadedMap.put(lp.getName(), lp);
+        // Check if list already has explicit section headers
+        boolean hasHeaders = params.stream().anyMatch(EaParameter::isSectionHeader);
+        log.info("=== [SECTION-HEADER-LOG] ensureSectionHeaders: input size={}, hasHeaders={} ===", params.size(), hasHeaders);
+        if (hasHeaders) {
+            return params;
+        }
+
+        List<EaParameter> result = new ArrayList<>();
+        String lastSection = null;
+
+        for (EaParameter p : params) {
+            String sec = p.getSection();
+            if (sec != null && !sec.trim().isEmpty() && !sec.equalsIgnoreCase(lastSection)) {
+                lastSection = sec.trim();
+                EaParameter header = new EaParameter();
+                header.setSectionHeader(true);
+                header.setName("---- " + lastSection + " ----");
+                header.setDisplayName("---- " + lastSection + " ----");
+                header.setValue("");
+                header.setSection(lastSection);
+                result.add(header);
+            }
+            result.add(p);
+        }
+        return result;
+    }
+
+    /**
+     * Merges primary parameters (containing active values and optimization settings) with secondary parameters
+     * (providing fallback defaults and section structure).
+     *
+     * @param primaryParams   the primary parameter list (e.g. loaded .set file or active DB values)
+     * @param secondaryParams the secondary parameter list (e.g. existing table items or disk defaults template)
+     * @return merged list with primary values overlaid on top of secondary/primary section structure
+     */
+    public List<EaParameter> mergeLoadedWithExisting(List<EaParameter> primaryParams, List<EaParameter> secondaryParams) {
+        if (primaryParams == null || primaryParams.isEmpty()) return ensureSectionHeaders(secondaryParams);
+        if (secondaryParams == null || secondaryParams.isEmpty()) return ensureSectionHeaders(primaryParams);
+
+        boolean primaryHasHeaders = primaryParams.stream().anyMatch(EaParameter::isSectionHeader);
+        boolean secondaryHasHeaders = secondaryParams.stream().anyMatch(EaParameter::isSectionHeader);
+
+        Map<String, EaParameter> primaryMap = new LinkedHashMap<>();
+        for (EaParameter pp : primaryParams) {
+            if (pp.getName() != null) {
+                primaryMap.put(pp.getName(), pp);
+            }
+        }
+
+        Map<String, EaParameter> secondaryMap = new LinkedHashMap<>();
+        for (EaParameter sp : secondaryParams) {
+            if (sp.getName() != null) {
+                secondaryMap.put(sp.getName(), sp);
+            }
         }
 
         List<EaParameter> merged = new ArrayList<>();
-        Set<String> seen = new LinkedHashSet<>();
+        Set<String> processedNames = new HashSet<>();
 
-        // Walk through existing params in order; update values from loaded file if available
-        for (EaParameter ep : existingParams) {
-            EaParameter lp = loadedMap.get(ep.getName());
-            if (lp != null) {
-                // Update existing param with loaded values
-                ep.setValue(lp.getValue());
-                if (lp.getOptimizeStart() != null) ep.setOptimizeStart(lp.getOptimizeStart());
-                if (lp.getOptimizeStep() != null) ep.setOptimizeStep(lp.getOptimizeStep());
-                if (lp.getOptimizeEnd() != null) ep.setOptimizeEnd(lp.getOptimizeEnd());
-                ep.setOptimizeEnabled(lp.isOptimizeEnabled());
+        // Determine template list order: primary if it has headers, otherwise secondary
+        List<EaParameter> templateList = primaryHasHeaders || !secondaryHasHeaders ? primaryParams : secondaryParams;
+
+        for (EaParameter item : templateList) {
+            if (item.isSectionHeader()) {
+                merged.add(item.copy());
+                continue;
             }
-            // Always keep the existing parameter
-            merged.add(ep);
-            seen.add(ep.getName());
+
+            String name = item.getName();
+            if (name == null || processedNames.contains(name)) {
+                continue;
+            }
+
+            EaParameter primary = primaryMap.get(name);
+            EaParameter secondary = secondaryMap.get(name);
+
+            if (primary != null) {
+                EaParameter copy = primary.copy();
+                if (secondary != null) {
+                    if ((copy.getDisplayName() == null || copy.getDisplayName().isEmpty()) && secondary.getDisplayName() != null) {
+                        copy.setDisplayName(secondary.getDisplayName());
+                    }
+                    if ((copy.getSection() == null || copy.getSection().isEmpty()) && secondary.getSection() != null) {
+                        copy.setSection(secondary.getSection());
+                    }
+                    if (copy.getDefaultValue() == null || copy.getDefaultValue().isEmpty()) {
+                        copy.setDefaultValue(secondary.getDefaultValue() != null ? secondary.getDefaultValue() : secondary.getValue());
+                    }
+                }
+                merged.add(copy);
+                processedNames.add(name);
+            } else if (secondary != null) {
+                EaParameter copy = secondary.copy();
+                merged.add(copy);
+                processedNames.add(name);
+            }
         }
 
-        // Append any parameters from the loaded file that were NOT in the existing list
-        for (EaParameter lp : loadedParams) {
-            if (!seen.contains(lp.getName())) {
-                merged.add(lp);
+        // Append any remaining primary parameters not in templateList
+        for (EaParameter pp : primaryParams) {
+            if (!pp.isSectionHeader() && pp.getName() != null && !processedNames.contains(pp.getName())) {
+                merged.add(pp.copy());
+                processedNames.add(pp.getName());
             }
         }
 
-        return merged;
+        // Append any remaining secondary parameters not in templateList
+        for (EaParameter sp : secondaryParams) {
+            if (!sp.isSectionHeader() && sp.getName() != null && !processedNames.contains(sp.getName())) {
+                merged.add(sp.copy());
+                processedNames.add(sp.getName());
+            }
+        }
+
+        return ensureSectionHeaders(merged);
     }
 
     /**
@@ -613,12 +668,32 @@ public class EaParameterManager {
                 // Comment / section header
                 if (line.startsWith(";")) {
                     String comment = line.substring(1).trim();
-                    // Check if it's a section header like "; === Section Name ==="
-                    if (comment.startsWith("===") || comment.startsWith("---")) {
-                        currentSection = comment
+                    if (comment.startsWith("===") || comment.startsWith("---") || comment.startsWith("***") || comment.startsWith("###")
+                            || comment.contains("===") || comment.contains("---")) {
+                        String sectionTitle = comment
                                 .replace("===", "")
                                 .replace("---", "")
+                                .replace("***", "")
+                                .replace("###", "")
                                 .trim();
+                        if (sectionTitle.startsWith("-") && sectionTitle.endsWith("-")) {
+                            sectionTitle = sectionTitle.substring(1, sectionTitle.length() - 1).trim();
+                        }
+                        if (!sectionTitle.isEmpty()) {
+                            currentSection = sectionTitle;
+                            boolean duplicate = !params.isEmpty() && params.get(params.size() - 1).isSectionHeader()
+                                    && sectionTitle.equalsIgnoreCase(params.get(params.size() - 1).getSection());
+                            if (!duplicate) {
+                                EaParameter sectionParam = new EaParameter();
+                                sectionParam.setSectionHeader(true);
+                                sectionParam.setName("---- " + sectionTitle + " ----");
+                                sectionParam.setDisplayName("---- " + sectionTitle + " ----");
+                                sectionParam.setValue("");
+                                sectionParam.setSection(sectionTitle);
+                                sectionParam.setRawLine(line);
+                                params.add(sectionParam);
+                            }
+                        }
                     }
                     continue;
                 }
@@ -758,11 +833,29 @@ public class EaParameterManager {
                 boolean isMt4 = appConfig.isMt4(expertPathOrEaName);
                 String lastSection = "";
                 for (EaParameter param : params) {
+                    if (param.isSectionHeader()) {
+                        String sec = param.getSection();
+                        if (sec == null || sec.isEmpty()) {
+                            sec = param.getName();
+                        }
+                        sec = sec.replaceAll("^[-=*#;\\s]+", "").replaceAll("[-=*#;\\s]+$", "").trim();
+                        lastSection = sec;
+                        if (param.getRawLine() != null && param.getRawLine().startsWith(";")) {
+                            writer.write(param.getRawLine() + "\r\n");
+                        } else if (param.getName() != null && !param.getName().startsWith("----")) {
+                            // String parameter acting as header (e.g. Inp_Header_1)
+                            writer.write(param.toSetFileLine() + "\r\n");
+                        } else {
+                            writer.write("; === - " + sec + " - ===\r\n");
+                        }
+                        continue;
+                    }
+
                     // Write section header if changed
                     if (param.getSection() != null && !param.getSection().isEmpty() 
-                            && !param.getSection().equals(lastSection)) {
+                            && !param.getSection().equalsIgnoreCase(lastSection)) {
                         lastSection = param.getSection();
-                        writer.write("; === " + lastSection + " ===\r\n");
+                        writer.write("; === - " + lastSection + " - ===\r\n");
                     }
 
                     if (isMt4) {

@@ -85,4 +85,20 @@ public class EaParameterTest {
         param.setOptimizeEnabled(false);
         assertFalse(param.isOptimizeEnabled());
     }
+
+    @Test
+    public void testSectionHeaderDetectionAndFormatting() {
+        EaParameter sectionParam = new EaParameter();
+        sectionParam.setSectionHeader(true);
+        sectionParam.setSection("MONEY MANAGE");
+        assertTrue(sectionParam.isSectionHeader());
+        assertEquals("📁  ---- MONEY MANAGE ----", sectionParam.getFormattedSectionTitle());
+
+        EaParameter stringHeader = new EaParameter("Inp_Header_1", "--- GRID MODE ----");
+        assertTrue(stringHeader.isSectionHeader());
+        assertEquals("📁  ---- GRID MODE ----", stringHeader.getFormattedSectionTitle());
+
+        EaParameter regularParam = new EaParameter("Inp_Initial_Lot", "0.01");
+        assertFalse(regularParam.isSectionHeader());
+    }
 }

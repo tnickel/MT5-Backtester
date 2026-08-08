@@ -118,10 +118,12 @@ public class EaParameterManagerTest {
         // Read file
         List<EaParameter> readParams = manager.readSetFile(setFile);
 
-        assertEquals(2, readParams.size());
+        assertEquals(3, readParams.size());
+        assertTrue(readParams.get(0).isSectionHeader());
+        assertEquals("Trading Rules", readParams.get(0).getSection());
 
-        EaParameter r1 = readParams.get(0);
-        assertEquals("TakeProfit", r1.getName());
+        EaParameter r1 = readParams.stream().filter(p -> "TakeProfit".equals(p.getName())).findFirst().orElse(null);
+        assertNotNull(r1);
         assertEquals("50", r1.getValue());
         assertEquals("Trading Rules", r1.getSection());
         assertTrue(r1.isOptimizeEnabled());
@@ -130,8 +132,8 @@ public class EaParameterManagerTest {
         assertEquals("100", r1.getOptimizeEnd());
         assertFalse(r1.isStringType());
 
-        EaParameter r2 = readParams.get(1);
-        assertEquals("StrategyName", r2.getName());
+        EaParameter r2 = readParams.stream().filter(p -> "StrategyName".equals(p.getName())).findFirst().orElse(null);
+        assertNotNull(r2);
         assertEquals("SuperTrend", r2.getValue());
         assertTrue(r2.isStringType());
     }
@@ -176,10 +178,10 @@ public class EaParameterManagerTest {
 
         // Read file back and check parsed optimization ranges
         List<EaParameter> readParams = manager.readSetFile(setFile);
-        assertEquals(2, readParams.size());
+        assertEquals(3, readParams.size());
 
-        EaParameter r1 = readParams.get(0);
-        assertEquals("TakeProfit", r1.getName());
+        EaParameter r1 = readParams.stream().filter(p -> "TakeProfit".equals(p.getName())).findFirst().orElse(null);
+        assertNotNull(r1);
         assertEquals("50", r1.getValue());
         assertTrue(r1.isOptimizeEnabled());
         assertEquals("10", r1.getOptimizeStart());
@@ -187,8 +189,8 @@ public class EaParameterManagerTest {
         assertEquals("100", r1.getOptimizeEnd());
         assertFalse(r1.isStringType());
 
-        EaParameter r2 = readParams.get(1);
-        assertEquals("StrategyName", r2.getName());
+        EaParameter r2 = readParams.stream().filter(p -> "StrategyName".equals(p.getName())).findFirst().orElse(null);
+        assertNotNull(r2);
         assertEquals("SuperTrend", r2.getValue());
         assertTrue(r2.isStringType());
     }

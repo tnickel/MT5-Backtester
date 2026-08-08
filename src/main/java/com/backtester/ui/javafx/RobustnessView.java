@@ -358,6 +358,7 @@ public class RobustnessView {
         });
 
         paramTable.getColumns().addAll(optCol, nameCol, valCol, startCol, stepCol, stopCol);
+        EaParameterTableHelper.configureTable(paramTable, optCol, nameCol, valCol, startCol, stepCol, stopCol, this::saveParametersOnDemand);
 
         Label placeholder = new Label("No parameters loaded.\nLoad an Expert Advisor or a .set file.");
         placeholder.setStyle("-fx-text-fill: #7e889a;");

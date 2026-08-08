@@ -33,9 +33,12 @@ public class EnumAwareParamCell extends TableCell<EaParameter, String> {
 
     @Override
     public void startEdit() {
+        EaParameter param = getTableRow() != null ? getTableRow().getItem() : null;
+        if (param != null && param.isSectionHeader()) {
+            return;
+        }
         if (!isEmpty()) {
             super.startEdit();
-            EaParameter param = getTableRow() != null ? getTableRow().getItem() : null;
             String lowerName = param != null && param.getName() != null ? param.getName().toLowerCase() : "";
             
             String currentValue = getItem() != null ? getItem().toLowerCase().trim() : "";
@@ -122,9 +125,11 @@ public class EnumAwareParamCell extends TableCell<EaParameter, String> {
     @Override
     public void updateItem(String item, boolean empty) {
         super.updateItem(item, empty);
-        if (empty || item == null) {
+        EaParameter param = getTableRow() != null ? getTableRow().getItem() : null;
+        if (empty || item == null || (param != null && param.isSectionHeader())) {
             setText(null);
             setGraphic(null);
+            setStyle("");
         } else {
             if (isEditing()) {
                 if (comboBox != null) {

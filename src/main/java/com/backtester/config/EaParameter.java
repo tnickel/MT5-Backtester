@@ -28,12 +28,83 @@ public class EaParameter {
     /** The raw original line from the .set file (for preserving formatting) */
     private String rawLine = "";
 
+    /** True if this parameter is a section header line (or comment divider) */
+    private boolean sectionHeader = false;
+
     public EaParameter() {}
 
     public EaParameter(String name, String value) {
         this.name = name;
         this.value = value;
         this.defaultValue = value;
+    }
+
+    public EaParameter copy() {
+        EaParameter p = new EaParameter();
+        p.setName(this.name);
+        p.setValue(this.value);
+        p.setDefaultValue(this.defaultValue != null ? this.defaultValue : this.value);
+        p.setSection(this.section);
+        p.setDisplayName(this.displayName);
+        p.setOptimizeStart(this.optimizeStart);
+        p.setOptimizeStep(this.optimizeStep);
+        p.setOptimizeEnd(this.optimizeEnd);
+        p.setOptimizeEnabled(this.optimizeEnabled);
+        p.setStringType(this.stringType);
+        p.setRawLine(this.rawLine);
+        p.setSectionHeader(this.sectionHeader);
+        return p;
+    }
+
+    /**
+     * Returns true if this parameter acts as a section header / category divider.
+     */
+    public boolean isSectionHeader() {
+        if (sectionHeader) return true;
+        if (name != null) {
+            String n = name.trim();
+            if (n.startsWith("---") || n.startsWith("===") || n.startsWith("###") || n.startsWith("----")) return true;
+        }
+        if (value != null) {
+            String v = value.trim();
+            if ((v.startsWith("---") && v.endsWith("---")) ||
+                (v.startsWith("===") && v.endsWith("===")) ||
+                (v.startsWith("###") && v.endsWith("###")) ||
+                (v.startsWith("#######") && v.endsWith("#######")) ||
+                (v.startsWith("----") && v.endsWith("----")) ||
+                v.contains("--- MONEY") || v.contains("--- GRID") || v.contains("--- INDICATOR") || v.contains("--- TREND")) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    public void setSectionHeader(boolean sectionHeader) {
+        this.sectionHeader = sectionHeader;
+    }
+
+    /**
+     * Formats section title cleanly with folder icon and dashes like MetaTrader.
+     * e.g. "📁 ---- MONEY MANAGE ----"
+     */
+    public String getFormattedSectionTitle() {
+        String text = "";
+        if (displayName != null && !displayName.trim().isEmpty() && !displayName.startsWith("Inp_Header")) {
+            text = displayName;
+        } else if (value != null && !value.trim().isEmpty()) {
+            text = value;
+        } else if (name != null) {
+            text = name;
+        }
+
+        String cleaned = text.replaceAll("^[-=*#;\\s]+", "").replaceAll("[-=*#;\\s]+$", "").trim();
+        if (cleaned.isEmpty() && section != null) {
+            cleaned = section.replaceAll("^[-=*#;\\s]+", "").replaceAll("[-=*#;\\s]+$", "").trim();
+        }
+        if (cleaned.isEmpty()) {
+            cleaned = "SECTION";
+        }
+        return "📁  ---- " + cleaned.toUpperCase() + " ----";
     }
 
     // --- Getters & Setters ---

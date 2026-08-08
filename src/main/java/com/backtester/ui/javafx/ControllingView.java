@@ -567,6 +567,7 @@ public class ControllingView {
         paramValCol.setPrefWidth(200);
 
         paramTable.getColumns().addAll(paramNameCol, paramValCol);
+        EaParameterTableHelper.configureTable(paramTable, null, paramNameCol, paramValCol, null, null, null);
 
         // Action Section
         HBox actionBox = new HBox(15);

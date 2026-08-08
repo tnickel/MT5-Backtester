@@ -637,6 +637,7 @@ public class WorkflowView {
         stopCol.setPrefWidth(120);
 
         parametersTable.getColumns().addAll(optCol, nameCol, valCol, startCol, stepCol, stopCol);
+        EaParameterTableHelper.configureTable(parametersTable, optCol, nameCol, valCol, startCol, stepCol, stopCol);
         parametersTab.setContent(parametersTable);
 
         resultsTable = new TableView<>();

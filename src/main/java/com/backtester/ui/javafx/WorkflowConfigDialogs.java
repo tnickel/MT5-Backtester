@@ -33,11 +33,15 @@ import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 /**
  * Modals and settings dialogs for the 7 visual workflow pipeline steps.
  */
 public class WorkflowConfigDialogs {
 
+    private static final Logger log = LoggerFactory.getLogger(WorkflowConfigDialogs.class);
     private static final EaParameterManager eaParamManager = new EaParameterManager();
 
     private static void applyTheme(Stage stage, Window owner) {
@@ -275,6 +279,7 @@ public class WorkflowConfigDialogs {
     }
 
     public static void showStep1Dialog(WorkflowEngine engine, Window owner, Runnable onSave) {
+        log.info("=== [SECTION-HEADER-LOG] Opening showStep1Dialog for expert: {} ===", engine.getExpert());
         Stage stage = new Stage();
         stage.setTitle("Schritt 1: Strategie-Auswahl & Suchräume");
 
@@ -464,6 +469,7 @@ public class WorkflowConfigDialogs {
         stopCol.setOnEditCommit(e -> e.getRowValue().setOptimizeEnd(e.getNewValue()));
 
         paramTable.getColumns().addAll(optCol, nameCol, valCol, startCol, stepCol, stopCol);
+        EaParameterTableHelper.configureTable(paramTable, optCol, nameCol, valCol, startCol, stepCol, stopCol);
 
         final String[] lastCheckedExpert = { engine.getExpert() != null ? engine.getExpert().trim() : "" };
         final String[] lastCheckedSymbol = { engine.getSymbol() != null ? engine.getSymbol().trim() : "" };
@@ -521,23 +527,14 @@ public class WorkflowConfigDialogs {
                             }
 
                             List<EaParameter> diskParams = eaParamManager.getEffectiveParameters(expert);
-                            List<EaParameter> mergedEngineParams = eaParamManager.mergeLoadedWithExisting(diskParams, engine.getEaParameters());
+                            List<EaParameter> mergedEngineParams = eaParamManager.mergeLoadedWithExisting(engine.getEaParameters(), diskParams);
 
                             List<EaParameter> tableCopy = new ArrayList<>();
                             for (EaParameter p : mergedEngineParams) {
-                                EaParameter copy = new EaParameter();
-                                copy.setName(p.getName());
-                                copy.setDisplayName(p.getDisplayName());
-                                copy.setValue(p.getValue());
-                                copy.setDefaultValue(p.getDefaultValue() != null ? p.getDefaultValue() : p.getValue());
-                                copy.setSection(p.getSection());
-                                copy.setOptimizeStart(p.getOptimizeStart());
-                                copy.setOptimizeStep(p.getOptimizeStep());
-                                copy.setOptimizeEnd(p.getOptimizeEnd());
-                                copy.setOptimizeEnabled(p.isOptimizeEnabled());
-                                copy.setStringType(p.isStringType());
-                                tableCopy.add(copy);
+                                tableCopy.add(p.copy());
                             }
+                            tableCopy = eaParamManager.ensureSectionHeaders(tableCopy);
+                            log.info("=== [SECTION-HEADER-LOG] Setting {} params into paramTable (strategy config loaded) ===", tableCopy.size());
                             paramTable.getItems().setAll(tableCopy);
                             return;
                         }
@@ -568,7 +565,7 @@ public class WorkflowConfigDialogs {
                     params = new com.google.gson.Gson().fromJson(dbParamsJson, listType);
                     if (params != null && !params.isEmpty()) {
                         List<EaParameter> diskParams = eaParamManager.getEffectiveParameters(expert);
-                        params = eaParamManager.mergeLoadedWithExisting(diskParams, params);
+                        params = eaParamManager.mergeLoadedWithExisting(params, diskParams);
                         eaParamManager.applyTranslations(expert, params);
                     }
                 } catch (Exception ignored) {}
@@ -581,19 +578,11 @@ public class WorkflowConfigDialogs {
             if (params != null) {
                 List<EaParameter> tableCopy = new ArrayList<>();
                 for (EaParameter p : params) {
-                    EaParameter copy = new EaParameter();
-                    copy.setName(p.getName());
-                    copy.setDisplayName(p.getDisplayName());
-                    copy.setValue(p.getValue());
-                    copy.setDefaultValue(p.getDefaultValue() != null ? p.getDefaultValue() : p.getValue());
-                    copy.setSection(p.getSection());
-                    copy.setOptimizeStart(p.getOptimizeStart());
-                    copy.setOptimizeStep(p.getOptimizeStep());
-                    copy.setOptimizeEnd(p.getOptimizeEnd());
-                    copy.setOptimizeEnabled(p.isOptimizeEnabled());
-                    copy.setStringType(p.isStringType());
-                    tableCopy.add(copy);
+                    tableCopy.add(p.copy());
                 }
+                tableCopy = eaParamManager.ensureSectionHeaders(tableCopy);
+                log.info("=== [SECTION-HEADER-LOG] Setting {} params into paramTable (headers count={}) ===",
+                        tableCopy.size(), tableCopy.stream().filter(EaParameter::isSectionHeader).count());
                 paramTable.getItems().setAll(tableCopy);
             } else {
                 paramTable.getItems().clear();
@@ -754,6 +743,7 @@ public class WorkflowConfigDialogs {
                         copy.setOptimizeEnd(p.getOptimizeEnd());
                         copy.setOptimizeEnabled(p.isOptimizeEnabled());
                         copy.setStringType(p.isStringType());
+                        copy.setSectionHeader(p.isSectionHeader());
                         tableCopy.add(copy);
                     }
                     paramTable.getItems().setAll(tableCopy);
@@ -786,6 +776,7 @@ public class WorkflowConfigDialogs {
                 copy.setOptimizeEnd(p.getOptimizeEnd());
                 copy.setOptimizeEnabled(p.isOptimizeEnabled());
                 copy.setStringType(p.isStringType());
+                copy.setSectionHeader(p.isSectionHeader());
                 currentParams.add(copy);
             }
 
@@ -838,6 +829,7 @@ public class WorkflowConfigDialogs {
                     copy.setOptimizeEnd(p.getOptimizeEnd());
                     copy.setOptimizeEnabled(p.isOptimizeEnabled());
                     copy.setStringType(p.isStringType());
+                    copy.setSectionHeader(p.isSectionHeader());
                     currentParams.add(copy);
                 }
 
@@ -893,6 +885,7 @@ public class WorkflowConfigDialogs {
                     copy.setOptimizeEnd(p.getOptimizeEnd());
                     copy.setOptimizeEnabled(p.isOptimizeEnabled());
                     copy.setStringType(p.isStringType());
+                    copy.setSectionHeader(p.isSectionHeader());
                     currentParams.add(copy);
                 }
                 sel.setEaParameters(currentParams);
@@ -999,21 +992,16 @@ public class WorkflowConfigDialogs {
         periodCombo.valueProperty().addListener((obs, oldVal, newVal) -> updateParamsTable.run());
 
         if (engine.getEaParameters() != null && !engine.getEaParameters().isEmpty()) {
+            String expert = engine.getExpert() != null ? engine.getExpert().trim() : "";
+            List<EaParameter> diskParams = eaParamManager.getEffectiveParameters(expert);
+            List<EaParameter> mergedEngineParams = eaParamManager.mergeLoadedWithExisting(engine.getEaParameters(), diskParams);
+
             List<EaParameter> currentParams = new ArrayList<>();
-            for (EaParameter p : engine.getEaParameters()) {
-                EaParameter copy = new EaParameter();
-                copy.setName(p.getName());
-                copy.setDisplayName(p.getDisplayName());
-                copy.setValue(p.getValue());
-                copy.setDefaultValue(p.getDefaultValue() != null ? p.getDefaultValue() : p.getValue());
-                copy.setSection(p.getSection());
-                copy.setOptimizeStart(p.getOptimizeStart());
-                copy.setOptimizeStep(p.getOptimizeStep());
-                copy.setOptimizeEnd(p.getOptimizeEnd());
-                copy.setOptimizeEnabled(p.isOptimizeEnabled());
-                copy.setStringType(p.isStringType());
-                currentParams.add(copy);
+            for (EaParameter p : mergedEngineParams) {
+                currentParams.add(p.copy());
             }
+            currentParams = eaParamManager.ensureSectionHeaders(currentParams);
+            log.info("=== [SECTION-HEADER-LOG] Initial dialog load: setting {} params into paramTable ===", currentParams.size());
             paramTable.getItems().setAll(currentParams);
         } else {
             updateParamsTable.run();
@@ -1219,6 +1207,7 @@ public class WorkflowConfigDialogs {
                     copy.setOptimizeEnd(p.getOptimizeEnd());
                     copy.setOptimizeEnabled(p.isOptimizeEnabled());
                     copy.setStringType(p.isStringType());
+                    copy.setSectionHeader(p.isSectionHeader());
                     tableCopy.add(copy);
                 }
                 paramTable.getItems().setAll(tableCopy);
@@ -2080,6 +2069,7 @@ public class WorkflowConfigDialogs {
         stopCol.setPrefWidth(90);
 
         paramTable.getColumns().addAll(optCol, nameCol, valCol, startCol, stepCol, stopCol);
+        EaParameterTableHelper.configureTable(paramTable, optCol, nameCol, valCol, startCol, stepCol, stopCol);
         if (engine.getEaParameters() != null) {
             paramTable.getItems().setAll(engine.getEaParameters());
         }

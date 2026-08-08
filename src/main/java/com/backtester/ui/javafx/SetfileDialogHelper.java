@@ -196,6 +196,7 @@ public class SetfileDialogHelper {
         optRangeCol.setStyle("-fx-text-fill: #94a3b8; -fx-font-family: 'Consolas';");
 
         table.getColumns().addAll(sectionCol, nameCol, valueCol, optRangeCol);
+        EaParameterTableHelper.configureTable(table, null, nameCol, valueCol, null, null, null);
 
         FilteredList<EaParameter> filteredParams = new FilteredList<>(FXCollections.observableArrayList(allParams), p -> true);
         filterField.textProperty().addListener((obs, oldVal, newVal) -> {
