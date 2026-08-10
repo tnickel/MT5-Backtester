@@ -4,6 +4,7 @@ import com.backtester.workflow.WorkflowTask;
 import org.junit.Test;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
 public class WorkflowConfigDialogsTest {
@@ -43,6 +44,11 @@ public class WorkflowConfigDialogsTest {
         assertEquals(0.31, task.getDiversityTradeDiffPct(), 0.0);
         assertEquals(4, task.getDiversityMinDifferentParams());
         assertEquals(17, task.getDiversityMaxStrategies());
+
+        WorkflowConfigDialogs.applyDiversityTaskSettings(
+                task, "Score-Cluster", "Quelle", "Ziel",
+                "10", "5", "3", "20", true);
+        assertTrue(task.isDiversityRankByScore());
     }
 
     private static void assertInvalidDecimal(String value) {

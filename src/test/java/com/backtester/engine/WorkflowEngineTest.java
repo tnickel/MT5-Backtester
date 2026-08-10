@@ -7,6 +7,7 @@ import com.backtester.report.OptimizationResult;
 import com.backtester.report.OptimizationResult.CombinedPass;
 import com.backtester.report.OptimizationResult.Pass;
 import com.backtester.report.SensitivityResult;
+import com.backtester.workflow.WorkflowTask;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
@@ -823,6 +824,48 @@ public class WorkflowEngineTest {
         SensitivityResult retained = engine.getSensitivityResults().get(0);
         assertEquals(222L, retained.getRunTimestamp());
         assertEquals(999.0, retained.getOriginalPass().getBtProfit(), 0.0);
+    }
+
+    @Test
+    public void optimizerTaskSnapshotReplacesGlobalParametersBeforeRun() {
+        WorkflowEngine engine = new WorkflowEngine(null);
+        engine.setEaParameters(List.of(new EaParameter("GlobalParam", "1")));
+
+        EaParameter fixed = new EaParameter("GridStep", "23");
+        fixed.setOptimizeEnabled(false);
+        EaParameter target = new EaParameter("EnvelopePeriod", "18");
+        target.setOptimizeStart("10");
+        target.setOptimizeStep("5");
+        target.setOptimizeEnd("50");
+        target.setOptimizeEnabled(true);
+        WorkflowTask task = new WorkflowTask("Stage 2", WorkflowTask.TaskType.OPTIMIZER);
+        task.setOptimizerParameterSnapshot(List.of(fixed, target));
+
+        engine.applyOptimizerTaskParameters(task);
+
+        assertEquals(2, engine.getEaParameters().size());
+        assertEquals("23", engine.getEaParameters().get(0).getValue());
+        assertFalse(engine.getEaParameters().get(0).isOptimizeEnabled());
+        assertTrue(engine.getEaParameters().get(1).isOptimizeEnabled());
+    }
+
+    @Test
+    public void laterGuidedOptimizerCannotRunBeforeHandPick() {
+        WorkflowEngine engine = new WorkflowEngine(null);
+        EaParameter target = new EaParameter("EnvelopePeriod", "18");
+        target.setOptimizeStart("10");
+        target.setOptimizeStep("5");
+        target.setOptimizeEnd("50");
+        WorkflowTask task = new WorkflowTask("Stage 2", WorkflowTask.TaskType.OPTIMIZER);
+        task.setOptimizerTargetParameters(List.of("EnvelopePeriod"));
+        task.setOptimizerParameterSnapshot(List.of(target));
+
+        try {
+            engine.applyOptimizerTaskParameters(task, true);
+            fail("Expected hand-pick gate");
+        } catch (IllegalStateException ex) {
+            assertTrue(ex.getMessage().contains("wartet auf einen Hand-Pick"));
+        }
     }
 
     private void deleteRecursive(File f) {

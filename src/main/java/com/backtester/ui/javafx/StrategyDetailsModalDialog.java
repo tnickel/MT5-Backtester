@@ -2,6 +2,8 @@ package com.backtester.ui.javafx;
 
 import com.backtester.report.OptimizationResult.CombinedPass;
 import com.backtester.report.OptimizationResult.Pass;
+import com.backtester.workflow.StrategyBacktestArchiveStore;
+import com.backtester.workflow.StrategyBacktestRun;
 import javafx.beans.property.SimpleObjectProperty;
 import javafx.beans.property.SimpleStringProperty;
 import javafx.collections.FXCollections;
@@ -219,7 +221,83 @@ public class StrategyDetailsModalDialog {
         grid.add(createValueLabel(pass.getLtExpectedPayoff(), "$%.2f"), 3, row);
 
         panel.getChildren().addAll(heading, grid);
+        panel.getChildren().add(createBacktestHistorySection(pass, project));
         return panel;
+    }
+
+    private static VBox createBacktestHistorySection(CombinedPass pass, com.backtester.workflow.CustomProject project) {
+        VBox section = new VBox(8);
+        section.setPadding(new Insets(10, 0, 0, 0));
+
+        Label heading = new Label("Alle Backtests");
+        heading.setFont(Font.font("Segoe UI", FontWeight.BOLD, 14));
+        heading.setTextFill(Color.web("#00e5ff"));
+
+        List<StrategyBacktestRun> runs = StrategyBacktestArchiveStore.getAllRuns(project, pass);
+        if (runs.isEmpty() && pass.getLongtermPass() != null) {
+            // Fallback when archive not yet migrated for this view.
+            StrategyBacktestRun fallback = new StrategyBacktestRun();
+            fallback.setTabName(project != null ? "(aktueller Slot)" : "-");
+            fallback.setTaskName("");
+            fallback.setFromDate(pass.getLongtermPass().getFromDate());
+            fallback.setToDate(pass.getLongtermPass().getToDate());
+            fallback.setResult(pass.getLongtermPass());
+            runs = List.of(fallback);
+        }
+
+        if (runs.isEmpty()) {
+            Label empty = new Label("Noch keine tab-bezogenen Retest-Ergebnisse archiviert.");
+            empty.setStyle("-fx-text-fill: #94a3b8;");
+            section.getChildren().addAll(heading, empty);
+            return section;
+        }
+
+        TableView<StrategyBacktestRun> table = new TableView<>(FXCollections.observableArrayList(runs));
+        table.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY);
+        table.setPrefHeight(Math.min(220, 40 + runs.size() * 28.0));
+        table.setStyle("-fx-background-color: #111827;");
+
+        TableColumn<StrategyBacktestRun, String> tabCol = new TableColumn<>("Tab");
+        tabCol.setCellValueFactory(c -> new SimpleStringProperty(c.getValue().getTabName()));
+
+        TableColumn<StrategyBacktestRun, String> rangeCol = new TableColumn<>("Zeitraum");
+        rangeCol.setCellValueFactory(c -> new SimpleStringProperty(c.getValue().getDateRange()));
+
+        TableColumn<StrategyBacktestRun, String> profitCol = new TableColumn<>("Profit");
+        profitCol.setCellValueFactory(c -> {
+            Pass r = c.getValue().getResult();
+            if (r == null) return new SimpleStringProperty("-");
+            return new SimpleStringProperty(String.format(Locale.US, "%.2f", r.getProfit()));
+        });
+
+        TableColumn<StrategyBacktestRun, String> tradesCol = new TableColumn<>("Trades");
+        tradesCol.setCellValueFactory(c -> {
+            Pass r = c.getValue().getResult();
+            if (r == null) return new SimpleStringProperty("-");
+            return new SimpleStringProperty(String.valueOf(r.getTotalTrades()));
+        });
+
+        TableColumn<StrategyBacktestRun, String> pfCol = new TableColumn<>("PF");
+        pfCol.setCellValueFactory(c -> {
+            Pass r = c.getValue().getResult();
+            if (r == null) return new SimpleStringProperty("-");
+            return new SimpleStringProperty(String.format(Locale.US, "%.2f", r.getProfitFactor()));
+        });
+
+        TableColumn<StrategyBacktestRun, String> ddCol = new TableColumn<>("DD");
+        ddCol.setCellValueFactory(c -> {
+            Pass r = c.getValue().getResult();
+            if (r == null) return new SimpleStringProperty("-");
+            return new SimpleStringProperty(String.format(Locale.US, "%.2f%%", r.getDrawdownPercent()));
+        });
+
+        TableColumn<StrategyBacktestRun, String> taskCol = new TableColumn<>("Task");
+        taskCol.setCellValueFactory(c -> new SimpleStringProperty(
+                c.getValue().getTaskName().isBlank() ? "-" : c.getValue().getTaskName()));
+
+        table.getColumns().addAll(tabCol, rangeCol, profitCol, tradesCol, pfCol, ddCol, taskCol);
+        section.getChildren().addAll(heading, table);
+        return section;
     }
 
     private static VBox createParametersTabContent(CombinedPass pass) {

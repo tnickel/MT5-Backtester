@@ -111,6 +111,21 @@ public class WorkflowConfigDialogs {
                                             String tradeDifferencePercent,
                                             String minimumDifferentParameters,
                                             String maximumStrategies) {
+        applyDiversityTaskSettings(task, moduleName, sourceDatabank, targetDatabank,
+                parameterDifferencePercent, tradeDifferencePercent,
+                minimumDifferentParameters, maximumStrategies,
+                task != null && task.isDiversityRankByScore());
+    }
+
+    static void applyDiversityTaskSettings(WorkflowTask task,
+                                            String moduleName,
+                                            String sourceDatabank,
+                                            String targetDatabank,
+                                            String parameterDifferencePercent,
+                                            String tradeDifferencePercent,
+                                            String minimumDifferentParameters,
+                                            String maximumStrategies,
+                                            boolean rankByScore) {
         if (task == null) throw new IllegalArgumentException("Kein Clustering-Task ausgewählt.");
 
         String cleanName = moduleName != null ? moduleName.trim() : "";
@@ -135,6 +150,7 @@ public class WorkflowConfigDialogs {
         task.setDiversityTradeDiffPct(tradeDifference);
         task.setDiversityMinDifferentParams(differentParameters);
         task.setDiversityMaxStrategies(strategyLimit);
+        task.setDiversityRankByScore(rankByScore);
     }
 
     /** Dedicated, single-databank settings dialog for a custom-project clustering task. */
@@ -222,8 +238,14 @@ public class WorkflowConfigDialogs {
         grid.add(new Label("Max. Strategien (Ziel):"), 2, 3);
         grid.add(maximumStrategiesField, 3, 3);
 
+        CheckBox rankByScoreCheckBox = new CheckBox("Vor dem Clustering nach Score absteigend sortieren");
+        rankByScoreCheckBox.setSelected(task.isDiversityRankByScore());
+        rankByScoreCheckBox.setTooltip(new Tooltip(
+                "Nur endliche Scores werden berücksichtigt; Score-Gleichstände werden über die Passnummer aufgelöst."));
+        grid.add(rankByScoreCheckBox, 0, 4, 4, 1);
+
         Label routingHint = new Label(
-                "Die Reihenfolge in der Quell-Databank bestimmt die Priorität. " +
+                "Ohne Score-Sortierung bestimmt die Reihenfolge in der Quell-Databank die Priorität. " +
                 "Performance-Filter und Retests werden separat im Workflow konfiguriert."
         );
         routingHint.setWrapText(true);
@@ -248,7 +270,8 @@ public class WorkflowConfigDialogs {
                         parameterDifferenceField.getText(),
                         tradeDifferenceField.getText(),
                         minimumDifferentParametersField.getText(),
-                        maximumStrategiesField.getText());
+                        maximumStrategiesField.getText(),
+                        rankByScoreCheckBox.isSelected());
                 if (onSave != null) onSave.run();
                 stage.close();
             } catch (IllegalArgumentException ex) {

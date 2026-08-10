@@ -49,12 +49,30 @@ public class DatabankArtifactContextResolverTest {
 
         DatabankArtifactContextResolver.Context context =
                 DatabankArtifactContextResolver.resolve(project, "data2",
-                        List.of(pass("AUDCAD")), "", "", "");
+                        List.of(pass("AUDCAD", null)), "", "", "");
 
         assertEquals("AUDCAD", context.symbol());
         assertEquals("M5", context.period());
         assertEquals(LocalDate.of(2025, 7, 28), context.from());
         assertEquals(LocalDate.of(2026, 7, 28), context.to());
+    }
+
+    @Test
+    public void prefersPersistedPassPeriodOverStaleFilterTask() {
+        CustomProject project = new CustomProject("Test1", "TestEA", "EURUSD", "H1");
+        project.setTasks(List.of(
+                task("Optimizer", WorkflowTask.TaskType.OPTIMIZER,
+                        "Results", "data0", "AUDCAD", "M5", "2025-07-28", "2026-07-28"),
+                task("Filter", WorkflowTask.TaskType.PRE_FILTER,
+                        "data0", "data1", "EURUSD", "H1", "", "")
+        ));
+
+        DatabankArtifactContextResolver.Context context =
+                DatabankArtifactContextResolver.resolve(project, "data1",
+                        List.of(pass("AUDCAD", "M5")), "", "", "");
+
+        assertEquals("AUDCAD", context.symbol());
+        assertEquals("M5", context.period());
     }
 
     private static WorkflowTask task(String name, WorkflowTask.TaskType type,
@@ -72,10 +90,16 @@ public class DatabankArtifactContextResolverTest {
     }
 
     private static CombinedPass pass(String symbol) {
+        return pass(symbol, null);
+    }
+
+    private static CombinedPass pass(String symbol, String period) {
         Pass bt = new Pass();
         bt.setPassNumber(1);
+        bt.setTickModel("1 minute OHLC");
         CombinedPass pass = new CombinedPass(bt, null, 0.0, 0.0, "");
         pass.setSymbol(symbol);
+        pass.setPeriod(period);
         return pass;
     }
 }

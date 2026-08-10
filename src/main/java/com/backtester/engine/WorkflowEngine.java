@@ -116,6 +116,9 @@ public class WorkflowEngine {
     private volatile BacktestRunner currentValidationRunner;
     private volatile boolean cancelRequested;
 
+    /** Optional custom-project context for tab-keyed strategy backtest archives. */
+    private volatile com.backtester.workflow.CustomProject activeCustomProject;
+
     public WorkflowEngine(AppConfig config) {
         this.config = config;
         loadPreferences();
@@ -846,6 +849,8 @@ public class WorkflowEngine {
                 java.nio.file.Path presetFile = presetsDir.resolve(presetFileName);
                 List<EaParameter> finalParams = buildFinalParams(cp);
                 eaParamManager.writeSetFile(presetFile, finalParams, expert);
+                String setfileContent = com.backtester.workflow.StrategyBacktestArchiveStore
+                        .readSetfileContent(presetFile);
 
                 log.info("[SETFILE-LOG] Workflow Retest Pass #{}: wrote {} parameters to {}", cp.getPassNumber(), finalParams.size(), presetFile);
                 for (EaParameter p : finalParams) {
@@ -876,10 +881,12 @@ public class WorkflowEngine {
                     throw new InterruptedException("Retest abgebrochen.");
                 }
                 if (btRes != null && btRes.isSuccess()) {
+                    String tickModelName = btConfig.getModelName();
                     OptimizationResult.Pass ltPass = new OptimizationResult.Pass();
                     ltPass.setPassNumber(cp.getPassNumber());
-                    ltPass.setFromDate(getEffectiveLongtermFromDate().toString());
-                    ltPass.setToDate(getEffectiveLongtermToDate().toString());
+                    ltPass.setFromDate(effFrom.toString());
+                    ltPass.setToDate(effTo.toString());
+                    ltPass.setTickModel(tickModelName);
                     ltPass.setProfit(btRes.getTotalProfit());
                     ltPass.setTotalTrades(btRes.getTotalTrades());
                     ltPass.setProfitFactor(btRes.getProfitFactor());
@@ -894,6 +901,8 @@ public class WorkflowEngine {
                     }
                     cp.setLongtermPass(ltPass);
                     cp.setReportDirectory(btRes.getOutputDirectory());
+                    archiveLongtermRun(task, cp, ltPass, setfileContent, effSymbol, effPeriod, tickModelName,
+                            effFrom.toString(), effTo.toString());
                     successfulCandidates.add(cp);
                 } else if (logCallback != null) {
                     String detail = btRes != null ? btRes.getMessage() : "kein Ergebnis";
@@ -946,6 +955,32 @@ public class WorkflowEngine {
                                                      double tradeDifferencePct,
                                                      int minimumDifferentParameters,
                                                      int maximumStrategies) {
+        return clusterDatabankPasses(sourcePasses, parameterDifferencePct, tradeDifferencePct,
+                minimumDifferentParameters, maximumStrategies, false);
+    }
+
+    /**
+     * Clusters a custom-project databank, optionally ranking finite-score rows
+     * before the greedy diversity selection. Score ties are resolved by the
+     * lower MT5 pass number so automatic runs are reproducible.
+     */
+    public List<CombinedPass> clusterDatabankPasses(List<CombinedPass> sourcePasses,
+                                                     double parameterDifferencePct,
+                                                     double tradeDifferencePct,
+                                                     int minimumDifferentParameters,
+                                                     int maximumStrategies,
+                                                     boolean rankByScore) {
+        return clusterDatabankPasses(sourcePasses, parameterDifferencePct, tradeDifferencePct,
+                minimumDifferentParameters, maximumStrategies, rankByScore, null);
+    }
+
+    public List<CombinedPass> clusterDatabankPasses(List<CombinedPass> sourcePasses,
+                                                     double parameterDifferencePct,
+                                                     double tradeDifferencePct,
+                                                     int minimumDifferentParameters,
+                                                     int maximumStrategies,
+                                                     boolean rankByScore,
+                                                     List<EaParameter> comparisonParameters) {
         if (!Double.isFinite(parameterDifferencePct) || parameterDifferencePct < 0.0 || parameterDifferencePct > 1.0) {
             throw new IllegalArgumentException("Parameter-Differenz muss zwischen 0 und 100 Prozent liegen.");
         }
@@ -959,8 +994,15 @@ public class WorkflowEngine {
         List<CombinedPass> candidates = new ArrayList<>();
         if (sourcePasses != null) {
             for (CombinedPass pass : sourcePasses) {
-                if (pass != null) candidates.add(pass);
+                if (pass != null && (!rankByScore || Double.isFinite(pass.getScore()))) {
+                    candidates.add(pass);
+                }
             }
+        }
+        if (rankByScore) {
+            candidates.sort(java.util.Comparator
+                    .comparingDouble(CombinedPass::getScore).reversed()
+                    .thenComparingInt(CombinedPass::getPassNumber));
         }
 
         // A dedicated Retester databank contains a retest result for every row.
@@ -969,13 +1011,15 @@ public class WorkflowEngine {
                 && candidates.stream().allMatch(pass -> pass.getLongtermPass() != null);
 
         selectedDiversePasses = new ArrayList<>();
+        List<EaParameter> effectiveParameters = comparisonParameters != null && !comparisonParameters.isEmpty()
+                ? comparisonParameters : eaParameters;
         for (CombinedPass candidate : candidates) {
             if (selectedDiversePasses.size() >= maximumStrategies) break;
 
             boolean isDiverse = true;
             for (CombinedPass selected : selectedDiversePasses) {
                 if (arePassesSimilar(candidate, selected, parameterDifferencePct, tradeDifferencePct,
-                        minimumDifferentParameters, eaParameters, useRetestTrades)) {
+                        minimumDifferentParameters, effectiveParameters, useRetestTrades)) {
                     isDiverse = false;
                     break;
                 }
@@ -2210,6 +2254,46 @@ public class WorkflowEngine {
     public String getLeverage() { return leverage; }
     public void setLeverage(String leverage) { this.leverage = leverage; }
 
+    public com.backtester.workflow.CustomProject getActiveCustomProject() {
+        return activeCustomProject;
+    }
+
+    public void setActiveCustomProject(com.backtester.workflow.CustomProject activeCustomProject) {
+        this.activeCustomProject = activeCustomProject;
+    }
+
+    /**
+     * Upserts the completed retest into the project's tab-keyed strategy archive.
+     * Target databank of the task is the archive key (same tab overwrites).
+     */
+    private void archiveLongtermRun(com.backtester.workflow.WorkflowTask task,
+                                    CombinedPass cp,
+                                    OptimizationResult.Pass ltPass,
+                                    String setfileContent,
+                                    String symbol,
+                                    String period,
+                                    String tickModelName,
+                                    String fromDate,
+                                    String toDate) {
+        com.backtester.workflow.CustomProject project = activeCustomProject;
+        if (project == null || cp == null || ltPass == null) return;
+
+        String tabName = task != null ? task.getTargetDatabank() : com.backtester.workflow.DatabankManager.RESULTS;
+        String taskName = task != null ? task.getName() : "";
+        com.backtester.workflow.StrategyBacktestRun run =
+                com.backtester.workflow.StrategyBacktestArchiveStore.buildRun(
+                        tabName,
+                        taskName,
+                        symbol,
+                        period,
+                        tickModelName,
+                        fromDate,
+                        toDate,
+                        setfileContent,
+                        ltPass);
+        com.backtester.workflow.StrategyBacktestArchiveStore.upsertRun(project, cp, run);
+    }
+
     public int getTickModel() { return tickModel; }
     public void setTickModel(int tickModel) {
         if (tickModel < BacktestConfig.MODEL_EVERY_TICK || tickModel > BacktestConfig.MODEL_REAL_TICKS) {
@@ -2218,8 +2302,47 @@ public class WorkflowEngine {
         this.tickModel = tickModel;
     }
 
-    public List<EaParameter> getEaParameters() { return eaParameters; }
-    public void setEaParameters(List<EaParameter> eaParameters) { this.eaParameters = eaParameters; }
+    public List<EaParameter> getEaParameters() {
+        List<EaParameter> copy = new ArrayList<>();
+        for (EaParameter parameter : eaParameters) {
+            if (parameter != null) copy.add(parameter.copy());
+        }
+        return copy;
+    }
+    public void setEaParameters(List<EaParameter> eaParameters) {
+        this.eaParameters = new ArrayList<>();
+        if (eaParameters == null) return;
+        for (EaParameter parameter : eaParameters) {
+            if (parameter != null) this.eaParameters.add(parameter.copy());
+        }
+    }
+
+    /**
+     * Activates the project-local parameter snapshot prepared for an optimizer
+     * stage. Legacy optimizer tasks without a snapshot continue to use the
+     * expert's current parameter configuration.
+     */
+    public void applyOptimizerTaskParameters(com.backtester.workflow.WorkflowTask task) {
+        applyOptimizerTaskParameters(task, false);
+    }
+
+    public void applyOptimizerTaskParameters(com.backtester.workflow.WorkflowTask task,
+                                             boolean requireAdoptedBasis) {
+        if (task == null || task.getType() != com.backtester.workflow.WorkflowTask.TaskType.OPTIMIZER) {
+            throw new IllegalArgumentException("Ein Optimizer-Task ist erforderlich.");
+        }
+        List<EaParameter> snapshot = task.getOptimizerParameterSnapshot();
+        if (requireAdoptedBasis && !task.getOptimizerTargetParameters().isEmpty()
+                && !task.isOptimizerParameterBasisAdopted()) {
+            throw new IllegalStateException("Optimizer-Task '" + task.getName()
+                    + "' wartet auf einen Hand-Pick aus der vorherigen Stufe.");
+        }
+        if (task.isOptimizerParameterBasisAdopted() && snapshot.isEmpty()) {
+            throw new IllegalStateException("Die übernommene Parameter-Basis für Optimizer-Task '"
+                    + task.getName() + "' ist leer.");
+        }
+        if (!snapshot.isEmpty()) setEaParameters(snapshot);
+    }
 
     public int getOptimizationMode() { return optimizationMode; }
     public void setOptimizationMode(int optimizationMode) { this.optimizationMode = optimizationMode; }

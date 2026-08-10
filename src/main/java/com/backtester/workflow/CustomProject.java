@@ -28,7 +28,11 @@ public class CustomProject {
     private int sortOrder = 0;
     private List<WorkflowTask> tasks;
     private boolean saveDatabanksPersistently = true;
+    /** Enables the project-wide guided automatic workflow. Legacy projects default to manual mode. */
+    private boolean automaticModeEnabled = false;
     private Map<String, List<CombinedPass>> databanks = new HashMap<>();
+    /** Global per-strategy backtest history keyed by passNumber+strategyName. */
+    private Map<String, StrategyBacktestArchive> strategyArchives = new LinkedHashMap<>();
 
     public CustomProject() {
         this.id = UUID.randomUUID().toString();
@@ -36,6 +40,7 @@ public class CustomProject {
         this.lastRunTimestamp = 0;
         this.tasks = new ArrayList<>();
         this.databanks = new HashMap<>();
+        this.strategyArchives = new LinkedHashMap<>();
     }
 
     public CustomProject(String name, String expert, String symbol, String period) {
@@ -56,6 +61,7 @@ public class CustomProject {
         clone.setSymbol(newSymbol != null && !newSymbol.isBlank() ? newSymbol : getSymbol());
         clone.setPeriod(newPeriod != null && !newPeriod.isBlank() ? newPeriod : getPeriod());
         clone.setSaveDatabanksPersistently(isSaveDatabanksPersistently());
+        clone.setAutomaticModeEnabled(isAutomaticModeEnabled());
         
         List<WorkflowTask> clonedTasks = new ArrayList<>();
         if (tasks != null) {
@@ -102,15 +108,42 @@ public class CustomProject {
     public boolean isSaveDatabanksPersistently() { return saveDatabanksPersistently; }
     public void setSaveDatabanksPersistently(boolean saveDatabanksPersistently) { this.saveDatabanksPersistently = saveDatabanksPersistently; }
 
+    public boolean isAutomaticModeEnabled() { return automaticModeEnabled; }
+    public void setAutomaticModeEnabled(boolean automaticModeEnabled) {
+        this.automaticModeEnabled = automaticModeEnabled;
+    }
+
     public Map<String, List<CombinedPass>> getDatabanks() {
         if (databanks == null) databanks = new HashMap<>();
         return databanks;
     }
     public void setDatabanks(Map<String, List<CombinedPass>> databanks) { this.databanks = databanks; }
 
+    public Map<String, StrategyBacktestArchive> getStrategyArchives() {
+        if (strategyArchives == null) strategyArchives = new LinkedHashMap<>();
+        return strategyArchives;
+    }
+
+    public void setStrategyArchives(Map<String, StrategyBacktestArchive> strategyArchives) {
+        this.strategyArchives = strategyArchives != null
+                ? new LinkedHashMap<>(strategyArchives) : new LinkedHashMap<>();
+    }
+
     public void addTask(WorkflowTask task) {
         if (this.tasks == null) this.tasks = new ArrayList<>();
         this.tasks.add(task);
+    }
+
+    /**
+     * Inserts {@code task} immediately below the task at {@code index}.
+     * @return true if inserted
+     */
+    public boolean insertTaskBelow(int index, WorkflowTask task) {
+        if (task == null) return false;
+        List<WorkflowTask> list = getTasks();
+        if (index < 0 || index >= list.size()) return false;
+        list.add(index + 1, task);
+        return true;
     }
 
     public void removeTask(WorkflowTask task) {
@@ -228,7 +261,9 @@ public class CustomProject {
         copy.setPeriod(period);
         copy.setCreatedTimestamp(createdTimestamp);
         copy.setLastRunTimestamp(lastRunTimestamp);
+        copy.setSortOrder(sortOrder);
         copy.setSaveDatabanksPersistently(saveDatabanksPersistently);
+        copy.setAutomaticModeEnabled(automaticModeEnabled);
 
         List<WorkflowTask> taskCopies = new ArrayList<>();
         for (WorkflowTask task : getTasks()) {
@@ -236,6 +271,12 @@ public class CustomProject {
         }
         copy.setTasks(taskCopies);
         copy.setDatabanks(new LinkedHashMap<>());
+        // Same persistence flag as databanks: keep history only when contents are saved.
+        if (saveDatabanksPersistently) {
+            copy.setStrategyArchives(StrategyBacktestArchiveStore.copyArchives(strategyArchives));
+        } else {
+            copy.setStrategyArchives(new LinkedHashMap<>());
+        }
         return copy;
     }
 

@@ -59,6 +59,7 @@ public final class DatabankGalleryDataResolver {
                     galleryPass.getScore(), galleryPass.getConsistency(), galleryPass.getScoreDetails());
             combined.setStrategyName(prefer(galleryPass.getStrategyName(), shortPass.getStrategyName()));
             combined.setSymbol(prefer(galleryPass.getSymbol(), shortPass.getSymbol()));
+            combined.setPeriod(prefer(galleryPass.getPeriod(), shortPass.getPeriod()));
             combined.setReportDirectory(prefer(galleryPass.getReportDirectory(), shortPass.getReportDirectory()));
             resolved.add(combined);
         }

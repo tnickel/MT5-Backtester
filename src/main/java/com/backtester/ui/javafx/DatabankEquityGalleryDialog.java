@@ -1,5 +1,7 @@
 package com.backtester.ui.javafx;
 
+import com.backtester.database.CustomProjectSaveCoordinator;
+import com.backtester.database.DatabaseManager;
 import com.backtester.report.DatabankHtmlViewerGenerator;
 import com.backtester.report.OptimizationResult.CombinedPass;
 import com.backtester.report.OptimizationResult.Pass;
@@ -55,25 +57,54 @@ public class DatabankEquityGalleryDialog {
     private ComboBox<String> sortCombo;
     private CheckBox showLineChartCheckBox;
     private Label statsSummaryLabel;
+    private Label selectionCountLabel;
+    private Button deleteSelectedBtn;
     private VBox galleryContainer;
 
     // Fast image index cache: passNumber / strategyName -> MT5 screenshot directory/image
     private Map<String, Path> imageIndex = Collections.emptyMap();
     private boolean isScanningImages = false;
 
+    /** Selected strategies for the currently shown databank (identity → pass). */
+    private final LinkedHashMap<String, CombinedPass> selectedPasses = new LinkedHashMap<>();
+    private final Runnable onDatabankChanged;
+    private final CustomProjectSaveCoordinator saveCoordinator;
+
     public static void show(Window owner, DatabankManager databankManager, String initialDbName, CustomProject project) {
-        DatabankEquityGalleryDialog dialog = new DatabankEquityGalleryDialog(owner, databankManager, initialDbName, project);
+        show(owner, databankManager, initialDbName, project, null);
+    }
+
+    public static void show(Window owner, DatabankManager databankManager, String initialDbName,
+                            CustomProject project, Runnable onDatabankChanged) {
+        DatabankEquityGalleryDialog dialog = new DatabankEquityGalleryDialog(
+                owner, databankManager, initialDbName, project, onDatabankChanged);
         dialog.stage.show();
     }
 
     public DatabankEquityGalleryDialog(Window owner, DatabankManager databankManager, String initialDbName, CustomProject project) {
+        this(owner, databankManager, initialDbName, project, null);
+    }
+
+    public DatabankEquityGalleryDialog(Window owner, DatabankManager databankManager, String initialDbName,
+                                       CustomProject project, Runnable onDatabankChanged) {
         this.databankManager = databankManager;
         this.project = project;
+        this.onDatabankChanged = onDatabankChanged;
+        this.saveCoordinator = new CustomProjectSaveCoordinator(
+                DatabaseManager.getInstance(), 0,
+                message -> log.warn("Gallery project save: {}", message));
         this.stage = new Stage();
 
         stage.setTitle("📸 MetaTrader Backtest-Grafiken Übersicht");
         stage.initModality(Modality.NONE);
         if (owner != null) stage.initOwner(owner);
+        stage.setOnHidden(e -> {
+            try {
+                saveCoordinator.close();
+            } catch (Exception ex) {
+                log.debug("Gallery save coordinator close", ex);
+            }
+        });
 
         BorderPane root = new BorderPane();
         root.setPadding(new Insets(15));
@@ -97,8 +128,20 @@ public class DatabankEquityGalleryDialog {
 
         // Bottom Footer Bar
         HBox bottomBar = new HBox(15);
-        bottomBar.setAlignment(Pos.CENTER_RIGHT);
+        bottomBar.setAlignment(Pos.CENTER_LEFT);
         bottomBar.setPadding(new Insets(12, 0, 0, 0));
+
+        deleteSelectedBtn = new Button("🗑 Delete selected strategies");
+        deleteSelectedBtn.setStyle("-fx-background-color: #3a1f1f; -fx-text-fill: #ffab40; -fx-font-weight: bold; -fx-cursor: hand; -fx-padding: 8 16; -fx-background-radius: 4; -fx-border-color: #ffab40;");
+        deleteSelectedBtn.setDisable(true);
+        deleteSelectedBtn.setOnAction(e -> deleteSelectedStrategies());
+
+        selectionCountLabel = new Label("0 ausgewählt");
+        selectionCountLabel.setTextFill(Color.web("#94a3b8"));
+        selectionCountLabel.setFont(Font.font("Segoe UI", FontWeight.BOLD, 12));
+
+        Region footerSpacer = new Region();
+        HBox.setHgrow(footerSpacer, Priority.ALWAYS);
 
         Button openHtmlBtn = new Button("🌐 HTML Report im Browser öffnen");
         openHtmlBtn.setStyle("-fx-background-color: #00e5ff; -fx-text-fill: #0b0d13; -fx-font-weight: bold; -fx-cursor: hand; -fx-padding: 8 16; -fx-background-radius: 4;");
@@ -109,7 +152,7 @@ public class DatabankEquityGalleryDialog {
         closeBtn.setStyle("-fx-padding: 8 16; -fx-cursor: hand;");
         closeBtn.setOnAction(e -> stage.close());
 
-        bottomBar.getChildren().addAll(openHtmlBtn, closeBtn);
+        bottomBar.getChildren().addAll(deleteSelectedBtn, selectionCountLabel, footerSpacer, openHtmlBtn, closeBtn);
         root.setBottom(bottomBar);
 
         Scene scene = new Scene(root);
@@ -148,7 +191,11 @@ public class DatabankEquityGalleryDialog {
             dbSelectionCombo.setValue(dbNames.get(0));
         }
         dbSelectionCombo.setStyle("-fx-background-color: #1a202c; -fx-text-fill: white; -fx-font-weight: bold;");
-        dbSelectionCombo.setOnAction(e -> refreshGallery());
+        dbSelectionCombo.setOnAction(e -> {
+            selectedPasses.clear();
+            updateSelectionUi();
+            refreshGallery();
+        });
 
         topRow.getChildren().addAll(titleLabel, flexSpacer, dbLabel, dbSelectionCombo);
 
@@ -362,6 +409,20 @@ public class DatabankEquityGalleryDialog {
         HBox cardHeader = new HBox(12);
         cardHeader.setAlignment(Pos.CENTER_LEFT);
 
+        String identity = passIdentity(pass);
+        CheckBox selectBox = new CheckBox();
+        selectBox.setSelected(selectedPasses.containsKey(identity));
+        selectBox.setStyle("-fx-cursor: hand;");
+        selectBox.setTooltip(new Tooltip("Strategie zum Löschen markieren"));
+        selectBox.setOnAction(e -> {
+            if (selectBox.isSelected()) {
+                selectedPasses.put(identity, pass);
+            } else {
+                selectedPasses.remove(identity);
+            }
+            updateSelectionUi();
+        });
+
         Label nameLbl = new Label(pass.getStrategyName());
         nameLbl.setFont(Font.font("Segoe UI", FontWeight.BOLD, 17));
         nameLbl.setTextFill(Color.web("#00e5ff"));
@@ -379,6 +440,10 @@ public class DatabankEquityGalleryDialog {
         Region spacer = new Region();
         HBox.setHgrow(spacer, Priority.ALWAYS);
 
+        Button deleteOneBtn = new Button("🗑 Delete strategy");
+        deleteOneBtn.setStyle("-fx-background-color: #3a1f1f; -fx-text-fill: #ff8a80; -fx-border-color: #ff5252; -fx-border-radius: 4; -fx-font-weight: bold; -fx-cursor: hand; -fx-padding: 6 12;");
+        deleteOneBtn.setOnAction(e -> deleteStrategies(List.of(pass)));
+
         Button viewSetfileBtn = new Button("👁 Setfile anzeigen");
         viewSetfileBtn.setStyle("-fx-background-color: #1e293b; -fx-text-fill: #00e5ff; -fx-border-color: #00e5ff; -fx-border-radius: 4; -fx-font-weight: bold; -fx-cursor: hand; -fx-padding: 6 12;");
         viewSetfileBtn.setOnAction(e -> SetfileDialogHelper.showSetfileViewDialog(pass, project, stage));
@@ -391,7 +456,8 @@ public class DatabankEquityGalleryDialog {
         detailsBtn.setStyle("-fx-background-color: #00bcd4; -fx-text-fill: white; -fx-font-weight: bold; -fx-cursor: hand; -fx-padding: 6 12; -fx-background-radius: 4;");
         detailsBtn.setOnAction(e -> StrategyDetailsModalDialog.show(pass, dbName, project, stage, 0));
 
-        cardHeader.getChildren().addAll(nameLbl, passBadge, scoreBadge, profitBadge, spacer, viewSetfileBtn, downloadSetfileBtn, detailsBtn);
+        cardHeader.getChildren().addAll(selectBox, nameLbl, passBadge, scoreBadge, profitBadge, spacer,
+                deleteOneBtn, viewSetfileBtn, downloadSetfileBtn, detailsBtn);
 
         // Expanded Metrics Grid (All available statistics)
         GridPane grid = new GridPane();
@@ -609,6 +675,65 @@ public class DatabankEquityGalleryDialog {
 
         chart.getData().add(equitySeries);
         return chart;
+    }
+
+    private void deleteSelectedStrategies() {
+        if (selectedPasses.isEmpty()) return;
+        deleteStrategies(new ArrayList<>(selectedPasses.values()));
+    }
+
+    private void deleteStrategies(List<CombinedPass> toDelete) {
+        if (toDelete == null || toDelete.isEmpty() || databankManager == null) return;
+        String selectedDb = dbSelectionCombo.getValue();
+        if (selectedDb == null || selectedDb.isBlank()) return;
+
+        Alert confirm = new Alert(Alert.AlertType.CONFIRMATION,
+                toDelete.size() + " Strategie(n) aus Databank '" + selectedDb + "' löschen?",
+                ButtonType.CANCEL, ButtonType.OK);
+        confirm.setTitle("Strategien löschen");
+        confirm.setHeaderText(null);
+        confirm.initOwner(stage);
+        if (confirm.showAndWait().orElse(ButtonType.CANCEL) != ButtonType.OK) return;
+
+        databankManager.removePassesFromDatabank(selectedDb, toDelete);
+        for (CombinedPass pass : toDelete) {
+            selectedPasses.remove(passIdentity(pass));
+        }
+        persistProjectAfterDelete();
+        updateSelectionUi();
+        refreshGallery();
+        if (onDatabankChanged != null) {
+            onDatabankChanged.run();
+        }
+        log.info("Deleted {} strateg(y/ies) from databank '{}'", toDelete.size(), selectedDb);
+    }
+
+    private void persistProjectAfterDelete() {
+        if (project == null || databankManager == null) return;
+        try {
+            saveCoordinator.requestSave(project, databankManager);
+            saveCoordinator.flushAsync();
+        } catch (Exception ex) {
+            log.error("Failed to persist project after gallery delete", ex);
+        }
+    }
+
+    private void updateSelectionUi() {
+        int count = selectedPasses.size();
+        if (selectionCountLabel != null) {
+            selectionCountLabel.setText(count + " ausgewählt");
+        }
+        if (deleteSelectedBtn != null) {
+            deleteSelectedBtn.setDisable(count == 0);
+            deleteSelectedBtn.setText(count > 0
+                    ? "🗑 Delete selected strategies (" + count + ")"
+                    : "🗑 Delete selected strategies");
+        }
+    }
+
+    private static String passIdentity(CombinedPass pass) {
+        if (pass == null) return "<null>";
+        return pass.getPassNumber() + "\u0000" + pass.getStrategyName();
     }
 
     private void showEnlargedImage(Path imagePath, String title) {

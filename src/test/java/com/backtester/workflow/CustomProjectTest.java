@@ -1,14 +1,53 @@
 package com.backtester.workflow;
 
+import com.backtester.config.EaParameter;
 import com.backtester.database.DatabaseManager;
 import org.junit.Before;
 import org.junit.Test;
 
+import java.util.ArrayList;
 import java.util.List;
 
 import static org.junit.Assert.*;
 
 public class CustomProjectTest {
+
+    @Test
+    public void automaticModeHasSafeLegacyDefault() {
+        CustomProject freshProject = new CustomProject();
+        CustomProject legacyProject = DatabaseManager.createCustomProjectGson().fromJson(
+                "{\"name\":\"Legacy\",\"tasks\":[]}", CustomProject.class);
+
+        assertFalse(freshProject.isAutomaticModeEnabled());
+        assertNotNull(legacyProject);
+        assertFalse(legacyProject.isAutomaticModeEnabled());
+    }
+
+    @Test
+    public void automaticModePersistsThroughProjectCopiesAndJson() {
+        CustomProject project = new CustomProject("Guided", "EA", "AUDCAD", "M5");
+        project.setAutomaticModeEnabled(true);
+
+        CustomProject clone = project.cloneProject("Guided Copy", null, null);
+        CustomProject metadataCopy = project.copyMetadataForPersistence();
+        String json = DatabaseManager.createCustomProjectGson().toJson(project);
+        CustomProject restored = DatabaseManager.createCustomProjectGson().fromJson(json, CustomProject.class);
+
+        assertTrue(clone.isAutomaticModeEnabled());
+        assertTrue(metadataCopy.isAutomaticModeEnabled());
+        assertNotNull(restored);
+        assertTrue(restored.isAutomaticModeEnabled());
+    }
+
+    @Test
+    public void metadataPersistenceCopyKeepsSortOrder() {
+        CustomProject project = new CustomProject("Guided", "EA", "AUDCAD", "M5");
+        project.setSortOrder(7);
+
+        CustomProject copy = project.copyMetadataForPersistence();
+
+        assertEquals(7, copy.getSortOrder());
+    }
 
     @Before
     public void setUp() {
@@ -54,6 +93,37 @@ public class CustomProjectTest {
 
         assertTrue(proj.moveTaskUp(1));
         assertEquals("Task 1", proj.getTasks().get(0).getName());
+    }
+
+    @Test
+    public void insertTaskBelowClonesWithSettings() {
+        CustomProject proj = new CustomProject("Clone Test", "EA.ex5", "AUDCAD", "M5");
+        WorkflowTask t1 = new WorkflowTask("Tickdatatest", WorkflowTask.TaskType.RETESTER);
+        t1.setSourceDatabank("data2");
+        t1.setTargetDatabank("ticktest");
+        t1.setRetestSymbol("AUDCAD");
+        t1.setRetestPeriod("M5");
+        t1.setExecutionMode(WorkflowTask.MODE_OHLC_M1);
+        t1.setStatus(WorkflowTask.TaskStatus.COMPLETED);
+        WorkflowTask t2 = new WorkflowTask("After", WorkflowTask.TaskType.DIVERSITY_FILTER);
+        proj.addTask(t1);
+        proj.addTask(t2);
+
+        WorkflowTask clone = t1.cloneWithSettings();
+        assertTrue(proj.insertTaskBelow(0, clone));
+
+        assertEquals(3, proj.getTasks().size());
+        assertSame(t1, proj.getTasks().get(0));
+        assertSame(clone, proj.getTasks().get(1));
+        assertSame(t2, proj.getTasks().get(2));
+        assertNotEquals(t1.getId(), clone.getId());
+        assertEquals("Tickdatatest (copy)", clone.getName());
+        assertEquals("data2", clone.getSourceDatabank());
+        assertEquals("ticktest", clone.getTargetDatabank());
+        assertEquals("AUDCAD", clone.getRetestSymbol());
+        assertEquals("M5", clone.getRetestPeriod());
+        assertEquals(WorkflowTask.MODE_OHLC_M1, clone.getExecutionMode());
+        assertEquals(WorkflowTask.TaskStatus.PENDING, clone.getStatus());
     }
 
     @Test
@@ -127,6 +197,10 @@ public class CustomProjectTest {
         task.setDiversityTradeDiffPct(0.31);
         task.setDiversityMinDifferentParams(4);
         task.setDiversityMaxStrategies(17);
+        task.setDiversityRankByScore(true);
+        EaParameter comparison = new EaParameter("Inp_Grid", "10");
+        comparison.setOptimizeEnabled(true);
+        task.setDiversityParameterSnapshot(List.of(comparison));
 
         WorkflowTask copy = task.copyForPersistence();
 
@@ -134,6 +208,9 @@ public class CustomProjectTest {
         assertEquals(0.31, copy.getDiversityTradeDiffPct(), 0.0);
         assertEquals(4, copy.getDiversityMinDifferentParams());
         assertEquals(17, copy.getDiversityMaxStrategies());
+        assertTrue(copy.isDiversityRankByScore());
+        assertEquals(List.of("Inp_Grid"), copy.getDiversityParameterSnapshot().stream()
+                .map(EaParameter::getName).toList());
     }
 
     @Test
@@ -154,6 +231,7 @@ public class CustomProjectTest {
         task.setOptimizerCriterion(7);
         task.setOptimizerForwardMode(4);
         task.setOptimizerForwardDate("2026-05-01");
+        task.setOptimizerTargetParameters(List.of("Inp_Entry", "Inp_Exit"));
         task.setSensitivityRunTimestamp(123456789L);
 
         WorkflowTask copy = task.copyForPersistence();
@@ -162,7 +240,30 @@ public class CustomProjectTest {
         assertEquals(7, copy.getOptimizerCriterion());
         assertEquals(4, copy.getOptimizerForwardMode());
         assertEquals("2026-05-01", copy.getOptimizerForwardDate());
+        assertEquals(List.of("Inp_Entry", "Inp_Exit"), copy.getOptimizerTargetParameters());
         assertEquals(123456789L, copy.getSensitivityRunTimestamp());
+    }
+
+    @Test
+    public void optimizerTargetParametersAreDefensiveAndPersistThroughJson() {
+        WorkflowTask task = new WorkflowTask("Stage Optimizer", WorkflowTask.TaskType.OPTIMIZER);
+        List<String> source = new ArrayList<>(List.of("  Inp_Entry  ", "Inp_Exit"));
+
+        task.setOptimizerTargetParameters(source);
+        source.set(0, "Inp_ChangedOutside");
+        List<String> returned = task.getOptimizerTargetParameters();
+        returned.clear();
+
+        assertEquals(List.of("Inp_Entry", "Inp_Exit"), task.getOptimizerTargetParameters());
+
+        String json = new com.google.gson.Gson().toJson(task.copyForPersistence());
+        WorkflowTask restored = new com.google.gson.Gson().fromJson(json, WorkflowTask.class);
+        assertEquals(List.of("Inp_Entry", "Inp_Exit"), restored.getOptimizerTargetParameters());
+
+        WorkflowTask clone = task.cloneWithSettings();
+        assertEquals(List.of("Inp_Entry", "Inp_Exit"), clone.getOptimizerTargetParameters());
+        clone.setOptimizerTargetParameters(List.of("Inp_CloneOnly"));
+        assertEquals(List.of("Inp_Entry", "Inp_Exit"), task.getOptimizerTargetParameters());
     }
 
     @Test
@@ -173,6 +274,7 @@ public class CustomProjectTest {
         assertEquals(WorkflowTask.DEFAULT_OPTIMIZER_MODE, task.getOptimizerMode());
         assertEquals(WorkflowTask.DEFAULT_OPTIMIZER_CRITERION, task.getOptimizerCriterion());
         assertEquals(WorkflowTask.DEFAULT_OPTIMIZER_FORWARD_MODE, task.getOptimizerForwardMode());
+        assertTrue(task.getOptimizerTargetParameters().isEmpty());
     }
 
     @Test
@@ -192,6 +294,7 @@ public class CustomProjectTest {
         assertEquals(WorkflowTask.DEFAULT_DIVERSITY_TRADE_DIFF_PCT, task.getDiversityTradeDiffPct(), 0.0);
         assertEquals(WorkflowTask.DEFAULT_DIVERSITY_MIN_DIFFERENT_PARAMS, task.getDiversityMinDifferentParams());
         assertEquals(WorkflowTask.DEFAULT_DIVERSITY_MAX_STRATEGIES, task.getDiversityMaxStrategies());
+        assertFalse(task.isDiversityRankByScore());
     }
 
     @Test

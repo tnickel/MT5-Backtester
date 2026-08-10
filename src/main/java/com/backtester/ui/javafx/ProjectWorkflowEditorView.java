@@ -1,18 +1,24 @@
 package com.backtester.ui.javafx;
 
 import com.backtester.config.AppConfig;
+import com.backtester.config.EaParameter;
 import com.backtester.database.CustomProjectSaveCoordinator;
 import com.backtester.database.DatabaseManager;
 import com.backtester.engine.OptimizationConfig;
 import com.backtester.engine.WorkflowEngine;
 import com.backtester.report.OptimizationResult.CombinedPass;
+import com.backtester.report.PassPresetResolver;
 import com.backtester.workflow.CustomProject;
 import com.backtester.workflow.DatabankManager;
 import com.backtester.workflow.FilterCondition;
+import com.backtester.workflow.GuidedOptimizationService;
+import com.backtester.workflow.ToTheMoon132GuidedWorkflowFactory;
 import com.backtester.workflow.WorkflowConfigurationValidator;
 import com.backtester.workflow.WorkflowConfigurationValidator.RetesterOverwriteRisk;
 import com.backtester.workflow.WorkflowTask;
 import java.util.Set;
+import java.util.LinkedHashSet;
+import javafx.animation.PauseTransition;
 import javafx.application.Platform;
 import javafx.beans.property.SimpleBooleanProperty;
 import javafx.beans.property.SimpleDoubleProperty;
@@ -75,6 +81,7 @@ public class ProjectWorkflowEditorView {
     private Button startBtn;
     private Button stopBtn;
     private Button resetBtn;
+    private ToggleButton automaticModeToggle;
 
     // Main Center Tabs (Progress | Full settings | Results)
     private TabPane centerMainTabPane;
@@ -119,6 +126,10 @@ public class ProjectWorkflowEditorView {
     private ComboBox<String> optimizerForwardModeCombo;
     private DatePicker optimizerForwardDatePicker;
     private boolean updatingOptimizerControls;
+    private TextField optimizerTargetFilterField;
+    private VBox optimizerTargetParametersBox;
+    private Label optimizerTargetParametersSummary;
+    private boolean updatingOptimizerTargetControls;
     private CheckBox deleteFailedCheckBox;
     private TableView<FilterCondition> filterConditionsTable;
     private TextField expertField;
@@ -127,6 +138,7 @@ public class ProjectWorkflowEditorView {
     private TextField diversityTradeDiffField;
     private Spinner<Integer> diversityMinDiffParamsSpinner;
     private Spinner<Integer> diversityMaxStrategiesSpinner;
+    private CheckBox diversityRankByScoreCheckBox;
     private boolean updatingDiversityControls;
     private Tab robustnessSubTab;
     private Tab robustnessParamsSubTab;
@@ -143,6 +155,7 @@ public class ProjectWorkflowEditorView {
     private TabPane bottomDatabankTabPane;
     private CheckBox persistDatabanksCheckBox;
     private Pane databankToolbar;
+    private Label parameterAdoptionBanner;
 
     // Execution state
     private Task<Void> activeProjectTask;
@@ -204,8 +217,13 @@ public class ProjectWorkflowEditorView {
         this.selectedTask = null;
         if (proj != null) {
             boolean projectChanged = proj.migrateLegacyTaskDefinitions();
+            projectChanged |= ToTheMoon132GuidedWorkflowFactory.ensureDevelopmentTop20Selection(proj);
             engine.resetTransientResults();
             projectTitleLabel.setText("/ " + proj.getName());
+            if (automaticModeToggle != null) {
+                automaticModeToggle.setSelected(proj.isAutomaticModeEnabled());
+                updateAutomaticModeToggleAppearance();
+            }
             databankManager.loadFromProject(proj);
             if (persistDatabanksCheckBox != null) {
                 persistDatabanksCheckBox.setSelected(proj.isSaveDatabanksPersistently());
@@ -281,6 +299,24 @@ public class ProjectWorkflowEditorView {
         Region spacer = new Region();
         HBox.setHgrow(spacer, Priority.ALWAYS);
 
+        automaticModeToggle = new ToggleButton("🤖 Automatik: AUS");
+        automaticModeToggle.setTooltip(new Tooltip(
+                "Wählt zwischen Guided-Stufen automatisch den Pass mit dem höchsten Score."));
+        automaticModeToggle.setOnAction(e -> {
+            if (project == null) {
+                automaticModeToggle.setSelected(false);
+                updateAutomaticModeToggleAppearance();
+                return;
+            }
+            project.setAutomaticModeEnabled(automaticModeToggle.isSelected());
+            updateAutomaticModeToggleAppearance();
+            saveProject();
+            logToConsole("AUTOMATIK", automaticModeToggle.isSelected()
+                    ? "Automatikmodus aktiviert: Höchster endlicher Score wird automatisch übernommen."
+                    : "Automatikmodus deaktiviert: Auswahl erfolgt wieder per Hand-Pick.");
+        });
+        updateAutomaticModeToggleAppearance();
+
         startBtn = new Button("▶ Start");
         startBtn.getStyleClass().add("button-start");
         startBtn.setOnAction(e -> startProjectExecution());
@@ -312,8 +348,20 @@ public class ProjectWorkflowEditorView {
             overviewView.showCloneWorkflowDialog(project);
         });
 
-        bar.getChildren().addAll(backBtn, titleBox, spacer, startBtn, stopBtn, resetBtn, saveBtn, cloneBtn);
+        bar.getChildren().addAll(backBtn, titleBox, spacer, automaticModeToggle,
+                startBtn, stopBtn, resetBtn, saveBtn, cloneBtn);
         return bar;
+    }
+
+    private void updateAutomaticModeToggleAppearance() {
+        if (automaticModeToggle == null) return;
+        boolean enabled = automaticModeToggle.isSelected();
+        automaticModeToggle.setText(enabled ? "🤖 Automatik: AN" : "🤖 Automatik: AUS");
+        automaticModeToggle.setStyle(enabled
+                ? "-fx-background-color: rgba(0, 230, 118, 0.24); -fx-text-fill: #69f0ae; "
+                    + "-fx-border-color: #00e676; -fx-border-radius: 5; -fx-font-weight: bold;"
+                : "-fx-background-color: #1e2432; -fx-text-fill: #cbd5e1; "
+                    + "-fx-border-color: #596273; -fx-border-radius: 5; -fx-font-weight: bold;");
     }
 
     private void renameCurrentProject() {
@@ -959,6 +1007,17 @@ public class ProjectWorkflowEditorView {
         });
         grid.add(diversityMaxStrategiesSpinner, 3, 1);
 
+        diversityRankByScoreCheckBox = new CheckBox("Vor Clustering nach Score absteigend sortieren");
+        diversityRankByScoreCheckBox.setTooltip(new Tooltip(
+                "Der höchste endliche Score wird zuerst geprüft; bei Gleichstand gewinnt die kleinere Passnummer."));
+        diversityRankByScoreCheckBox.selectedProperty().addListener((obs, oldValue, newValue) -> {
+            if (!updatingDiversityControls && selectedTask != null) {
+                selectedTask.setDiversityRankByScore(newValue);
+                saveProject();
+            }
+        });
+        grid.add(diversityRankByScoreCheckBox, 0, 2, 4, 1);
+
         Label sourceInfo = new Label(
                 "Es wird ausschließlich die unter 'Databank routing' gewählte Quell-Databank geclustert. " +
                 "Performance-Filter und Retests werden als eigene Tasks angelegt. Für Langzeitdaten wird hinter " +
@@ -983,12 +1042,14 @@ public class ProjectWorkflowEditorView {
             diversityTradeDiffField.setText(String.format(Locale.US, "%.0f", defaultTradeDiff * 100));
             diversityMinDiffParamsSpinner.getValueFactory().setValue(defaultMinParams);
             diversityMaxStrategiesSpinner.getValueFactory().setValue(defaultMaxStrats);
+            if (diversityRankByScoreCheckBox != null) diversityRankByScoreCheckBox.setSelected(false);
 
             if (selectedTask != null) {
                 selectedTask.setDiversityParamDiffPct(defaultParamDiff);
                 selectedTask.setDiversityTradeDiffPct(defaultTradeDiff);
                 selectedTask.setDiversityMinDifferentParams(defaultMinParams);
                 selectedTask.setDiversityMaxStrategies(defaultMaxStrats);
+                selectedTask.setDiversityRankByScore(false);
                 saveProject();
             }
         } finally {
@@ -1358,7 +1419,18 @@ public class ProjectWorkflowEditorView {
         Button openStep1Btn = new Button("⚙ EA Parameter & Suchräume konfigurieren");
         openStep1Btn.getStyleClass().add("button");
         openStep1Btn.setOnAction(e -> {
-            WorkflowConfigDialogs.showStep1Dialog(engine, root.getScene().getWindow());
+            if (selectedTask != null && selectedTask.getType() == WorkflowTask.TaskType.OPTIMIZER) {
+                List<EaParameter> taskSnapshot = selectedTask.getOptimizerParameterSnapshot();
+                if (!taskSnapshot.isEmpty()) engine.setEaParameters(taskSnapshot);
+            }
+            WorkflowConfigDialogs.showStep1Dialog(engine, root.getScene().getWindow(), () -> {
+                if (selectedTask != null && selectedTask.getType() == WorkflowTask.TaskType.OPTIMIZER) {
+                    selectedTask.setOptimizerParameterSnapshot(
+                            applyTargetFlags(engine.getEaParameters(), selectedTask.getOptimizerTargetParameters()));
+                    refreshOptimizerTargetParameterControls(selectedTask);
+                    saveProject();
+                }
+            });
         });
 
         Button openStep2Btn = new Button("⚙ Vollständigen Optimizer-Dialog öffnen");
@@ -1379,7 +1451,44 @@ public class ProjectWorkflowEditorView {
 
         btnBox.getChildren().addAll(openStep1Btn, openStep2Btn);
 
-        panel.getChildren().addAll(heading, grid, new Separator(), btnBox);
+        Label targetHeading = new Label("Ziel-Parameter dieser Optimierungsstufe");
+        targetHeading.setFont(Font.font("Segoe UI", FontWeight.BOLD, 13));
+        targetHeading.setTextFill(Color.web("#76ff03"));
+        Label targetHelp = new Label(
+                "Nur diese Parameter werden nach einem Hand-Pick auf Y gesetzt. Alle geerbten Werte bleiben fest auf N.");
+        targetHelp.setWrapText(true);
+        targetHelp.setStyle("-fx-text-fill: #aab2c0;");
+
+        optimizerTargetFilterField = new TextField();
+        optimizerTargetFilterField.setPromptText("Parameter suchen …");
+        optimizerTargetFilterField.textProperty().addListener((obs, oldValue, newValue) -> {
+            if (selectedTask != null && selectedTask.getType() == WorkflowTask.TaskType.OPTIMIZER) {
+                refreshOptimizerTargetParameterControls(selectedTask);
+            }
+        });
+
+        optimizerTargetParametersBox = new VBox(4);
+        ScrollPane targetScroll = new ScrollPane(optimizerTargetParametersBox);
+        targetScroll.setFitToWidth(true);
+        targetScroll.setPrefViewportHeight(190);
+        targetScroll.setStyle("-fx-background-color: transparent;");
+
+        Button useCurrentOptimizedBtn = new Button("Aktuelle Y-Parameter übernehmen");
+        useCurrentOptimizedBtn.setOnAction(e -> useCurrentOptimizedParametersAsTargets());
+        Button clearTargetsBtn = new Button("Auswahl leeren");
+        clearTargetsBtn.setOnAction(e -> {
+            if (selectedTask == null || selectedTask.getType() != WorkflowTask.TaskType.OPTIMIZER) return;
+            selectedTask.setOptimizerTargetParameters(List.of());
+            selectedTask.clearOptimizerParameterBasis();
+            refreshOptimizerTargetParameterControls(selectedTask);
+            saveProject();
+        });
+        optimizerTargetParametersSummary = new Label();
+        HBox targetButtons = new HBox(10, useCurrentOptimizedBtn, clearTargetsBtn, optimizerTargetParametersSummary);
+        targetButtons.setAlignment(Pos.CENTER_LEFT);
+
+        panel.getChildren().addAll(heading, grid, new Separator(), btnBox, new Separator(),
+                targetHeading, targetHelp, optimizerTargetFilterField, targetScroll, targetButtons);
         return panel;
     }
 
@@ -1481,7 +1590,8 @@ public class ProjectWorkflowEditorView {
         showEquityCurvesBtn.setOnAction(e -> {
             Tab activeTab = bottomDatabankTabPane.getSelectionModel().getSelectedItem();
             String currentDbName = activeTab != null ? activeTab.getText().replaceAll("\\s*\\(\\d+\\)$", "") : DatabankManager.RESULTS;
-            DatabankEquityGalleryDialog.show(root.getScene().getWindow(), databankManager, currentDbName, project);
+            DatabankEquityGalleryDialog.show(root.getScene().getWindow(), databankManager, currentDbName, project,
+                    () -> refreshDatabanksUI(currentDbName));
         });
 
         Button backupBtn = new Button("💾 Backup");
@@ -1500,9 +1610,15 @@ public class ProjectWorkflowEditorView {
         bottomDatabankTabPane = new TabPane();
         VBox.setVgrow(bottomDatabankTabPane, Priority.ALWAYS);
 
+        parameterAdoptionBanner = new Label();
+        parameterAdoptionBanner.setMaxWidth(Double.MAX_VALUE);
+        parameterAdoptionBanner.setPadding(new Insets(7, 10, 7, 10));
+        parameterAdoptionBanner.setVisible(false);
+        parameterAdoptionBanner.setManaged(false);
+
         refreshDatabanksUI();
 
-        panel.getChildren().addAll(bar, bottomDatabankTabPane);
+        panel.getChildren().addAll(bar, parameterAdoptionBanner, bottomDatabankTabPane);
         return panel;
     }
 
@@ -1816,11 +1932,18 @@ public class ProjectWorkflowEditorView {
                             row.getItem(), databankSensitivityTimestamp);
                 });
 
+                MenuItem adoptParametersItem = new MenuItem("📌 Als Parameter-Basis für nächsten Task übernehmen");
+                adoptParametersItem.setOnAction(e -> {
+                    if (!row.isEmpty()) adoptPassParametersForNextTask(row.getItem(), dbName);
+                });
+
                 MenuItem deleteItem = new MenuItem("🗑 Selektierte Strategie(n) löschen (Entf)");
                 deleteItem.setOnAction(e -> deleteSelectedRowsFromDatabank(dbName, table));
 
                 SeparatorMenuItem robustnessSeparator = new SeparatorMenuItem();
-                contextMenu.getItems().addAll(inspectItem, singleBtItem, sensitivityItem, htmlReportItem, robustnessSeparator, deleteItem);
+                SeparatorMenuItem adoptionSeparator = new SeparatorMenuItem();
+                contextMenu.getItems().addAll(inspectItem, singleBtItem, sensitivityItem, htmlReportItem,
+                        robustnessSeparator, adoptParametersItem, adoptionSeparator, deleteItem);
                 contextMenu.setOnShowing(e -> {
                     boolean hasSensitivity = !row.isEmpty()
                             && DatabaseManager.getInstance().hasSensitivityDetails(
@@ -1830,6 +1953,16 @@ public class ProjectWorkflowEditorView {
                     sensitivityItem.setVisible(hasSensitivity);
                     htmlReportItem.setVisible(hasSensitivity);
                     robustnessSeparator.setVisible(hasSensitivity);
+                    boolean canAdopt = !row.isEmpty()
+                            && GuidedOptimizationService.findNextActiveOptimizer(project, dbName).isPresent();
+                    adoptParametersItem.setVisible(canAdopt);
+                    adoptionSeparator.setVisible(canAdopt);
+                });
+
+                row.setOnContextMenuRequested(event -> {
+                    if (!row.isEmpty() && !row.isSelected()) {
+                        table.getSelectionModel().clearAndSelect(row.getIndex());
+                    }
                 });
 
                 row.setOnMouseClicked(event -> {
@@ -2007,6 +2140,26 @@ public class ProjectWorkflowEditorView {
             openTaskSettings(task);
         });
 
+        Button cloneBtn = new Button("⧉");
+        cloneBtn.setStyle("-fx-background-color: transparent; -fx-text-fill: #80cbc4; -fx-font-weight: bold; -fx-padding: 2; -fx-cursor: hand;");
+        cloneBtn.setTooltip(new Tooltip("Clone below — Task mit identischen Settings darunter einfügen"));
+        cloneBtn.setOnAction(e -> {
+            e.consume();
+            WorkflowTask cloned = task.cloneWithSettings();
+            if (project.insertTaskBelow(index, cloned)) {
+                if (cloned.getSourceDatabank() != null && !cloned.getSourceDatabank().isBlank()) {
+                    databankManager.createDatabank(cloned.getSourceDatabank());
+                }
+                if (cloned.getTargetDatabank() != null && !cloned.getTargetDatabank().isBlank()) {
+                    databankManager.createDatabank(cloned.getTargetDatabank());
+                }
+                saveProject();
+                refreshTaskChain();
+                selectTask(cloned);
+                logToConsole("WORKFLOW", "Task geklont unter Position " + (index + 1) + ": " + cloned.getName());
+            }
+        });
+
         Button deleteBtn = new Button("🗑");
         deleteBtn.setStyle("-fx-background-color: transparent; -fx-text-fill: #ff5252; -fx-padding: 2; -fx-cursor: hand;");
         deleteBtn.setTooltip(new Tooltip("Task aus dem Workflow löschen"));
@@ -2020,7 +2173,7 @@ public class ProjectWorkflowEditorView {
             }
         });
 
-        actionsRow.getChildren().addAll(upBtn, downBtn, runSingleBtn, configBtn, deleteBtn);
+        actionsRow.getChildren().addAll(upBtn, downBtn, runSingleBtn, configBtn, cloneBtn, deleteBtn);
         if (dbRoutingRow != null) {
             card.getChildren().addAll(topRow, subRow, dbRoutingRow, actionsRow);
         } else {
@@ -2112,6 +2265,9 @@ public class ProjectWorkflowEditorView {
                 if (diversityMaxStrategiesSpinner != null) {
                     diversityMaxStrategiesSpinner.getValueFactory().setValue(task.getDiversityMaxStrategies());
                 }
+                if (diversityRankByScoreCheckBox != null) {
+                    diversityRankByScoreCheckBox.setSelected(task.isDiversityRankByScore());
+                }
             } finally {
                 updatingDiversityControls = false;
             }
@@ -2173,6 +2329,7 @@ public class ProjectWorkflowEditorView {
             }
             if (optimizerAlgorithmCombo != null && optimizerTask) {
                 updateOptimizerControls(task);
+                refreshOptimizerTargetParameterControls(task);
             }
 
             // Dynamically display only sub-tabs relevant to this task type
@@ -2363,6 +2520,216 @@ public class ProjectWorkflowEditorView {
         saveProject();
     }
 
+    private void adoptPassParametersForNextTask(CombinedPass selectedPass, String dbName) {
+        try {
+            WorkflowTask nextOptimizer = GuidedOptimizationService.findNextActiveOptimizer(project, dbName)
+                    .orElseThrow(() -> new IllegalArgumentException(
+                            "Nach der Databank '" + dbName + "' ist kein aktiver Optimizer-Task vorhanden."));
+            int targetCount = nextOptimizer.getOptimizerTargetParameters().size();
+            if (targetCount == 0) {
+                throw new IllegalArgumentException("Im nächsten Optimizer-Task '" + nextOptimizer.getName()
+                        + "' sind noch keine Ziel-Parameter ausgewählt.");
+            }
+
+            PassPresetResolver.Resolution resolution = PassPresetResolver.resolve(
+                    selectedPass, project != null ? project.getExpert() : engine.getExpert());
+            String fidelityText;
+            switch (resolution.fidelity()) {
+                case EXACT_SNAPSHOT: fidelityText = "exakter Lauf-Snapshot"; break;
+                case OPTIMIZATION_BASE: fidelityText = "archiviertes Optimizer-Preset + Passwerte"; break;
+                default: fidelityText = "aktuelle EA-Konfiguration (nicht vollständig beweisbar)"; break;
+            }
+
+            String warning = resolution.warning() != null && !resolution.warning().isBlank()
+                    ? "\n\nWARNUNG: " + resolution.warning() : "";
+            Alert confirmation = new Alert(Alert.AlertType.CONFIRMATION);
+            confirmation.setTitle("Parameter-Basis übernehmen");
+            confirmation.setHeaderText("Pass #" + selectedPass.getPassNumber() + " → " + nextOptimizer.getName());
+            confirmation.setContentText("Quelle: " + dbName
+                    + "\nParameterquelle: " + fidelityText
+                    + "\nNeue Optimierungsziele: " + targetCount
+                    + "\n\nAlle übrigen Parameter werden mit den Passwerten fixiert (N)."
+                    + warning);
+            confirmation.initOwner(root.getScene().getWindow());
+            if (confirmation.showAndWait().orElse(ButtonType.CANCEL) != ButtonType.OK) return;
+
+            GuidedOptimizationService.AdoptionResult result = GuidedOptimizationService.adoptPassParameters(
+                    project, engine.getEaParameters(), resolution.parameters(), selectedPass, dbName);
+            engine.setEaParameters(result.getParameters());
+            saveProject();
+            refreshTaskChain();
+            selectTask(result.getNextOptimizer());
+            showParameterAdoptionBanner("Parameter aus Pass #" + result.getPassNumber()
+                    + " als Basis für '" + result.getNextOptimizer().getName() + "' übernommen", true);
+            logToConsole("GUIDED-OPT", result.getAdoptedParameterCount() + " Passparameter fixiert; "
+                    + result.getEnabledTargetCount() + " Zielparameter für den nächsten Optimizer aktiviert.");
+        } catch (IllegalArgumentException ex) {
+            showParameterAdoptionBanner(ex.getMessage(), false);
+            Alert alert = new Alert(Alert.AlertType.ERROR, ex.getMessage(), ButtonType.OK);
+            alert.setTitle("Parameter-Basis konnte nicht übernommen werden");
+            alert.setHeaderText("Guided Optimization");
+            alert.initOwner(root.getScene().getWindow());
+            alert.show();
+        } catch (RuntimeException ex) {
+            logger.error("Fehler bei der Parameter-Übernahme aus Databank {}", dbName, ex);
+            showParameterAdoptionBanner("Parameter-Übernahme fehlgeschlagen: " + ex.getMessage(), false);
+        }
+    }
+
+    private void adoptBestPassAutomatically(WorkflowTask nextOptimizer) {
+        String sourceDatabank = nextOptimizer != null ? nextOptimizer.getSourceDatabank() : "";
+        List<CombinedPass> candidates = databankManager.getDatabank(sourceDatabank);
+        CombinedPass bestPass = GuidedOptimizationService.selectBestPass(candidates)
+                .orElseThrow(() -> new IllegalStateException(
+                        "Automatikmodus: In Databank '" + sourceDatabank
+                                + "' existiert keine Strategie mit einem endlichen Score."));
+
+        PassPresetResolver.Resolution resolution = PassPresetResolver.resolve(
+                bestPass, project != null ? project.getExpert() : engine.getExpert());
+        if (resolution.fidelity() == PassPresetResolver.Fidelity.CURRENT_CONFIG) {
+            throw new IllegalStateException("Automatikmodus: Pass #" + bestPass.getPassNumber()
+                    + " kann nicht sicher übernommen werden, weil kein archiviertes Lauf-Preset vorhanden ist. "
+                    + "Die automatische Vererbung wurde gestoppt, statt Parameterwerte zu raten.");
+        }
+
+        GuidedOptimizationService.AdoptionResult result = GuidedOptimizationService.adoptPassParameters(
+                project, engine.getEaParameters(), resolution.parameters(), bestPass, sourceDatabank);
+        if (result.getNextOptimizer() != nextOptimizer) {
+            throw new IllegalStateException("Automatikmodus hat einen unerwarteten Ziel-Task ermittelt: "
+                    + result.getNextOptimizer().getName());
+        }
+
+        engine.setEaParameters(result.getParameters());
+        saveProject();
+        String scoreText = String.format(Locale.ROOT, "%.3f", bestPass.getScore());
+        String message = "Pass #" + bestPass.getPassNumber() + " mit höchstem Score " + scoreText
+                + " aus '" + sourceDatabank + "' automatisch als Basis für '"
+                + nextOptimizer.getName() + "' übernommen.";
+        logToConsole("AUTOMATIK", message);
+        Platform.runLater(() -> showParameterAdoptionBanner(message, true));
+    }
+
+    private void showParameterAdoptionBanner(String message, boolean success) {
+        if (parameterAdoptionBanner == null) return;
+        parameterAdoptionBanner.setText((success ? "✓ " : "⚠ ") + message);
+        parameterAdoptionBanner.setStyle("-fx-background-color: "
+                + (success ? "rgba(76, 175, 80, 0.24)" : "rgba(255, 82, 82, 0.24)")
+                + "; -fx-border-color: " + (success ? "#76ff03" : "#ff5252")
+                + "; -fx-border-radius: 4; -fx-background-radius: 4; -fx-text-fill: #ffffff; -fx-font-weight: bold;");
+        parameterAdoptionBanner.setManaged(true);
+        parameterAdoptionBanner.setVisible(true);
+        PauseTransition hide = new PauseTransition(javafx.util.Duration.seconds(8));
+        hide.setOnFinished(e -> {
+            parameterAdoptionBanner.setVisible(false);
+            parameterAdoptionBanner.setManaged(false);
+        });
+        hide.play();
+    }
+
+    private void refreshOptimizerTargetParameterControls(WorkflowTask task) {
+        if (optimizerTargetParametersBox == null || optimizerTargetParametersSummary == null) return;
+        updatingOptimizerTargetControls = true;
+        try {
+            optimizerTargetParametersBox.getChildren().clear();
+            if (task == null || task.getType() != WorkflowTask.TaskType.OPTIMIZER) {
+                optimizerTargetParametersSummary.setText("");
+                return;
+            }
+
+            Set<String> targets = new LinkedHashSet<>(task.getOptimizerTargetParameters());
+            String filter = optimizerTargetFilterField != null && optimizerTargetFilterField.getText() != null
+                    ? optimizerTargetFilterField.getText().trim().toLowerCase(Locale.ROOT) : "";
+            List<EaParameter> parameters = task.getOptimizerParameterSnapshot();
+            if (parameters.isEmpty()) parameters = engine.getEaParameters();
+
+            int visible = 0;
+            for (EaParameter parameter : parameters) {
+                if (parameter == null || parameter.getName() == null || parameter.getName().isBlank()
+                        || parameter.isSectionHeader() || parameter.isStringType()) continue;
+                String name = parameter.getName().trim();
+                String display = parameter.getDisplayName() != null ? parameter.getDisplayName().trim() : "";
+                String searchable = (name + " " + display).toLowerCase(Locale.ROOT);
+                if (!filter.isEmpty() && !searchable.contains(filter)) continue;
+
+                CheckBox checkBox = new CheckBox(display.isEmpty() || display.equals(name)
+                        ? name : name + "  —  " + display);
+                checkBox.setUserData(name);
+                checkBox.setSelected(targets.contains(name));
+                checkBox.setStyle("-fx-text-fill: #d9dde6;");
+                checkBox.setOnAction(e -> {
+                    if (updatingOptimizerTargetControls) return;
+                    Set<String> changed = new LinkedHashSet<>(task.getOptimizerTargetParameters());
+                    if (checkBox.isSelected()) changed.add(name); else changed.remove(name);
+                    task.setOptimizerTargetParameters(new ArrayList<>(changed));
+                    synchronizeSnapshotTargetFlags(task);
+                    updateOptimizerTargetSummary(task);
+                    saveProject();
+                });
+                optimizerTargetParametersBox.getChildren().add(checkBox);
+                visible++;
+            }
+            if (visible == 0) {
+                Label empty = new Label(parameters.isEmpty()
+                        ? "Keine EA-Parameter geladen. Zuerst den EA-Parameterdialog öffnen."
+                        : "Keine Parameter entsprechen dem Suchtext.");
+                empty.setStyle("-fx-text-fill: #ffab40;");
+                optimizerTargetParametersBox.getChildren().add(empty);
+            }
+            updateOptimizerTargetSummary(task);
+        } finally {
+            updatingOptimizerTargetControls = false;
+        }
+    }
+
+    private void updateOptimizerTargetSummary(WorkflowTask task) {
+        if (optimizerTargetParametersSummary == null || task == null) return;
+        int count = task.getOptimizerTargetParameters().size();
+        boolean hasSnapshot = !task.getOptimizerParameterSnapshot().isEmpty();
+        String basis = task.isOptimizerParameterBasisAdopted()
+                ? "Basis Pass #" + task.getOptimizerParameterBasisPassNumber()
+                : (hasSnapshot ? "Suchraum-Vorlage vorhanden" : "noch kein Snapshot");
+        optimizerTargetParametersSummary.setText(count + " Zielparameter · " + basis);
+        optimizerTargetParametersSummary.setStyle("-fx-text-fill: "
+                + (count > 0 ? "#76ff03" : "#ffab40") + "; -fx-font-weight: bold;");
+    }
+
+    private void useCurrentOptimizedParametersAsTargets() {
+        if (selectedTask == null || selectedTask.getType() != WorkflowTask.TaskType.OPTIMIZER) return;
+        List<EaParameter> parameters = selectedTask.getOptimizerParameterSnapshot();
+        if (parameters.isEmpty()) parameters = engine.getEaParameters();
+        List<String> targets = new ArrayList<>();
+        for (EaParameter parameter : parameters) {
+            if (parameter != null && parameter.isOptimizeEnabled() && !parameter.isSectionHeader()
+                    && !parameter.isStringType() && parameter.getName() != null && !parameter.getName().isBlank()) {
+                targets.add(parameter.getName().trim());
+            }
+        }
+        selectedTask.setOptimizerTargetParameters(targets);
+        synchronizeSnapshotTargetFlags(selectedTask);
+        refreshOptimizerTargetParameterControls(selectedTask);
+        saveProject();
+    }
+
+    private void synchronizeSnapshotTargetFlags(WorkflowTask task) {
+        if (task == null) return;
+        List<EaParameter> snapshot = task.getOptimizerParameterSnapshot();
+        if (snapshot.isEmpty()) return;
+        task.setOptimizerParameterSnapshot(applyTargetFlags(snapshot, task.getOptimizerTargetParameters()));
+    }
+
+    private static List<EaParameter> applyTargetFlags(List<EaParameter> parameters, List<String> targetNames) {
+        Set<String> targets = new LinkedHashSet<>(targetNames != null ? targetNames : List.of());
+        List<EaParameter> result = new ArrayList<>();
+        if (parameters == null) return result;
+        for (EaParameter source : parameters) {
+            if (source == null) continue;
+            EaParameter copy = source.copy();
+            copy.setOptimizeEnabled(copy.getName() != null && targets.contains(copy.getName()));
+            result.add(copy);
+        }
+        return result;
+    }
+
     private void saveOptimizerOutputDirectory() {
         if (selectedTask == null || selectedTask.getType() != WorkflowTask.TaskType.OPTIMIZER
                 || optimizerOutputDirectoryField == null) return;
@@ -2489,6 +2856,8 @@ public class ProjectWorkflowEditorView {
             engine.setOptimizationCriterion(task.getOptimizerCriterion());
             engine.setForwardMode(task.getOptimizerForwardMode());
             engine.setForwardDate(parseDateOrNull(task.getOptimizerForwardDate()));
+            engine.applyOptimizerTaskParameters(task,
+                    GuidedOptimizationService.requiresAdoptedBasis(project, task));
         }
         String taskSymbol = task.getRetestSymbol();
         String taskPeriod = task.getRetestPeriod();
@@ -2589,6 +2958,48 @@ public class ProjectWorkflowEditorView {
                 && type != WorkflowTask.TaskType.OPTIMIZER;
     }
 
+    /**
+     * Decides whether resume may trust a COMPLETED task.
+     * Strategy selection only initializes the EA and portfolio export writes an
+     * external artifact, so neither task has a strategy target to validate.
+     * Every other task must still have strategies in its configured target
+     * databank; otherwise a persisted status without its output is stale.
+     */
+    static boolean shouldSkipCompletedTask(WorkflowTask task,
+                                           java.util.function.Predicate<String> databankHasStrategies) {
+        return shouldReuseExistingTaskResult(task, false, databankHasStrategies);
+    }
+
+    /**
+     * Decides whether an already persisted task result can be reused on resume.
+     * Manual workflows only trust COMPLETED results. Automatic workflows also
+     * recover stale PENDING/RUNNING states when their strategy output is still
+     * present; FAILED results are always executed again.
+     */
+    static boolean shouldReuseExistingTaskResult(WorkflowTask task,
+                                                 boolean automaticMode,
+                                                 java.util.function.Predicate<String> databankHasStrategies) {
+        if (task == null || task.getType() == null || task.getStatus() == null
+                || task.getStatus() == WorkflowTask.TaskStatus.FAILED
+                || task.getStatus() == WorkflowTask.TaskStatus.DISABLED) {
+            return false;
+        }
+        if (task.getType() == WorkflowTask.TaskType.STRATEGY_SELECTION
+                || task.getType() == WorkflowTask.TaskType.PORTFOLIO_EXPORT) {
+            return task.getStatus() == WorkflowTask.TaskStatus.COMPLETED;
+        }
+        boolean resumableStatus = task.getStatus() == WorkflowTask.TaskStatus.COMPLETED
+                || (automaticMode && (task.getStatus() == WorkflowTask.TaskStatus.PENDING
+                        || task.getStatus() == WorkflowTask.TaskStatus.RUNNING));
+        return resumableStatus && databankHasStrategies != null
+                && databankHasStrategies.test(task.getTargetDatabank());
+    }
+
+    static boolean shouldAutomaticallyAdoptBestPass(CustomProject project, WorkflowTask task) {
+        return project != null && project.isAutomaticModeEnabled()
+                && GuidedOptimizationService.requiresAdoptedBasis(project, task);
+    }
+
     private void requireTaskInputStrategies(WorkflowTask task, List<CombinedPass> inputPasses) {
         if (taskRequiresInputStrategies(task.getType())
                 && (inputPasses == null || inputPasses.isEmpty())) {
@@ -2616,6 +3027,7 @@ public class ProjectWorkflowEditorView {
 
         logToConsole("SINGLE-STEP", "=== STARTE EINZELTEST FÜR TASK: " + task.getName() + " ===");
 
+        engine.setActiveCustomProject(project);
         activeProjectTask = new Task<Void>() {
             @Override
             protected Void call() throws Exception {
@@ -2650,8 +3062,16 @@ public class ProjectWorkflowEditorView {
                         if (engine.getOptResult() != null) {
                             outputPasses = engine.getOptResult().buildCombinedPasses(engine.getForwardMode() > 0, engine.loadScoreWeightsFromDb());
                             String modelName = com.backtester.engine.OptimizationConfig.MODEL_NAMES[task.getMt5Model()];
+                            String optSymbol = engine.getSymbol();
+                            String optPeriod = engine.getPeriod();
                             if (outputPasses != null) {
                                 for (CombinedPass cp : outputPasses) {
+                                    if (cp.getSymbol() == null || cp.getSymbol().isBlank()) {
+                                        cp.setSymbol(optSymbol);
+                                    }
+                                    if (cp.getPeriod() == null || cp.getPeriod().isBlank()) {
+                                        cp.setPeriod(optPeriod);
+                                    }
                                     if (cp.getBacktestPass() != null) {
                                         cp.getBacktestPass().setTickModel(modelName);
                                     }
@@ -2684,7 +3104,9 @@ public class ProjectWorkflowEditorView {
                                 task.getDiversityParamDiffPct(),
                                 task.getDiversityTradeDiffPct(),
                                 task.getDiversityMinDifferentParams(),
-                                task.getDiversityMaxStrategies());
+                                task.getDiversityMaxStrategies(),
+                                task.isDiversityRankByScore(),
+                                task.getDiversityParameterSnapshot());
                         break;
                     case ROBUSTNESS_CV:
                         engine.setSelectedDiversePasses(inputPasses);
@@ -2789,6 +3211,7 @@ public class ProjectWorkflowEditorView {
 
         logToConsole("PROJECT", "=== STARTE CUSTOM PROJECT: " + project.getName() + " ===");
 
+        engine.setActiveCustomProject(project);
         activeProjectTask = new Task<Void>() {
             @Override
             protected Void call() throws Exception {
@@ -2805,6 +3228,44 @@ public class ProjectWorkflowEditorView {
                         task.setStatus(WorkflowTask.TaskStatus.DISABLED);
                         logToConsole("PROJECT", "Überspringe deaktivierten Task " + (i + 1) + ": " + task.getName());
                         continue;
+                    }
+
+                    WorkflowTask.TaskStatus persistedStatus = task.getStatus();
+                    boolean reuseExistingResult = shouldReuseExistingTaskResult(task,
+                            project.isAutomaticModeEnabled(), databankName ->
+                                    databankManager.hasDatabank(databankName)
+                                            && !databankManager.getDatabank(databankName).isEmpty());
+                    if (reuseExistingResult) {
+                        task.setStatus(WorkflowTask.TaskStatus.COMPLETED);
+                        logToConsole("PROJECT", "Überspringe Task mit vorhandenem Ergebnis "
+                                + (i + 1) + ": " + task.getName()
+                                + (persistedStatus != WorkflowTask.TaskStatus.COMPLETED
+                                        ? " (persistierter Status: " + persistedStatus + ")" : ""));
+                        continue;
+                    }
+
+                    if (persistedStatus == WorkflowTask.TaskStatus.COMPLETED) {
+                        task.setStatus(WorkflowTask.TaskStatus.PENDING);
+                        logToConsole("PROJECT", "Task " + (i + 1) + " ('" + task.getName()
+                                + "') war als abgeschlossen markiert, aber die Zieldatabank '"
+                                + task.getTargetDatabank()
+                                + "' enthält keine Strategien. Der Task wird erneut ausgeführt.");
+                    }
+
+                    if (GuidedOptimizationService.requiresAdoptedBasis(project, task)) {
+                        if (shouldAutomaticallyAdoptBestPass(project, task)) {
+                            adoptBestPassAutomatically(task);
+                        } else {
+                            task.setStatus(WorkflowTask.TaskStatus.PENDING);
+                            String pauseMessage = "Workflow wartet vor Task " + (i + 1) + " ('"
+                                    + task.getName() + "') auf einen Hand-Pick aus der vorherigen Stufe.";
+                            task.setLastExecutionLog(pauseMessage);
+                            logToConsole("GUIDED", pauseMessage);
+                            updateProgressUI((double) i / total,
+                                    "Pausiert: Pass als Parameter-Basis für '" + task.getName() + "' auswählen.");
+                            saveProject();
+                            return null;
+                        }
                     }
 
                     task.setStatus(WorkflowTask.TaskStatus.RUNNING);
@@ -2863,7 +3324,9 @@ public class ProjectWorkflowEditorView {
                                         task.getDiversityParamDiffPct(),
                                         task.getDiversityTradeDiffPct(),
                                         task.getDiversityMinDifferentParams(),
-                                        task.getDiversityMaxStrategies());
+                                        task.getDiversityMaxStrategies(),
+                                        task.isDiversityRankByScore(),
+                                        task.getDiversityParameterSnapshot());
                                 break;
                             case ROBUSTNESS_CV:
                                 engine.setSelectedDiversePasses(inputPasses);
@@ -2964,20 +3427,14 @@ public class ProjectWorkflowEditorView {
     }
 
     private void validateProjectExecutionOrder() {
+        WorkflowConfigurationValidator.validateDatabankExecutionOrder(
+                project.getTasks(), databankManager.getDatabankNames());
         java.util.Map<String, Set<String>> robustnessLineageByDatabank = new java.util.HashMap<>();
         java.util.Map<String, Set<String>> kiLineageByDatabank = new java.util.HashMap<>();
         for (WorkflowTask task : project.getTasks()) {
             if (task == null || !task.isEnabled()) continue;
             if (task.getType() == null) {
                 throw new IllegalStateException("Ein aktivierter Task besitzt keinen gültigen Typ.");
-            }
-            if (!databankManager.hasDatabank(task.getSourceDatabank())) {
-                throw new IllegalStateException("Task '" + task.getName() + "' verweist auf die nicht vorhandene Quell-Databank '"
-                        + task.getSourceDatabank() + "'.");
-            }
-            if (!databankManager.hasDatabank(task.getTargetDatabank())) {
-                throw new IllegalStateException("Task '" + task.getName() + "' verweist auf die nicht vorhandene Ziel-Databank '"
-                        + task.getTargetDatabank() + "'.");
             }
             String sourceKey = normalizedDatabankName(task.getSourceDatabank());
             String targetKey = normalizedDatabankName(task.getTargetDatabank());
@@ -3056,20 +3513,19 @@ public class ProjectWorkflowEditorView {
         for (RetesterOverwriteRisk risk : risks) {
             if (details.length() > 0) details.append("\n\n");
             details.append("• Retester '").append(risk.task().getName())
-                    .append("' liest aus '").append(risk.sourceDatabank()).append("'.\n")
-                    .append("  Diese Daten enthalten bereits ein Retest-Ergebnis von: ")
+                    .append("' schreibt in Ziel-Tab '").append(risk.targetDatabank()).append("'.\n")
+                    .append("  Dieser Tab wurde bereits beschrieben von: ")
                     .append(String.join(", ", risk.upstreamRetesterNames())).append(".");
         }
-        details.append("\n\nEine Strategie kann im weitergegebenen Datensatz derzeit nur ein Retest-Ergebnis tragen. Der spätere Retester "
-                + "ersetzt dieses Ergebnis in seiner Ausgabe. Verwende für unabhängige Retests eine gemeinsame "
-                + "Ausgangs-Databank vor dem ersten Retester und getrennte Ziel-Databanken, sodass kein Retester "
-                + "die Ausgabe eines anderen Retesters als Quelle liest.");
+        details.append("\n\nGleicher Ziel-Tab überschreibt den Backtest-Run dieses Tabs (Setfile + Ergebnis). "
+                + "Andere Tabs bleiben in der Strategie-Historie erhalten. "
+                + "Für parallele Retests getrennte Ziel-Databanken verwenden.");
 
         ButtonType configureButton = new ButtonType("Zur Konfiguration", ButtonBar.ButtonData.CANCEL_CLOSE);
         ButtonType continueButton = new ButtonType("Trotzdem starten", ButtonBar.ButtonData.OK_DONE);
-        Alert alert = new Alert(Alert.AlertType.WARNING, details.toString(), configureButton, continueButton);
+        Alert alert = new Alert(Alert.AlertType.INFORMATION, details.toString(), configureButton, continueButton);
         alert.setTitle("Retester-Konfiguration prüfen");
-        alert.setHeaderText("Mehrere Retester verwenden denselben Ergebnis-Pfad");
+        alert.setHeaderText("Gleicher Ziel-Tab überschreibt den Run dieses Tabs");
         if (root.getScene() != null) alert.initOwner(root.getScene().getWindow());
         return alert.showAndWait().orElse(configureButton) == continueButton;
     }
@@ -3092,6 +3548,7 @@ public class ProjectWorkflowEditorView {
                 t.setStatus(WorkflowTask.TaskStatus.PENDING);
                 t.getOutputPasses().clear();
             }
+            GuidedOptimizationService.clearAdoptedBasesForRestart(project);
             databankManager.clearAll();
             flushProjectSaveAsync(() -> {
                 refreshTaskChain();
@@ -3104,6 +3561,7 @@ public class ProjectWorkflowEditorView {
     }
 
     private void cleanupExecutionState() {
+        engine.setActiveCustomProject(null);
         saveProject();
         Platform.runLater(() -> {
             startBtn.setDisable(false);
@@ -3124,6 +3582,7 @@ public class ProjectWorkflowEditorView {
             if (taskChainListBox != null) taskChainListBox.setDisable(locked);
             if (bottomDatabankTabPane != null) bottomDatabankTabPane.setDisable(locked);
             if (databankToolbar != null) databankToolbar.setDisable(locked);
+            if (automaticModeToggle != null) automaticModeToggle.setDisable(locked);
         };
         if (Platform.isFxApplicationThread()) {
             updateUI.run();

@@ -265,6 +265,28 @@ public class OptimizationResultTest {
         assertEquals("backtest_reports/MyRunFolder_2026", copiedCombined.getReportDirectory());
     }
 
+    @Test
+    public void buildCombinedPassesStampsSymbolPeriodAndCopyPreservesThem() {
+        OptimizationResult optResult = new OptimizationResult();
+        optResult.setSymbol("AUDCAD");
+        optResult.setPeriod("M5");
+
+        OptimizationResult.Pass pass1 = new OptimizationResult.Pass();
+        pass1.setPassNumber(6319);
+        pass1.setTickModel("1 minute OHLC");
+        optResult.addPass(pass1);
+
+        List<OptimizationResult.CombinedPass> combined = optResult.buildCombinedPasses(false);
+        assertEquals("AUDCAD", combined.get(0).getSymbol());
+        assertEquals("M5", combined.get(0).getPeriod());
+        assertEquals("1 minute OHLC", combined.get(0).getTickModel());
+
+        OptimizationResult.CombinedPass copied = combined.get(0).copy();
+        assertEquals("AUDCAD", copied.getSymbol());
+        assertEquals("M5", copied.getPeriod());
+        assertEquals("1 minute OHLC", copied.getTickModel());
+    }
+
     private static OptimizationResult.Pass createRankingPass(int passNumber, double profit,
                                                                int trades, double recovery) {
         OptimizationResult.Pass pass = new OptimizationResult.Pass();

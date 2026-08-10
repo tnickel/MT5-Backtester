@@ -26,14 +26,18 @@ public final class DatabankArtifactContextResolver {
                                   String fallbackPeriod) {
         WorkflowTask executionTask = findExecutionTask(project, databankName);
         String passSymbol = uniquePassSymbol(passes);
+        String passPeriod = uniquePassPeriod(passes);
 
         String expert = firstNonBlank(project != null ? project.getExpert() : null, fallbackExpert);
+        // Prefer per-strategy market context stamped at optimizer/retester write time,
+        // then walk filter lineage back to the execution producer (never PRE_FILTER UI leftovers).
         String symbol = firstNonBlank(
-                executionTask != null ? executionTask.getRetestSymbol() : null,
                 passSymbol,
+                executionTask != null ? executionTask.getRetestSymbol() : null,
                 project != null ? project.getSymbol() : null,
                 fallbackSymbol);
         String period = firstNonBlank(
+                passPeriod,
                 executionTask != null ? executionTask.getRetestPeriod() : null,
                 project != null ? project.getPeriod() : null,
                 fallbackPeriod);
@@ -96,6 +100,18 @@ public final class DatabankArtifactContextResolver {
             String symbol = pass.getSymbol().trim();
             if (unique == null) unique = symbol;
             else if (!unique.equalsIgnoreCase(symbol)) return "";
+        }
+        return unique != null ? unique : "";
+    }
+
+    private static String uniquePassPeriod(List<CombinedPass> passes) {
+        if (passes == null) return "";
+        String unique = null;
+        for (CombinedPass pass : passes) {
+            if (pass == null || pass.getPeriod() == null || pass.getPeriod().isBlank()) continue;
+            String period = pass.getPeriod().trim();
+            if (unique == null) unique = period;
+            else if (!unique.equalsIgnoreCase(period)) return "";
         }
         return unique != null ? unique : "";
     }

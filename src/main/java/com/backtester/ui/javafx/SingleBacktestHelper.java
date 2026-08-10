@@ -11,6 +11,7 @@ import com.backtester.report.OptimizationResult.CombinedPass;
 import com.backtester.report.OptimizationResult.Pass;
 import com.backtester.report.PassPresetResolver;
 import com.backtester.workflow.CustomProject;
+import com.backtester.workflow.DatabankArtifactContextResolver;
 import com.backtester.workflow.WorkflowTask;
 import javafx.concurrent.Task;
 import javafx.scene.control.Alert;
@@ -84,24 +85,84 @@ public class SingleBacktestHelper {
         Pass pass = combinedPass.getBacktestPass();
         if (pass == null) return;
 
-        LocalDate customFrom = null;
-        LocalDate customTo = null;
-        Pass ltPass = combinedPass.getLongtermPass();
-        if (ltPass != null && ltPass.getFromDate() != null && ltPass.getToDate() != null) {
-            customFrom = parseDateOrNull(ltPass.getFromDate());
-            customTo = parseDateOrNull(ltPass.getToDate());
+        AppConfig config = AppConfig.getInstance();
+        String expert = project != null && project.getExpert() != null && !project.getExpert().isBlank()
+                ? project.getExpert() : config.get("app.expert", "ToTheMoon_KI_v132");
+
+        // 1) Per-strategy market context stamped when the optimizer/retester wrote the pass
+        String symbol = firstNonBlank(combinedPass.getSymbol());
+        String period = firstNonBlank(combinedPass.getPeriod());
+        String tickModel = firstNonBlank(combinedPass.getTickModel(), pass.getTickModel());
+
+        // 2) Walk filter lineage (data1 → data0 → OPTIMIZER). Never trust PRE_FILTER UI leftovers.
+        DatabankArtifactContextResolver.Context lineage = null;
+        if (project != null && dbName != null && !dbName.isBlank()) {
+            lineage = DatabankArtifactContextResolver.resolve(
+                    project, dbName, List.of(combinedPass), expert,
+                    config.get("app.symbol", "EURUSD"),
+                    config.get("app.period", "H1"));
+            if (symbol == null) symbol = firstNonBlank(lineage.symbol());
+            if (period == null) period = firstNonBlank(lineage.period());
+            if (expert == null || expert.isBlank()) expert = firstNonBlank(lineage.expert());
         }
 
-        String passSymbol = combinedPass.getSymbol();
-        if (customFrom != null && customTo != null) {
-            String expert = project != null && project.getExpert() != null && !project.getExpert().isBlank()
-                    ? project.getExpert() : AppConfig.getInstance().get("app.expert", "ToTheMoon_KI_v132");
-            String period = project != null && project.getPeriod() != null && !project.getPeriod().isBlank()
-                    ? project.getPeriod() : AppConfig.getInstance().get("app.period", "H1");
-            runSingleBacktestInMetaTrader(pass, expert, passSymbol, period, customFrom, customTo, parentWindow);
-        } else {
-            runSingleBacktestInMetaTrader(pass, passSymbol, dbName, project, parentWindow);
+        // 3) Project / AppConfig last resort only
+        if (symbol == null) {
+            symbol = firstNonBlank(
+                    project != null ? project.getSymbol() : null,
+                    config.get("app.symbol", "EURUSD"));
         }
+        if (period == null) {
+            period = firstNonBlank(
+                    project != null ? project.getPeriod() : null,
+                    config.get("app.period", "H1"));
+        }
+        if (symbol == null) symbol = "EURUSD";
+        if (period == null) period = "H1";
+
+        // Dates: longterm pass → pass dates → lineage execution task → defaults
+        LocalDate fromDate = null;
+        LocalDate toDate = null;
+        Pass ltPass = combinedPass.getLongtermPass();
+        if (ltPass != null) {
+            fromDate = parseDateOrNull(ltPass.getFromDate());
+            toDate = parseDateOrNull(ltPass.getToDate());
+        }
+        if (fromDate == null) fromDate = parseDateOrNull(pass.getFromDate());
+        if (toDate == null) toDate = parseDateOrNull(pass.getToDate());
+        if (lineage != null) {
+            if (fromDate == null) fromDate = lineage.from();
+            if (toDate == null) toDate = lineage.to();
+        }
+        if (fromDate == null) fromDate = LocalDate.now().minusYears(5);
+        if (toDate == null) toDate = LocalDate.now();
+
+        int modelId;
+        if (tickModel != null) {
+            modelId = parseModelToId(tickModel);
+        } else {
+            WorkflowTask origin = project != null ? project.findOriginTaskForDatabank(dbName) : null;
+            modelId = origin != null ? origin.getMt5Model() : 0;
+        }
+
+        // Persist missing period onto the in-memory strategy so subsequent saves keep it
+        if ((combinedPass.getPeriod() == null || combinedPass.getPeriod().isBlank()) && period != null) {
+            combinedPass.setPeriod(period);
+        }
+        if ((combinedPass.getSymbol() == null || combinedPass.getSymbol().isBlank()) && symbol != null) {
+            combinedPass.setSymbol(symbol);
+        }
+        if ((pass.getTickModel() == null || pass.getTickModel().isBlank()) && tickModel != null) {
+            pass.setTickModel(tickModel);
+        } else if ((pass.getTickModel() == null || pass.getTickModel().isBlank()) && modelId >= 0
+                && modelId < BacktestConfig.MODEL_NAMES.length) {
+            pass.setTickModel(BacktestConfig.MODEL_NAMES[modelId]);
+        }
+
+        log.info("Einzel-Backtest context: pass=#{} symbol={} period={} model={} db={}",
+                pass.getPassNumber(), symbol, period, modelId, dbName);
+
+        runSingleBacktestInMetaTrader(pass, expert, symbol, period, fromDate, toDate, parentWindow, modelId);
     }
 
     public static void runSingleBacktestInMetaTrader(Pass pass, String passSymbol, Window parentWindow) {
@@ -113,112 +174,11 @@ public class SingleBacktestHelper {
     }
 
     public static void runSingleBacktestInMetaTrader(Pass pass, String passSymbol, String dbName, CustomProject project, Window parentWindow) {
-        String expert = project != null && project.getExpert() != null && !project.getExpert().isBlank()
-                ? project.getExpert() : AppConfig.getInstance().get("app.expert", "ToTheMoon_KI_v132");
-
-        String symbol = null;
-        String period = null;
-
-        // 1. Base symbol/period on Project (most relevant global context)
-        if (project != null && project.getSymbol() != null && !project.getSymbol().isBlank()) {
-            symbol = project.getSymbol();
+        CombinedPass wrapper = new CombinedPass(pass, null, 0.0, 0.0, "");
+        if (passSymbol != null && !passSymbol.isBlank()) {
+            wrapper.setSymbol(passSymbol);
         }
-        if (project != null && project.getPeriod() != null && !project.getPeriod().isBlank()) {
-            period = project.getPeriod();
-        }
-
-        // 2. Fallback to passSymbol if we still don't have one
-        if (symbol == null && passSymbol != null && !passSymbol.isBlank()) {
-            symbol = passSymbol;
-        }
-
-        LocalDate fromDate = null;
-        LocalDate toDate = null;
-
-        if (project != null && project.getTasks() != null) {
-            // 3. Override with Optimizer Task defaults
-            WorkflowTask optTask = findOptimizerTask(project);
-            if (optTask != null) {
-                if (optTask.getRetestSymbol() != null && !optTask.getRetestSymbol().isBlank()) {
-                    symbol = optTask.getRetestSymbol();
-                }
-                if (optTask.getRetestPeriod() != null && !optTask.getRetestPeriod().isBlank()) {
-                    period = optTask.getRetestPeriod();
-                }
-            }
-
-            // 4. Override with Target Task defaults
-            WorkflowTask targetTask = findTaskForDatabank(project, dbName);
-            if (targetTask != null) {
-                if (targetTask.getRetestSymbol() != null && !targetTask.getRetestSymbol().isBlank()) {
-                    symbol = targetTask.getRetestSymbol();
-                }
-                if (targetTask.getRetestPeriod() != null && !targetTask.getRetestPeriod().isBlank()) {
-                    period = targetTask.getRetestPeriod();
-                }
-                fromDate = parseDateOrNull(targetTask.getStartDate());
-                toDate = parseDateOrNull(targetTask.getEndDate());
-
-                if (dbName != null && dbName.toLowerCase(Locale.ROOT).contains("data0") && targetTask.getOptimizerForwardDate() != null) {
-                    LocalDate fwdDate = parseDateOrNull(targetTask.getOptimizerForwardDate());
-                    if (fwdDate != null) {
-                        toDate = fwdDate;
-                    }
-                } else if (dbName != null && (dbName.toLowerCase(Locale.ROOT).contains("data1") || dbName.toLowerCase(Locale.ROOT).contains("fw"))) {
-                    LocalDate fwdDate = parseDateOrNull(targetTask.getOptimizerForwardDate());
-                    if (fwdDate != null) {
-                        fromDate = fwdDate;
-                    }
-                }
-            }
-        }
-
-        // 5. Ultimate fallback to AppConfig
-        if (symbol == null || symbol.isBlank()) {
-            symbol = AppConfig.getInstance().get("app.symbol", "EURUSD");
-        }
-        if (period == null || period.isBlank()) {
-            period = AppConfig.getInstance().get("app.period", "H1");
-        }
-
-        // 4.5 Extract exact date range from Pass if available
-        if (fromDate == null && pass != null) {
-            if (pass.getFromDate() != null && !pass.getFromDate().isBlank()) {
-                fromDate = parseDateOrNull(pass.getFromDate());
-            }
-            if (pass.getToDate() != null && !pass.getToDate().isBlank()) {
-                toDate = parseDateOrNull(pass.getToDate());
-            }
-        }
-
-        // Fallback: Check if project has a RETESTER task with explicit startDate/endDate
-        if (fromDate == null && project != null && project.getTasks() != null) {
-            for (WorkflowTask t : project.getTasks()) {
-                if (t.getType() == WorkflowTask.TaskType.RETESTER && t.getStartDate() != null && !t.getStartDate().isBlank()) {
-                    fromDate = parseDateOrNull(t.getStartDate());
-                    if (t.getEndDate() != null && !t.getEndDate().isBlank()) {
-                        toDate = parseDateOrNull(t.getEndDate());
-                    }
-                    break;
-                }
-            }
-        }
-
-        if (fromDate == null) fromDate = LocalDate.now().minusYears(5);
-        if (toDate == null) toDate = LocalDate.now();
-
-        int modelId = 0;
-        String modelStr = pass.getTickModel();
-        if ((modelStr == null || modelStr.isBlank()) && project != null && dbName != null && !dbName.isBlank()) {
-            WorkflowTask originTask = project.findOriginTaskForDatabank(dbName);
-            if (originTask != null) {
-                modelId = originTask.getMt5Model();
-            }
-        } else if (modelStr != null && !modelStr.isBlank()) {
-            modelId = parseModelToId(modelStr);
-        }
-
-        runSingleBacktestInMetaTrader(pass, expert, symbol, period, fromDate, toDate, parentWindow, modelId);
+        runSingleBacktestInMetaTrader(wrapper, dbName, project, parentWindow);
     }
 
     public static void runSingleBacktestInMetaTrader(Pass pass, String customExpert, String passSymbol, String customPeriod,
@@ -373,46 +333,26 @@ public class SingleBacktestHelper {
         alert.showAndWait();
     }
 
-    private static WorkflowTask findOptimizerTask(CustomProject project) {
-        if (project == null || project.getTasks() == null) return null;
-        for (WorkflowTask t : project.getTasks()) {
-            if (t.getType() == WorkflowTask.TaskType.OPTIMIZER) return t;
-        }
-        return null;
-    }
-
-    private static WorkflowTask findTaskForDatabank(CustomProject project, String dbName) {
-        if (project == null || project.getTasks() == null || dbName == null) return null;
-        String cleanDbName = dbName.replaceAll("\\s*\\(\\d+\\)$", "").trim();
-
-        for (WorkflowTask t : project.getTasks()) {
-            if (cleanDbName.equalsIgnoreCase(t.getTargetDatabank())) {
-                return t;
-            }
-        }
-        for (WorkflowTask t : project.getTasks()) {
-            if (cleanDbName.equalsIgnoreCase(t.getSourceDatabank())) {
-                return t;
-            }
-        }
-        String dbLower = cleanDbName.toLowerCase(Locale.ROOT);
-        for (WorkflowTask t : project.getTasks()) {
-            if (dbLower.contains("data0") && t.getType() == WorkflowTask.TaskType.OPTIMIZER) return t;
-            if (dbLower.contains("data1") && t.getType() == WorkflowTask.TaskType.PRE_FILTER) return t;
-            if ((dbLower.contains("langzeit") || dbLower.contains("retest")) && t.getType() == WorkflowTask.TaskType.RETESTER) return t;
-        }
-        return project.getTasks().isEmpty() ? null : project.getTasks().get(0);
-    }
-
     public static int parseModelToId(String modelStr) {
         if (modelStr == null || modelStr.isBlank()) return 0;
         String m = modelStr.trim();
-        if (m.equals("0") || m.equalsIgnoreCase("Every Tick") || m.equalsIgnoreCase("MODEL_EVERY_TICK")) return 0;
-        if (m.equals("1") || m.equalsIgnoreCase("1 Minute OHLC") || m.equalsIgnoreCase("OHLC_M1") || m.equalsIgnoreCase("MODEL_OHLC_M1")) return 1;
-        if (m.equals("2") || m.equalsIgnoreCase("Open Prices") || m.equalsIgnoreCase("MODEL_OPEN_PRICES")) return 2;
-        if (m.equals("3") || m.equalsIgnoreCase("Math Calculations") || m.equalsIgnoreCase("MODEL_MATH_CALCULATIONS")) return 3;
-        if (m.equals("4") || m.equalsIgnoreCase("Real Ticks") || m.equalsIgnoreCase("Every Tick Real Ticks") || m.equalsIgnoreCase("MODEL_REAL_TICKS")) return 4;
+        String lower = m.toLowerCase(Locale.ROOT);
+        if (m.equals("0") || lower.equals("every tick") || lower.equals("model_every_tick")) return 0;
+        if (m.equals("1") || lower.equals("1 minute ohlc") || lower.equals("ohlc_m1")
+                || lower.equals("model_ohlc_m1") || (lower.contains("ohlc") && lower.contains("m1"))) return 1;
+        if (m.equals("2") || lower.equals("open prices") || lower.equals("open price only")
+                || lower.equals("model_open_prices")) return 2;
+        if (m.equals("3") || lower.equals("math calculations") || lower.equals("model_math_calculations")) return 3;
+        if (m.equals("4") || lower.contains("real tick") || lower.equals("model_real_ticks")) return 4;
         return 0;
+    }
+
+    private static String firstNonBlank(String... values) {
+        if (values == null) return null;
+        for (String value : values) {
+            if (value != null && !value.isBlank()) return value.trim();
+        }
+        return null;
     }
 
     private static LocalDate parseDateOrNull(String dateStr) {

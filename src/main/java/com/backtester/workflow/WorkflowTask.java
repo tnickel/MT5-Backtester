@@ -1,5 +1,6 @@
 package com.backtester.workflow;
 
+import com.backtester.config.EaParameter;
 import com.backtester.report.OptimizationResult.CombinedPass;
 import com.backtester.engine.BacktestConfig;
 import java.time.LocalDate;
@@ -103,6 +104,17 @@ public class WorkflowTask {
     private Integer optimizerCriterion;
     private Integer optimizerForwardMode;
     private String optimizerForwardDate = "";
+    private List<String> optimizerTargetParameters = new ArrayList<>();
+    /**
+     * Complete, detached EA parameter configuration prepared for this optimizer
+     * stage by the guided hand-pick workflow. Keeping the snapshot on the task
+     * makes the hand-pick project-local and reproducible after an application
+     * restart; the global expert configuration is not sufficient for that.
+     */
+    private List<EaParameter> optimizerParameterSnapshot = new ArrayList<>();
+    private boolean optimizerParameterBasisAdopted;
+    private int optimizerParameterBasisPassNumber = -1;
+    private String optimizerParameterBasisDatabank = "";
     private long sensitivityRunTimestamp;
     /**
      * UI-level modelling mode. This is deliberately not the raw MT5 model
@@ -115,6 +127,8 @@ public class WorkflowTask {
     private Double diversityTradeDiffPct;
     private Integer diversityMinDifferentParams;
     private Integer diversityMaxStrategies;
+    private boolean diversityRankByScore;
+    private List<EaParameter> diversityParameterSnapshot = new ArrayList<>();
     private Double robustnessSweepPct;
     private Integer robustnessSteps;
     private Integer robustnessTimeShifts;
@@ -257,6 +271,72 @@ public class WorkflowTask {
         this.optimizerForwardDate = optimizerForwardDate != null ? optimizerForwardDate.trim() : "";
     }
 
+    /**
+     * Parameter names targeted by this optimizer stage. A missing field in
+     * legacy project JSON is treated as an empty selection.
+     */
+    public List<String> getOptimizerTargetParameters() {
+        List<String> copy = new ArrayList<>();
+        if (optimizerTargetParameters != null) {
+            for (String parameterName : optimizerTargetParameters) {
+                if (parameterName != null && !parameterName.isBlank()) {
+                    copy.add(parameterName.trim());
+                }
+            }
+        }
+        return copy;
+    }
+
+    public void setOptimizerTargetParameters(List<String> optimizerTargetParameters) {
+        this.optimizerTargetParameters = new ArrayList<>();
+        if (optimizerTargetParameters == null) return;
+        for (String parameterName : optimizerTargetParameters) {
+            if (parameterName != null && !parameterName.isBlank()) {
+                this.optimizerTargetParameters.add(parameterName.trim());
+            }
+        }
+    }
+
+    public List<EaParameter> getOptimizerParameterSnapshot() {
+        List<EaParameter> copy = new ArrayList<>();
+        if (optimizerParameterSnapshot != null) {
+            for (EaParameter parameter : optimizerParameterSnapshot) {
+                if (parameter != null) copy.add(parameter.copy());
+            }
+        }
+        return copy;
+    }
+
+    public void setOptimizerParameterSnapshot(List<EaParameter> optimizerParameterSnapshot) {
+        this.optimizerParameterSnapshot = new ArrayList<>();
+        if (optimizerParameterSnapshot == null) return;
+        for (EaParameter parameter : optimizerParameterSnapshot) {
+            if (parameter != null) this.optimizerParameterSnapshot.add(parameter.copy());
+        }
+    }
+
+    public boolean isOptimizerParameterBasisAdopted() { return optimizerParameterBasisAdopted; }
+    public void setOptimizerParameterBasisAdopted(boolean optimizerParameterBasisAdopted) {
+        this.optimizerParameterBasisAdopted = optimizerParameterBasisAdopted;
+    }
+    public int getOptimizerParameterBasisPassNumber() { return optimizerParameterBasisPassNumber; }
+    public void setOptimizerParameterBasisPassNumber(int passNumber) {
+        this.optimizerParameterBasisPassNumber = passNumber;
+    }
+    public String getOptimizerParameterBasisDatabank() {
+        return optimizerParameterBasisDatabank != null ? optimizerParameterBasisDatabank : "";
+    }
+    public void setOptimizerParameterBasisDatabank(String databank) {
+        this.optimizerParameterBasisDatabank = databank != null ? databank.trim() : "";
+    }
+
+    public void clearOptimizerParameterBasis() {
+        optimizerParameterBasisAdopted = false;
+        optimizerParameterBasisPassNumber = -1;
+        optimizerParameterBasisDatabank = "";
+        optimizerParameterSnapshot = new ArrayList<>();
+    }
+
     public boolean initializeOptimizerSettings(int mode, int criterion, int forwardMode, LocalDate forwardDate) {
         if (optimizerMode != null && optimizerCriterion != null && optimizerForwardMode != null) return false;
         setOptimizerMode(mode == 1 ? 1 : 2);
@@ -346,6 +426,29 @@ public class WorkflowTask {
         this.diversityMaxStrategies = value;
     }
 
+    public boolean isDiversityRankByScore() { return diversityRankByScore; }
+    public void setDiversityRankByScore(boolean diversityRankByScore) {
+        this.diversityRankByScore = diversityRankByScore;
+    }
+
+    public List<EaParameter> getDiversityParameterSnapshot() {
+        List<EaParameter> copy = new ArrayList<>();
+        if (diversityParameterSnapshot != null) {
+            for (EaParameter parameter : diversityParameterSnapshot) {
+                if (parameter != null) copy.add(parameter.copy());
+            }
+        }
+        return copy;
+    }
+
+    public void setDiversityParameterSnapshot(List<EaParameter> diversityParameterSnapshot) {
+        this.diversityParameterSnapshot = new ArrayList<>();
+        if (diversityParameterSnapshot == null) return;
+        for (EaParameter parameter : diversityParameterSnapshot) {
+            if (parameter != null) this.diversityParameterSnapshot.add(parameter.copy());
+        }
+    }
+
     public double getRobustnessSweepPct() {
         return robustnessSweepPct != null && validPercentage(robustnessSweepPct)
                 ? robustnessSweepPct : DEFAULT_ROBUSTNESS_SWEEP_PCT;
@@ -425,6 +528,11 @@ public class WorkflowTask {
         copy.optimizerCriterion = optimizerCriterion;
         copy.optimizerForwardMode = optimizerForwardMode;
         copy.setOptimizerForwardDate(optimizerForwardDate);
+        copy.setOptimizerTargetParameters(getOptimizerTargetParameters());
+        copy.setOptimizerParameterSnapshot(getOptimizerParameterSnapshot());
+        copy.setOptimizerParameterBasisAdopted(optimizerParameterBasisAdopted);
+        copy.setOptimizerParameterBasisPassNumber(optimizerParameterBasisPassNumber);
+        copy.setOptimizerParameterBasisDatabank(optimizerParameterBasisDatabank);
         copy.setSensitivityRunTimestamp(sensitivityRunTimestamp);
         copy.setExecutionMode(getExecutionMode());
         copy.setDeleteFailed(deleteFailed);
@@ -432,6 +540,8 @@ public class WorkflowTask {
         copy.diversityTradeDiffPct = diversityTradeDiffPct;
         copy.diversityMinDifferentParams = diversityMinDifferentParams;
         copy.diversityMaxStrategies = diversityMaxStrategies;
+        copy.diversityRankByScore = diversityRankByScore;
+        copy.setDiversityParameterSnapshot(getDiversityParameterSnapshot());
         copy.robustnessSweepPct = robustnessSweepPct;
         copy.robustnessSteps = robustnessSteps;
         copy.robustnessTimeShifts = robustnessTimeShifts;
@@ -443,6 +553,26 @@ public class WorkflowTask {
             conditionCopies.add(condition.copyForPersistence());
         }
         copy.setFilterConditions(conditionCopies);
+        return copy;
+    }
+
+    /**
+     * Full settings clone for "clone below" in the workflow UI.
+     * New id, PENDING status, no execution log / output cache.
+     */
+    public WorkflowTask cloneWithSettings() {
+        WorkflowTask copy = copyForPersistence();
+        copy.setId(UUID.randomUUID().toString());
+        copy.setStatus(TaskStatus.PENDING);
+        copy.setLastExecutionLog("");
+        copy.setSensitivityRunTimestamp(0);
+        copy.setOutputPasses(new ArrayList<>());
+        String baseName = getName() != null ? getName().trim() : getType().getDisplayName();
+        if (!baseName.toLowerCase(java.util.Locale.ROOT).endsWith(" (copy)")) {
+            copy.setName(baseName + " (copy)");
+        } else {
+            copy.setName(baseName);
+        }
         return copy;
     }
 

@@ -148,6 +148,8 @@ public class OptimizationResult {
         private Pass longtermPass;
         private String strategyName;
         private String symbol;
+        /** Chart period / timeframe that produced this strategy (e.g. M5). Persisted with the databank. */
+        private String period;
         private String reportDirectory;
 
         public String getReportDirectory() {
@@ -171,6 +173,31 @@ public class OptimizationResult {
 
         public void setSymbol(String symbol) {
             this.symbol = symbol;
+        }
+
+        public String getPeriod() {
+            return period;
+        }
+
+        public void setPeriod(String period) {
+            this.period = period;
+        }
+
+        /**
+         * Tick / modeling accuracy used when this strategy was produced
+         * (from the backtest pass, e.g. "1 minute OHLC").
+         */
+        public String getTickModel() {
+            if (backtestPass != null && backtestPass.getTickModel() != null && !backtestPass.getTickModel().isBlank()) {
+                return backtestPass.getTickModel();
+            }
+            if (forwardPass != null && forwardPass.getTickModel() != null && !forwardPass.getTickModel().isBlank()) {
+                return forwardPass.getTickModel();
+            }
+            if (longtermPass != null && longtermPass.getTickModel() != null && !longtermPass.getTickModel().isBlank()) {
+                return longtermPass.getTickModel();
+            }
+            return "";
         }
 
         public String getStrategyName() {
@@ -277,6 +304,7 @@ public class OptimizationResult {
                     score, consistency, scoreDetails);
             copy.strategyName = strategyName;
             copy.symbol = symbol;
+            copy.period = period;
             copy.reportDirectory = reportDirectory;
             return copy;
         }
@@ -525,6 +553,7 @@ public class OptimizationResult {
                                               fwTradesThreshold, years, weights, debug);
             CombinedPass cp = new CombinedPass(bt, fw, score, consistency, debug.toString());
             cp.setSymbol(this.symbol);
+            cp.setPeriod(this.period);
             combined.add(cp);
         }
         return combined;

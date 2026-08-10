@@ -281,6 +281,44 @@ public class WorkflowDiversityTest {
     }
 
     @Test
+    public void scoreRankedClusteringStartsWithHighestFiniteScoreDeterministically() {
+        WorkflowEngine engine = new WorkflowEngine(null);
+        Pass low = createSelectionPass(30, 100, 100, 1.0);
+        Pass tiedHigherPass = createSelectionPass(20, 100, 100, 1.0);
+        Pass tiedLowerPass = createSelectionPass(10, 100, 100, 1.0);
+        Pass invalid = createSelectionPass(1, 100, 100, 1.0);
+
+        List<CombinedPass> selected = engine.clusterDatabankPasses(List.of(
+                new CombinedPass(low, null, 1.0, 1.0, ""),
+                new CombinedPass(tiedHigherPass, null, 99.0, 1.0, ""),
+                new CombinedPass(invalid, null, Double.NaN, 1.0, ""),
+                new CombinedPass(tiedLowerPass, null, 99.0, 1.0, "")),
+                0.10, 0.15, 2, 1, true);
+
+        assertEquals(1, selected.size());
+        assertEquals(10, selected.get(0).getPassNumber());
+    }
+
+    @Test
+    public void scoreRankedClusteringContinuesPastSimilarRowsToFillDiverseLimit() {
+        WorkflowEngine engine = new WorkflowEngine(null);
+        Pass champion = createSelectionPass(1, 100, 100, 1.0);
+        champion.setParameter("entry", "10");
+        Pass similarRunnerUp = createSelectionPass(2, 100, 100, 1.0);
+        similarRunnerUp.setParameter("entry", "10");
+        Pass diverseThird = createSelectionPass(3, 200, 100, 1.0);
+        diverseThird.setParameter("entry", "100");
+
+        List<CombinedPass> selected = engine.clusterDatabankPasses(List.of(
+                new CombinedPass(similarRunnerUp, null, 90.0, 1.0, ""),
+                new CombinedPass(diverseThird, null, 80.0, 1.0, ""),
+                new CombinedPass(champion, null, 100.0, 1.0, "")),
+                0.10, 0.15, 1, 2, true);
+
+        assertEquals(List.of(1, 3), selected.stream().map(CombinedPass::getPassNumber).toList());
+    }
+
+    @Test
     public void dedicatedRetesterDatabankUsesRetestTradesForClustering() {
         WorkflowEngine engine = new WorkflowEngine(null);
         Pass first = createSelectionPass(1, 100, 100, 1.0);

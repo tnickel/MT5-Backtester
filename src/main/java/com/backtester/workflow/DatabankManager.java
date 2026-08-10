@@ -38,6 +38,8 @@ public class DatabankManager {
                 }
             }
         }
+        // Seed tab-keyed archive from legacy longtermPass slots when missing.
+        StrategyBacktestArchiveStore.migrateFromLongtermPasses(project);
     }
 
     public synchronized void saveToProject(CustomProject project) {
@@ -56,6 +58,9 @@ public class DatabankManager {
                     ? copyValidPasses(entry.getValue()) : new ArrayList<>());
         }
         project.setDatabanks(snapshot);
+        if (includeContents) {
+            StrategyBacktestArchiveStore.migrateFromLongtermPasses(project);
+        }
     }
 
     public synchronized List<String> getDatabankNames() {
