@@ -42,6 +42,10 @@ import javafx.scene.text.Font;
 import javafx.scene.text.FontWeight;
 import javafx.stage.DirectoryChooser;
 import javafx.stage.FileChooser;
+import javafx.stage.Modality;
+import javafx.stage.Stage;
+import javafx.stage.StageStyle;
+import javafx.stage.Window;
 import javafx.util.converter.DoubleStringConverter;
 
 import java.io.File;
@@ -91,12 +95,26 @@ public class ProjectWorkflowEditorView {
 
     // Left Panel: Tasks Chain List
     private VBox taskChainListBox;
+    private Button addTaskBtn;
     private WorkflowTask selectedTask;
 
     // Progress Tab Components
     private ProgressBar progressBar;
+    private Label progressPercentLabel;
     private Label progressLabel;
+    private Label currentTaskBannerLabel;
     private TextArea consoleLog;
+
+    /** Floating status window shown while a workflow/single-step run is active. */
+    private Stage executionStatusStage;
+    private Label executionStatusTitleLabel;
+    private Label executionStatusTaskLabel;
+    private ProgressBar executionStatusBar;
+    private Label executionStatusPercentLabel;
+    private Label executionStatusDetailLabel;
+
+    /** True while Start/Single-Step execution is running (keeps task chain visible). */
+    private boolean editorLocked;
 
     // Full Settings Sub-Tab Components
     private TabPane fullSettingsSubTabPane;
@@ -391,7 +409,7 @@ public class ProjectWorkflowEditorView {
         panel.getStyleClass().add("sci-fi-panel");
         panel.setMinWidth(330);
 
-        Button addTaskBtn = new Button("➕ Add new task");
+        addTaskBtn = new Button("➕ Add new task");
         addTaskBtn.getStyleClass().add("button-start");
         addTaskBtn.setMaxWidth(Double.MAX_VALUE);
         addTaskBtn.setFont(Font.font("Segoe UI", FontWeight.BOLD, 13));
@@ -437,16 +455,38 @@ public class ProjectWorkflowEditorView {
     }
 
     private VBox createProgressTabContent() {
-        VBox panel = new VBox(10);
+        VBox panel = new VBox(12);
         panel.setPadding(new Insets(10));
+
+        currentTaskBannerLabel = new Label("Aktueller Task: —");
+        currentTaskBannerLabel.setFont(Font.font("Segoe UI", FontWeight.BOLD, 14));
+        currentTaskBannerLabel.setTextFill(Color.web("#00e676"));
+        currentTaskBannerLabel.setMaxWidth(Double.MAX_VALUE);
+        currentTaskBannerLabel.setWrapText(true);
+        currentTaskBannerLabel.setPadding(new Insets(10, 12, 10, 12));
+        currentTaskBannerLabel.setStyle(
+            "-fx-background-color: rgba(0, 230, 118, 0.08); -fx-border-color: #00e676; "
+                + "-fx-border-width: 1.5; -fx-border-radius: 6; -fx-background-radius: 6;"
+        );
 
         progressBar = new ProgressBar(0);
         progressBar.setMaxWidth(Double.MAX_VALUE);
         progressBar.setPrefHeight(18);
+        HBox.setHgrow(progressBar, Priority.ALWAYS);
+
+        progressPercentLabel = new Label("0%");
+        progressPercentLabel.setFont(Font.font("Segoe UI", FontWeight.BOLD, 14));
+        progressPercentLabel.setTextFill(Color.web("#00e676"));
+        progressPercentLabel.setMinWidth(48);
+        progressPercentLabel.setAlignment(Pos.CENTER_RIGHT);
+
+        HBox progressRow = new HBox(10, progressBar, progressPercentLabel);
+        progressRow.setAlignment(Pos.CENTER_LEFT);
 
         progressLabel = new Label("Bereit");
         progressLabel.setFont(Font.font("Segoe UI", FontWeight.BOLD, 12));
         progressLabel.setTextFill(Color.web("#cbd5e1"));
+        progressLabel.setWrapText(true);
 
         consoleLog = new TextArea();
         consoleLog.setEditable(false);
@@ -454,7 +494,7 @@ public class ProjectWorkflowEditorView {
         consoleLog.getStyleClass().add("text-area");
         VBox.setVgrow(consoleLog, Priority.ALWAYS);
 
-        panel.getChildren().addAll(progressBar, progressLabel, consoleLog);
+        panel.getChildren().addAll(currentTaskBannerLabel, progressRow, progressLabel, consoleLog);
         return panel;
     }
 
@@ -2000,19 +2040,45 @@ public class ProjectWorkflowEditorView {
         if (project == null || project.getTasks() == null) return;
 
         List<WorkflowTask> tasks = project.getTasks();
+        VBox runningCard = null;
         for (int i = 0; i < tasks.size(); i++) {
             WorkflowTask task = tasks.get(i);
-            taskChainListBox.getChildren().add(createTaskCard(task, i, tasks.size()));
+            VBox card = createTaskCard(task, i, tasks.size());
+            taskChainListBox.getChildren().add(card);
+            if (task.getStatus() == WorkflowTask.TaskStatus.RUNNING) {
+                runningCard = card;
+            }
+        }
+        if (runningCard != null) {
+            VBox target = runningCard;
+            Platform.runLater(() -> {
+                target.requestFocus();
+                target.setViewOrder(-1);
+            });
         }
     }
 
     private VBox createTaskCard(WorkflowTask task, int index, int totalTasks) {
         VBox card = new VBox(6);
         card.setPadding(new Insets(10));
-        card.setStyle(
-            (selectedTask == task ? "-fx-background-color: rgba(0, 229, 255, 0.15); -fx-border-color: #00e5ff; " : "-fx-background-color: rgba(26, 30, 40, 0.85); -fx-border-color: #3e4555; ") +
-            "-fx-border-width: 1.5; -fx-border-radius: 6; -fx-background-radius: 6; -fx-cursor: hand;"
-        );
+        boolean isRunning = task.getStatus() == WorkflowTask.TaskStatus.RUNNING;
+        boolean isSelected = selectedTask == task;
+        if (isRunning) {
+            card.setStyle(
+                "-fx-background-color: rgba(0, 230, 118, 0.12); -fx-border-color: #00e676; "
+                    + "-fx-border-width: 3.5; -fx-border-radius: 6; -fx-background-radius: 6; -fx-cursor: hand;"
+            );
+        } else if (isSelected) {
+            card.setStyle(
+                "-fx-background-color: rgba(0, 229, 255, 0.15); -fx-border-color: #00e5ff; "
+                    + "-fx-border-width: 1.5; -fx-border-radius: 6; -fx-background-radius: 6; -fx-cursor: hand;"
+            );
+        } else {
+            card.setStyle(
+                "-fx-background-color: rgba(26, 30, 40, 0.85); -fx-border-color: #3e4555; "
+                    + "-fx-border-width: 1.5; -fx-border-radius: 6; -fx-background-radius: 6; -fx-cursor: hand;"
+            );
+        }
 
         card.setOnMouseClicked(e -> selectTask(task));
 
@@ -2026,6 +2092,7 @@ public class ProjectWorkflowEditorView {
 
         CheckBox toggleBox = new CheckBox();
         toggleBox.setSelected(task.isEnabled());
+        toggleBox.setDisable(editorLocked);
         toggleBox.setOnAction(e -> {
             task.setEnabled(toggleBox.isSelected());
             saveProject();
@@ -2044,7 +2111,7 @@ public class ProjectWorkflowEditorView {
         Label statusBadge = new Label(task.getStatus().getLabel());
         String statusColor = "#7e889a";
         if (task.getStatus() == WorkflowTask.TaskStatus.COMPLETED) statusColor = "#00e676";
-        else if (task.getStatus() == WorkflowTask.TaskStatus.RUNNING) statusColor = "#00e5ff";
+        else if (task.getStatus() == WorkflowTask.TaskStatus.RUNNING) statusColor = "#00e676";
         else if (task.getStatus() == WorkflowTask.TaskStatus.FAILED) statusColor = "#ff5252";
         statusBadge.setStyle("-fx-text-fill: " + statusColor + "; -fx-font-weight: bold; -fx-font-size: 11px;");
 
@@ -2095,7 +2162,7 @@ public class ProjectWorkflowEditorView {
         actionsRow.setAlignment(Pos.CENTER_RIGHT);
 
         Button upBtn = new Button("▲");
-        upBtn.setDisable(index == 0);
+        upBtn.setDisable(editorLocked || index == 0);
         upBtn.setStyle("-fx-background-color: transparent; -fx-text-fill: #cbd5e1; -fx-padding: 2; -fx-cursor: hand;");
         upBtn.setTooltip(new Tooltip("Task nach oben verschieben"));
         upBtn.setOnAction(e -> {
@@ -2107,7 +2174,7 @@ public class ProjectWorkflowEditorView {
         });
 
         Button downBtn = new Button("▼");
-        downBtn.setDisable(index == totalTasks - 1);
+        downBtn.setDisable(editorLocked || index == totalTasks - 1);
         downBtn.setStyle("-fx-background-color: transparent; -fx-text-fill: #cbd5e1; -fx-padding: 2; -fx-cursor: hand;");
         downBtn.setTooltip(new Tooltip("Task nach unten verschieben"));
         downBtn.setOnAction(e -> {
@@ -2119,6 +2186,7 @@ public class ProjectWorkflowEditorView {
         });
 
         Button runSingleBtn = new Button("▶");
+        runSingleBtn.setDisable(editorLocked);
         runSingleBtn.setStyle("-fx-background-color: transparent; -fx-text-fill: #00e5ff; -fx-font-weight: bold; -fx-padding: 2; -fx-cursor: hand;");
         runSingleBtn.setTooltip(new Tooltip("Einzelstep ausführen (nur diese Kachel)"));
         runSingleBtn.setOnAction(e -> {
@@ -2131,6 +2199,7 @@ public class ProjectWorkflowEditorView {
 
         Button configBtn = new Button(task.getType() == WorkflowTask.TaskType.DIVERSITY_FILTER
                 ? "⚙ Einstellungen" : "⚙");
+        configBtn.setDisable(editorLocked);
         configBtn.setStyle("-fx-background-color: transparent; -fx-text-fill: #ffd740; -fx-padding: 2; -fx-cursor: hand;");
         configBtn.setTooltip(new Tooltip(task.getType() == WorkflowTask.TaskType.DIVERSITY_FILTER
                 ? "Diversitäts-Clustering konfigurieren"
@@ -2161,6 +2230,7 @@ public class ProjectWorkflowEditorView {
         });
 
         Button deleteBtn = new Button("🗑");
+        deleteBtn.setDisable(editorLocked);
         deleteBtn.setStyle("-fx-background-color: transparent; -fx-text-fill: #ff5252; -fx-padding: 2; -fx-cursor: hand;");
         deleteBtn.setTooltip(new Tooltip("Task aus dem Workflow löschen"));
         deleteBtn.setOnAction(e -> {
@@ -3026,6 +3096,8 @@ public class ProjectWorkflowEditorView {
         centerMainTabPane.getSelectionModel().select(progressTab);
 
         logToConsole("SINGLE-STEP", "=== STARTE EINZELTEST FÜR TASK: " + task.getName() + " ===");
+        showExecutionStatusWindow("Einzelstep", task.getName(), "Task wird gestartet...");
+        updateProgressUI(0.0, "Führe Einzelstep aus: " + task.getName());
 
         engine.setActiveCustomProject(project);
         activeProjectTask = new Task<Void>() {
@@ -3037,8 +3109,7 @@ public class ProjectWorkflowEditorView {
                 task.setStatus(WorkflowTask.TaskStatus.RUNNING);
                 Platform.runLater(() -> {
                     refreshTaskChain();
-                    progressBar.setProgress(0.5);
-                    progressLabel.setText("Führe Einzelstep aus: " + task.getName());
+                    updateProgressUI(0.5, "Führe Einzelstep aus: " + task.getName());
                 });
 
                 List<CombinedPass> inputPasses = databankManager.getDatabank(task.getSourceDatabank());
@@ -3210,6 +3281,8 @@ public class ProjectWorkflowEditorView {
         centerMainTabPane.getSelectionModel().select(progressTab);
 
         logToConsole("PROJECT", "=== STARTE CUSTOM PROJECT: " + project.getName() + " ===");
+        showExecutionStatusWindow("Workflow", project.getName(), "Workflow wird gestartet...");
+        updateProgressUI(0.0, "Workflow startet...");
 
         engine.setActiveCustomProject(project);
         activeProjectTask = new Task<Void>() {
@@ -3272,8 +3345,8 @@ public class ProjectWorkflowEditorView {
                     final int currentIdx = i;
                     Platform.runLater(() -> {
                         refreshTaskChain();
-                        progressBar.setProgress((double) currentIdx / total);
-                        progressLabel.setText("Führe Task " + (currentIdx + 1) + " von " + total + " aus: " + task.getName());
+                        updateProgressUI((double) currentIdx / total,
+                            "Führe Task " + (currentIdx + 1) + " von " + total + " aus: " + task.getName());
                     });
 
                     logToConsole("PROJECT", "=== STARTE TASK " + (i + 1) + ": " + task.getName() +
@@ -3556,7 +3629,9 @@ public class ProjectWorkflowEditorView {
             });
         }
         progressBar.setProgress(0);
+        if (progressPercentLabel != null) progressPercentLabel.setText("0%");
         progressLabel.setText("Zurückgesetzt.");
+        if (currentTaskBannerLabel != null) currentTaskBannerLabel.setText("Aktueller Task: —");
         consoleLog.clear();
     }
 
@@ -3564,6 +3639,7 @@ public class ProjectWorkflowEditorView {
         engine.setActiveCustomProject(null);
         saveProject();
         Platform.runLater(() -> {
+            hideExecutionStatusWindow();
             startBtn.setDisable(false);
             stopBtn.setDisable(true);
             resetBtn.setDisable(false);
@@ -3572,14 +3648,25 @@ public class ProjectWorkflowEditorView {
             refreshTaskChain();
             String focusDb = selectedTask != null ? selectedTask.getTargetDatabank() : null;
             refreshDatabanksUI(focusDb);
+            if (currentTaskBannerLabel != null && progressLabel != null
+                    && (progressLabel.getText() == null || progressLabel.getText().isBlank()
+                    || progressLabel.getText().startsWith("Führe"))) {
+                currentTaskBannerLabel.setText("Aktueller Task: —");
+            }
         });
     }
 
     private void setEditorLocked(boolean locked) {
+        editorLocked = locked;
         Runnable updateUI = () -> {
             if (fullSettingsTab != null) fullSettingsTab.setDisable(locked);
             if (resultsTab != null) resultsTab.setDisable(locked);
-            if (taskChainListBox != null) taskChainListBox.setDisable(locked);
+            if (addTaskBtn != null) addTaskBtn.setDisable(locked);
+            // Keep task chain visible so the green running border stays readable.
+            // Interaction is blocked per-control inside createTaskCard via editorLocked.
+            if (taskChainListBox != null) {
+                refreshTaskChain();
+            }
             if (bottomDatabankTabPane != null) bottomDatabankTabPane.setDisable(locked);
             if (databankToolbar != null) databankToolbar.setDisable(locked);
             if (automaticModeToggle != null) automaticModeToggle.setDisable(locked);
@@ -3755,9 +3842,140 @@ public class ProjectWorkflowEditorView {
     }
 
     private void updateProgressUI(double progress, String label) {
+        double clamped = Math.max(0.0, Math.min(1.0, progress));
+        int pct = (int) Math.round(clamped * 100.0);
+        String percentText = pct + "%";
         Platform.runLater(() -> {
-            progressBar.setProgress(progress);
-            progressLabel.setText(label);
+            if (progressBar != null) progressBar.setProgress(clamped);
+            if (progressPercentLabel != null) progressPercentLabel.setText(percentText);
+            if (progressLabel != null) progressLabel.setText(label);
+            if (currentTaskBannerLabel != null) {
+                currentTaskBannerLabel.setText("Aktueller Task: " + extractCurrentTaskName(label));
+            }
+            updateExecutionStatusWindow(extractCurrentTaskName(label), clamped, percentText, label);
         });
+    }
+
+    private String extractCurrentTaskName(String label) {
+        if (label == null || label.isBlank()) return "—";
+        String text = label.trim();
+        // "Führe Task 2 von 4 aus: Name" / "Führe Einzelstep aus: Name"
+        int colon = text.lastIndexOf(':');
+        if (colon >= 0 && colon + 1 < text.length()) {
+            String after = text.substring(colon + 1).trim();
+            if (!after.isEmpty()) {
+                // Keep only the task name before optional " | Restzeit..."
+                int pipe = after.indexOf(" | ");
+                return pipe >= 0 ? after.substring(0, pipe).trim() : after;
+            }
+        }
+        int pipe = text.indexOf(" | ");
+        return pipe >= 0 ? text.substring(0, pipe).trim() : text;
+    }
+
+    private void showExecutionStatusWindow(String modeTitle, String taskName, String detail) {
+        Runnable show = () -> {
+            ensureExecutionStatusWindow();
+            if (executionStatusTitleLabel != null) {
+                executionStatusTitleLabel.setText("Workflow läuft — " + modeTitle);
+            }
+            updateExecutionStatusWindow(taskName, 0.0, "0%", detail);
+            if (executionStatusStage != null && !executionStatusStage.isShowing()) {
+                Window owner = root.getScene() != null ? root.getScene().getWindow() : null;
+                if (owner != null) {
+                    executionStatusStage.setX(owner.getX() + Math.max(40, owner.getWidth() - 460));
+                    executionStatusStage.setY(owner.getY() + 90);
+                }
+                executionStatusStage.show();
+            }
+        };
+        if (Platform.isFxApplicationThread()) show.run();
+        else Platform.runLater(show);
+    }
+
+    private void ensureExecutionStatusWindow() {
+        if (executionStatusStage != null) return;
+
+        executionStatusTitleLabel = new Label("Workflow läuft");
+        executionStatusTitleLabel.setFont(Font.font("Segoe UI", FontWeight.BOLD, 15));
+        executionStatusTitleLabel.setTextFill(Color.web("#e6e9f0"));
+
+        executionStatusTaskLabel = new Label("Aktueller Task: —");
+        executionStatusTaskLabel.setFont(Font.font("Segoe UI", FontWeight.BOLD, 13));
+        executionStatusTaskLabel.setTextFill(Color.web("#00e676"));
+        executionStatusTaskLabel.setWrapText(true);
+
+        executionStatusBar = new ProgressBar(0);
+        executionStatusBar.setMaxWidth(Double.MAX_VALUE);
+        executionStatusBar.setPrefHeight(16);
+        HBox.setHgrow(executionStatusBar, Priority.ALWAYS);
+
+        executionStatusPercentLabel = new Label("0%");
+        executionStatusPercentLabel.setFont(Font.font("Segoe UI", FontWeight.BOLD, 14));
+        executionStatusPercentLabel.setTextFill(Color.web("#00e676"));
+        executionStatusPercentLabel.setMinWidth(48);
+        executionStatusPercentLabel.setAlignment(Pos.CENTER_RIGHT);
+
+        HBox barRow = new HBox(10, executionStatusBar, executionStatusPercentLabel);
+        barRow.setAlignment(Pos.CENTER_LEFT);
+
+        executionStatusDetailLabel = new Label("—");
+        executionStatusDetailLabel.setFont(Font.font("Segoe UI", 11));
+        executionStatusDetailLabel.setTextFill(Color.web("#94a3b8"));
+        executionStatusDetailLabel.setWrapText(true);
+
+        VBox content = new VBox(10,
+            executionStatusTitleLabel,
+            executionStatusTaskLabel,
+            barRow,
+            executionStatusDetailLabel
+        );
+        content.setPadding(new Insets(16));
+        content.setPrefWidth(420);
+        content.setStyle(
+            "-fx-background-color: #121722; -fx-border-color: #00e676; -fx-border-width: 2; "
+                + "-fx-border-radius: 8; -fx-background-radius: 8;"
+        );
+
+        executionStatusStage = new Stage(StageStyle.UTILITY);
+        executionStatusStage.setTitle("Workflow-Status");
+        executionStatusStage.initModality(Modality.NONE);
+        executionStatusStage.setAlwaysOnTop(true);
+        executionStatusStage.setResizable(false);
+        if (root.getScene() != null) {
+            executionStatusStage.initOwner(root.getScene().getWindow());
+            if (!root.getScene().getStylesheets().isEmpty()) {
+                javafx.scene.Scene statusScene = new javafx.scene.Scene(content);
+                statusScene.getStylesheets().addAll(root.getScene().getStylesheets());
+                statusScene.setFill(Color.web("#121722"));
+                executionStatusStage.setScene(statusScene);
+            } else {
+                executionStatusStage.setScene(new javafx.scene.Scene(content));
+            }
+        } else {
+            executionStatusStage.setScene(new javafx.scene.Scene(content));
+        }
+        executionStatusStage.setOnCloseRequest(e -> {
+            // Closing only hides the floating window; the run continues.
+            // Progress tab still shows the live status.
+        });
+    }
+
+    private void updateExecutionStatusWindow(String taskName, double progress, String percentText, String detail) {
+        if (executionStatusStage == null) return;
+        if (executionStatusTaskLabel != null) {
+            executionStatusTaskLabel.setText("Aktueller Task: " + (taskName == null || taskName.isBlank() ? "—" : taskName));
+        }
+        if (executionStatusBar != null) executionStatusBar.setProgress(progress);
+        if (executionStatusPercentLabel != null) executionStatusPercentLabel.setText(percentText);
+        if (executionStatusDetailLabel != null) {
+            executionStatusDetailLabel.setText(detail == null ? "" : detail);
+        }
+    }
+
+    private void hideExecutionStatusWindow() {
+        if (executionStatusStage != null && executionStatusStage.isShowing()) {
+            executionStatusStage.hide();
+        }
     }
 }
