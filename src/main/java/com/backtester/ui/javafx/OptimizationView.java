@@ -972,7 +972,11 @@ public class OptimizationView {
         btCvInfoBtn.setStyle("-fx-background-color: transparent; -fx-text-fill: #00e5ff; -fx-padding: 0 0 0 5; -fx-cursor: hand; -fx-font-weight: bold; -fx-font-size: 11px;");
         btCvInfoBtn.setOnAction(e -> {
             e.consume();
-            showCvExplanationDialog("BT CV (worst) Erklärung", "BT CV (worst) - Backtest Variationskoeffizient", getBtCvExplanationHtml());
+            OptimizationScoreDocs.showCvExplanationDialog(
+                    root.getScene() != null ? root.getScene().getWindow() : null,
+                    "BT CV (worst) Erklärung",
+                    "BT CV (worst) - Backtest Variationskoeffizient",
+                    OptimizationScoreDocs.getBtCvExplanationHtml());
         });
         btCvInfoBtn.setOnMousePressed(javafx.event.Event::consume);
         btCvInfoBtn.setOnMouseClicked(javafx.event.Event::consume);
@@ -1005,7 +1009,11 @@ public class OptimizationView {
         fwCvInfoBtn.setStyle("-fx-background-color: transparent; -fx-text-fill: #00e5ff; -fx-padding: 0 0 0 5; -fx-cursor: hand; -fx-font-weight: bold; -fx-font-size: 11px;");
         fwCvInfoBtn.setOnAction(e -> {
             e.consume();
-            showCvExplanationDialog("FW CV (worst) Erklärung", "FW CV (worst) - Forward Variationskoeffizient", getFwCvExplanationHtml());
+            OptimizationScoreDocs.showCvExplanationDialog(
+                    root.getScene() != null ? root.getScene().getWindow() : null,
+                    "FW CV (worst) Erklärung",
+                    "FW CV (worst) - Forward Variationskoeffizient",
+                    OptimizationScoreDocs.getFwCvExplanationHtml());
         });
         fwCvInfoBtn.setOnMousePressed(javafx.event.Event::consume);
         fwCvInfoBtn.setOnMouseClicked(javafx.event.Event::consume);
@@ -1493,10 +1501,10 @@ public class OptimizationView {
 
                     if (currentSensitivityRunner != null && currentSensitivityRunner.isCancelled()) {
                         progressLabel.setText("Sensitivity Analysis cancelled.");
-                        updateLlmAnalyzeButtonState(!sensitivityTable.getItems().isEmpty());
+                        kiPanel.updateAnalyzeButtonState(!sensitivityTable.getItems().isEmpty());
                     } else {
                         progressLabel.setText("Sensitivity Analysis completed.");
-                        updateLlmAnalyzeButtonState(true);
+                        kiPanel.updateAnalyzeButtonState(true);
                         new Alert(Alert.AlertType.INFORMATION, "Sensitivity Analysis completed!").show();
                     }
 

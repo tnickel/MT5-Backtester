@@ -196,6 +196,9 @@ public class ProjectWorkflowEditorView {
         verticalSplit.setOrientation(javafx.geometry.Orientation.VERTICAL);
         verticalSplit.setStyle("-fx-background-color: transparent;");
 
+        // Pipeline runner before databank panel: panel refresh calls findSensitivityRunTimestampForDatabank.
+        pipelineRunner = new ProjectWorkflowPipelineRunner(engine, databankManager, createPipelineHost());
+
         databankPanel = new ProjectWorkflowDatabankPanel(databankManager, createDatabankPanelHost());
         VBox bottomDatabankPanel = databankPanel.getNode();
 
@@ -203,8 +206,6 @@ public class ProjectWorkflowEditorView {
         verticalSplit.setDividerPositions(0.68);
 
         root.setCenter(verticalSplit);
-
-        pipelineRunner = new ProjectWorkflowPipelineRunner(engine, databankManager, createPipelineHost());
     }
 
     public BorderPane getView() {
@@ -2733,6 +2734,9 @@ public class ProjectWorkflowEditorView {
     }
 
     private long findSensitivityRunTimestampForDatabank(String databankName) {
+        if (pipelineRunner == null) {
+            return 0L;
+        }
         return pipelineRunner.findSensitivityRunTimestampForDatabank(databankName);
     }
 
