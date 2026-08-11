@@ -149,6 +149,60 @@ public class ToTheMoon132GuidedWorkflowFactoryTest {
         assertNotNull(project.getStrategyArchives().get(archive.getStrategyKey()).getRun("g11_safety_pick"));
     }
 
+    @Test
+    public void repairsWrongStageSearchSpaceOnGridFundament() {
+        List<EaParameter> preset = completeSyntheticPreset();
+        CustomProject project = ToTheMoon132GuidedWorkflowFactory.create(
+                "Guided", preset, Path.of("build", "guided-reports"));
+
+        WorkflowTask grid = project.getTasks().stream()
+                .filter(task -> task.getName().startsWith("01 Grid-Fundament"))
+                .findFirst().orElseThrow();
+        WorkflowTask safety = project.getTasks().stream()
+                .filter(task -> task.getName().startsWith("11 Adaptive"))
+                .findFirst().orElseThrow();
+
+        // Corrupt stage 01 to use stage 11 search space (the bug seen in production).
+        grid.setOptimizerTargetParameters(safety.getOptimizerTargetParameters());
+        grid.setOptimizerParameterSnapshot(safety.getOptimizerParameterSnapshot());
+        grid.setStatus(WorkflowTask.TaskStatus.COMPLETED);
+        project.getDatabanks().put("g01_grid_raw", new ArrayList<>(List.of()));
+
+        assertTrue(ToTheMoon132GuidedWorkflowFactory.repairStageOptimizerSearchSpaces(project));
+        assertFalse(ToTheMoon132GuidedWorkflowFactory.repairStageOptimizerSearchSpaces(project));
+
+        assertEquals(List.of("Inp_Grid_Step", "Inp_Step_Multiplier", "Inp_Next_Lot_Multiplier"),
+                grid.getOptimizerTargetParameters());
+        Set<String> enabled = new HashSet<>();
+        for (EaParameter parameter : grid.getOptimizerParameterSnapshot()) {
+            if (parameter.isOptimizeEnabled()) enabled.add(parameter.getName());
+        }
+        assertEquals(Set.of("Inp_Grid_Step", "Inp_Step_Multiplier", "Inp_Next_Lot_Multiplier"), enabled);
+        assertEquals("550", find(grid, "Inp_Grid_Step").getOptimizeStart());
+        assertEquals("900", find(grid, "Inp_Grid_Step").getOptimizeEnd());
+        assertEquals(WorkflowTask.TaskStatus.PENDING, grid.getStatus());
+        assertTrue(project.getDatabanks().get("g01_grid_raw").isEmpty());
+    }
+
+    @Test
+    public void repairsEmptyPersistedSnapshotsFromDiskPreset() {
+        // Simulate the production Guided 4Y project: stage names present, snapshots empty.
+        CustomProject project = new CustomProject("Guided", "ToTheMoon_KI_v132", "AUDCAD", "M5");
+        WorkflowTask grid = new WorkflowTask("01 Grid-Fundament — Optimizer", WorkflowTask.TaskType.OPTIMIZER);
+        grid.setTargetDatabank("g01_grid_raw");
+        project.addTask(grid);
+
+        assertTrue(ToTheMoon132GuidedWorkflowFactory.repairStageOptimizerSearchSpaces(project));
+        assertEquals(List.of("Inp_Grid_Step", "Inp_Step_Multiplier", "Inp_Next_Lot_Multiplier"),
+                grid.getOptimizerTargetParameters());
+        assertFalse(grid.getOptimizerParameterSnapshot().isEmpty());
+        Set<String> enabled = new HashSet<>();
+        for (EaParameter parameter : grid.getOptimizerParameterSnapshot()) {
+            if (parameter.isOptimizeEnabled()) enabled.add(parameter.getName());
+        }
+        assertEquals(Set.of("Inp_Grid_Step", "Inp_Step_Multiplier", "Inp_Next_Lot_Multiplier"), enabled);
+    }
+
     private static List<EaParameter> completeSyntheticPreset() {
         List<EaParameter> result = new ArrayList<>();
         for (Map.Entry<String, List<String>> stage

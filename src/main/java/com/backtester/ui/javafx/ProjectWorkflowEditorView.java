@@ -225,6 +225,7 @@ public class ProjectWorkflowEditorView {
         if (proj != null) {
             boolean projectChanged = proj.migrateLegacyTaskDefinitions();
             projectChanged |= ToTheMoon132GuidedWorkflowFactory.ensureDevelopmentTop20Selection(proj);
+            projectChanged |= ToTheMoon132GuidedWorkflowFactory.repairStageOptimizerSearchSpaces(proj);
             engine.resetTransientResults();
             projectTitleLabel.setText("/ " + proj.getName());
             if (automaticModeToggle != null) {
@@ -1614,6 +1615,11 @@ public class ProjectWorkflowEditorView {
             }
 
             @Override
+            public void purgeWorkflowRunArtifacts() {
+                ProjectWorkflowEditorView.this.purgeWorkflowRunArtifacts();
+            }
+
+            @Override
             public void adoptPassParameters(CombinedPass pass, String dbName) {
                 adoptPassParametersForNextTask(pass, dbName);
             }
@@ -1772,6 +1778,11 @@ public class ProjectWorkflowEditorView {
                         || progressLabel.getText().startsWith("Führe"))) {
                     currentTaskBannerLabel.setText("Aktueller Task: —");
                 }
+            }
+
+            @Override
+            public void purgeWorkflowRunArtifacts() {
+                ProjectWorkflowEditorView.this.purgeWorkflowRunArtifacts();
             }
 
             @Override
@@ -2508,6 +2519,9 @@ public class ProjectWorkflowEditorView {
                 banner += " · Filter erzwungen (" + gateForce.getForcedDisplay() + ")";
             }
             showParameterAdoptionBanner(banner, true);
+            if (databankPanel != null) {
+                databankPanel.refreshDatabanksUI(dbName);
+            }
             logToConsole("GUIDED-OPT", result.getAdoptedParameterCount() + " Passparameter fixiert; "
                     + result.getEnabledTargetCount() + " Zielparameter für den nächsten Optimizer aktiviert."
                     + (gateForce.getNote().isBlank() ? "" : " " + gateForce.getNote()));
@@ -2572,7 +2586,12 @@ public class ProjectWorkflowEditorView {
         }
         String message = messageBuilder.toString();
         logToConsole("AUTOMATIK", message);
-        Platform.runLater(() -> showParameterAdoptionBanner(message, true));
+        Platform.runLater(() -> {
+            showParameterAdoptionBanner(message, true);
+            if (databankPanel != null) {
+                databankPanel.refreshDatabanksUI(sourceDatabank);
+            }
+        });
     }
 
     private void showParameterAdoptionBanner(String message, boolean success) {
@@ -2771,10 +2790,33 @@ public class ProjectWorkflowEditorView {
     private void invalidateWorkflowResultsAfterDatabankClear(boolean allDatabanks, String databankName) {
         if (project == null) return;
         GuidedOptimizationService.resetTaskStatusesAfterDatabankWipe(project, allDatabanks, databankName);
+        if (allDatabanks) {
+            try {
+                engine.resetTransientResults();
+            } catch (RuntimeException ignored) {
+                // best-effort; databank wipe must not fail because of engine state
+            }
+        }
         if (progressBar != null) progressBar.setProgress(0);
         if (progressPercentLabel != null) progressPercentLabel.setText("0%");
-        if (progressLabel != null) progressLabel.setText("Databanken geleert — Task-Status zurückgesetzt.");
+        if (progressLabel != null) {
+            progressLabel.setText(allDatabanks
+                    ? "Workflow zurückgesetzt — Databanken und Status geleert."
+                    : "Databanken geleert — Task-Status zurückgesetzt.");
+        }
         if (currentTaskBannerLabel != null) currentTaskBannerLabel.setText("Aktueller Task: —");
+    }
+
+    private void purgeWorkflowRunArtifacts() {
+        if (project == null) return;
+        var cleanup = com.backtester.workflow.WorkflowRunArtifactCleanupService.purgeProjectArtifacts(project);
+        logToConsole("CLEANUP", "Workflow-Artefakte gelöscht — " + cleanup.summary());
+        for (String detail : cleanup.details) {
+            logToConsole("CLEANUP", detail);
+        }
+        if (progressLabel != null) {
+            progressLabel.setText("Workflow zurückgesetzt — " + cleanup.summary());
+        }
     }
 
     private void setEditorLocked(boolean locked) {

@@ -79,6 +79,9 @@ public class ProjectWorkflowPipelineRunner {
         /** Clear banner when progress label still looks like an in-progress "Führe..." message. */
         void clearRunningTaskBannerIfStale();
 
+        /** Purge MT5 cache + optimizer report artefacts for a full workflow reset. */
+        void purgeWorkflowRunArtifacts();
+
         void adoptBestPassAutomatically(WorkflowTask nextOptimizer);
 
         Path optimizerOutputBaseDirectory(WorkflowTask task);
@@ -396,6 +399,26 @@ public class ProjectWorkflowPipelineRunner {
                 List<CombinedPass> inputPasses = databankManager.getDatabank(task.getSourceDatabank());
                 List<CombinedPass> outputPasses = new ArrayList<>();
                 requireTaskInputStrategies(task, inputPasses);
+
+                if (GuidedOptimizationService.isFollowUpOptimizer(project, task)) {
+                    if (shouldAutomaticallyAdoptBestPass(project, task)) {
+                        host.adoptBestPassAutomatically(task);
+                    } else if (GuidedOptimizationService.requiresAdoptedBasis(project, task)) {
+                        task.setStatus(WorkflowTask.TaskStatus.PENDING);
+                        String pickDb = handPickDatabankLabel(task);
+                        String pauseMessage = "Einzelstep pausiert: Task '" + task.getName()
+                                + "' braucht zuerst einen Hand-Pick aus der Databank '" + pickDb
+                                + "' (Rechtsklick auf einen Pass → Parameter übernehmen).";
+                        task.setLastExecutionLog(pauseMessage);
+                        host.logToConsole("GUIDED", pauseMessage);
+                        updateProgressUI(0.0,
+                                "Pausiert: Pass als Parameter-Basis für '" + task.getName() + "' auswählen.");
+                        showHandPickRequiredDialog(task.getName(), pickDb);
+                        host.saveProject();
+                        return null;
+                    }
+                }
+
                 applyTaskExecutionConfig(task);
 
                 switch (task.getType()) {
@@ -612,12 +635,15 @@ public class ProjectWorkflowPipelineRunner {
                             host.adoptBestPassAutomatically(task);
                         } else if (GuidedOptimizationService.requiresAdoptedBasis(project, task)) {
                             task.setStatus(WorkflowTask.TaskStatus.PENDING);
+                            String pickDb = handPickDatabankLabel(task);
                             String pauseMessage = "Workflow wartet vor Task " + (i + 1) + " ('"
-                                    + task.getName() + "') auf einen Hand-Pick aus der vorherigen Stufe.";
+                                    + task.getName() + "') auf einen Hand-Pick aus der Databank '"
+                                    + pickDb + "'.";
                             task.setLastExecutionLog(pauseMessage);
                             host.logToConsole("GUIDED", pauseMessage);
                             updateProgressUI((double) i / total,
                                     "Pausiert: Pass als Parameter-Basis für '" + task.getName() + "' auswählen.");
+                            showHandPickRequiredDialog(task.getName(), pickDb);
                             host.saveProject();
                             return null;
                         }
@@ -920,6 +946,7 @@ public class ProjectWorkflowPipelineRunner {
             }
             GuidedOptimizationService.clearAdoptedBasesForRestart(project);
             databankManager.clearAll();
+            host.purgeWorkflowRunArtifacts();
             host.flushProjectSaveAsync(() -> {
                 host.refreshTaskChain();
                 host.refreshDatabanksUI();
@@ -983,6 +1010,30 @@ public class ProjectWorkflowPipelineRunner {
         Platform.runLater(() -> {
             host.updateMainProgress(clamped, percentText, label, taskBannerName);
             statusWindow.update(taskBannerName, clamped, percentText, label);
+        });
+    }
+
+    private static String handPickDatabankLabel(WorkflowTask task) {
+        if (task != null && task.getSourceDatabank() != null && !task.getSourceDatabank().isBlank()) {
+            return task.getSourceDatabank().trim();
+        }
+        return "der vorherigen Stufe";
+    }
+
+    private void showHandPickRequiredDialog(String taskName, String pickDatabank) {
+        String safeTask = taskName != null && !taskName.isBlank() ? taskName.trim() : "Optimizer";
+        String safeDb = pickDatabank != null && !pickDatabank.isBlank() ? pickDatabank.trim() : "der vorherigen Stufe";
+        String body = "Task '" + safeTask + "' braucht zuerst einen Hand-Pick.\n\n"
+                + "1. Databank '" + safeDb + "' öffnen\n"
+                + "2. Pass wählen → Rechtsklick → Parameter übernehmen\n"
+                + "3. Danach den Task erneut starten";
+        Platform.runLater(() -> {
+            Alert alert = new Alert(Alert.AlertType.INFORMATION, body, ButtonType.OK);
+            alert.setTitle("Hand-Pick erforderlich");
+            alert.setHeaderText("Parameter-Basis fehlt");
+            Window owner = host.getOwnerWindow();
+            if (owner != null) alert.initOwner(owner);
+            alert.showAndWait();
         });
     }
 

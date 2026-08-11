@@ -66,6 +66,15 @@
     -fx-text-fill: #00e5ff;
     -fx-font-weight: bold;
 }
+/* Sort arrow must stay visible on dark headers (default Modena arrow is near-black). */
+.table-view .column-header .arrow {
+    -fx-background-color: #00e5ff;
+    -fx-padding: 0.25em 0.3125em 0.25em 0.3125em;
+    -fx-shape: "M 0 0 L 4 4 L 8 0 Z";
+}
+.table-view .column-header:sorted .label {
+    -fx-text-fill: #76ff03;
+}
 .table-view .filler, 
 .table-view .column-header-background .filler, 
 .table-view .show-hide-columns-button, 
@@ -74,15 +83,25 @@
     -fx-background-insets: 0;
     -fx-border-color: transparent transparent #3e4555 transparent;
 }
-.table-view .empty {
+.table-view .column-header .sort-order-dots {
     -fx-background-color: transparent;
+}
+.table-view .column-header .sort-order-dot {
+    -fx-background-color: #00e5ff;
+}
+.table-view .empty {
+    -fx-background-color: #14161c;
 }
 .table-row-cell {
-    -fx-background-color: transparent;
+    -fx-background-color: #14161c;
     -fx-text-fill: #e6e9f0;
+    -fx-cell-size: 28px;
 }
 .table-row-cell:odd {
-    -fx-background-color: rgba(26, 30, 40, 0.4);
+    -fx-background-color: #1a1e28;
+}
+.table-row-cell:empty {
+    -fx-background-color: #14161c;
 }
 .table-row-cell:selected {
     -fx-background-color: rgba(0, 229, 255, 0.2);
@@ -92,6 +111,16 @@
 }
 .table-view:focused .table-row-cell:selected .table-cell {
     -fx-text-fill: #e6e9f0;
+}
+/* Hand-picked parameter basis (adopted into a follow-up optimizer). */
+.table-row-cell.databank-row-adopted {
+    -fx-background-color: rgba(255, 215, 64, 0.28);
+}
+.table-row-cell.databank-row-adopted:odd {
+    -fx-background-color: rgba(255, 215, 64, 0.34);
+}
+.table-row-cell.databank-row-adopted:selected {
+    -fx-background-color: rgba(255, 215, 64, 0.48);
 }
 
 /* ProgressBar */

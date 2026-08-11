@@ -68,6 +68,45 @@ public final class GuidedOptimizationService {
                 && !optimizerTask.isOptimizerParameterBasisAdopted();
     }
 
+    /**
+     * True when {@code pass} from {@code databankName} is recorded as the adopted
+     * parameter basis of any optimizer task in the project.
+     */
+    public static boolean isAdoptedBasisPass(CustomProject project, String databankName, CombinedPass pass) {
+        if (project == null || pass == null || databankName == null || databankName.isBlank()) {
+            return false;
+        }
+        String db = databankName.trim();
+        int passNumber = pass.getPassNumber();
+        for (WorkflowTask task : project.getTasks()) {
+            if (task == null || !task.isOptimizerParameterBasisAdopted()) continue;
+            if (task.getOptimizerParameterBasisPassNumber() != passNumber) continue;
+            if (db.equalsIgnoreCase(task.getOptimizerParameterBasisDatabank())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** Names of consumer tasks that adopted this pass from the given databank (for tooltips). */
+    public static List<String> adoptedBasisConsumerNames(CustomProject project, String databankName, CombinedPass pass) {
+        if (project == null || pass == null || databankName == null || databankName.isBlank()) {
+            return List.of();
+        }
+        String db = databankName.trim();
+        int passNumber = pass.getPassNumber();
+        List<String> names = new ArrayList<>();
+        for (WorkflowTask task : project.getTasks()) {
+            if (task == null || !task.isOptimizerParameterBasisAdopted()) continue;
+            if (task.getOptimizerParameterBasisPassNumber() != passNumber) continue;
+            if (!db.equalsIgnoreCase(task.getOptimizerParameterBasisDatabank())) continue;
+            if (task.getName() != null && !task.getName().isBlank()) {
+                names.add(task.getName().trim());
+            }
+        }
+        return names;
+    }
+
     public static Optional<WorkflowTask> findPreviousEnabledOptimizer(CustomProject project,
                                                                       WorkflowTask optimizerTask) {
         if (project == null || optimizerTask == null) return Optional.empty();

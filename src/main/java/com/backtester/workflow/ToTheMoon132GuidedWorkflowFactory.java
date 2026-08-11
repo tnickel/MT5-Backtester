@@ -1,6 +1,7 @@
 package com.backtester.workflow;
 
 import com.backtester.config.EaParameter;
+import com.backtester.config.EaParameterManager;
 
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -248,6 +249,182 @@ public final class ToTheMoon132GuidedWorkflowFactory {
             removeArchive(project, downstream.getTargetDatabank());
         }
         return true;
+    }
+
+    /**
+     * Idempotently realigns each staged Optimizer's target list + snapshot to the
+     * current {@link #STAGES} definition. Fixes projects whose first stages were
+     * wrongly saved with later-stage search spaces (e.g. Adaptive/Escalation on
+     * Grid-Fundament).
+     *
+     * @return {@code true} if any task was rewritten
+     */
+    public static boolean repairStageOptimizerSearchSpaces(CustomProject project) {
+        if (project == null || !"ToTheMoon_KI_v132".equalsIgnoreCase(project.getExpert())
+                || !"AUDCAD".equalsIgnoreCase(project.getSymbol())
+                || !"M5".equalsIgnoreCase(project.getPeriod())
+                || project.getTasks() == null) {
+            return false;
+        }
+
+        List<EaParameter> fallbackBase = findLargestOptimizerSnapshot(project);
+        if (fallbackBase.isEmpty()) {
+            fallbackBase = loadProvenPresetFromDisk(project.getExpert());
+        }
+        if (fallbackBase.isEmpty()) {
+            return false;
+        }
+
+        boolean changed = false;
+
+        for (WorkflowTask task : project.getTasks()) {
+            if (task == null || task.getType() != WorkflowTask.TaskType.OPTIMIZER) {
+                continue;
+            }
+            Stage stage = findStageForTaskName(task.getName());
+            if (stage == null) {
+                continue;
+            }
+
+            List<String> expectedTargets = stage.targetNames();
+            Set<String> expected = new LinkedHashSet<>(expectedTargets);
+            Set<String> actualTargets = new LinkedHashSet<>();
+            for (String name : task.getOptimizerTargetParameters()) {
+                if (name != null && !name.isBlank()) {
+                    actualTargets.add(name.trim());
+                }
+            }
+            Set<String> actualEnabled = enabledOptimizeNames(task.getOptimizerParameterSnapshot());
+            boolean rangesWrong = !stageRangesMatchSnapshot(task.getOptimizerParameterSnapshot(), stage);
+            boolean snapshotMissing = task.getOptimizerParameterSnapshot() == null
+                    || task.getOptimizerParameterSnapshot().isEmpty();
+
+            if (!snapshotMissing && expected.equals(actualTargets) && expected.equals(actualEnabled) && !rangesWrong) {
+                continue;
+            }
+
+            List<EaParameter> base = !task.getOptimizerParameterSnapshot().isEmpty()
+                    ? task.getOptimizerParameterSnapshot()
+                    : fallbackBase;
+
+            task.setOptimizerTargetParameters(expectedTargets);
+            task.setOptimizerParameterSnapshot(buildStageSnapshot(base, stage));
+            if (task.getStatus() == WorkflowTask.TaskStatus.COMPLETED
+                    || task.getStatus() == WorkflowTask.TaskStatus.FAILED
+                    || task.getStatus() == WorkflowTask.TaskStatus.RUNNING) {
+                task.setStatus(WorkflowTask.TaskStatus.PENDING);
+            }
+            task.setLastExecutionLog("Search-Space auf Factory-Definition für '"
+                    + stage.name + "' korrigiert.");
+            clearDatabank(project, task.getTargetDatabank());
+            String pickDb = stage.databankPrefix + "_pick";
+            clearDatabank(project, pickDb);
+            removeArchive(project, task.getTargetDatabank());
+            removeArchive(project, pickDb);
+            changed = true;
+        }
+        return changed;
+    }
+
+    /**
+     * Loads the on-disk proven preset used when creating Guided projects, so empty
+     * persisted optimizer snapshots can be rebuilt.
+     */
+    public static List<EaParameter> loadProvenPresetFromDisk(String expert) {
+        try {
+            EaParameterManager manager = new EaParameterManager();
+            String expertKey = expert == null || expert.isBlank() ? "ToTheMoon_KI_v132" : expert;
+            List<EaParameter> custom = manager.loadCustomParameters(expertKey);
+            if (custom != null && !custom.isEmpty()) {
+                return custom;
+            }
+            List<EaParameter> defaults = manager.loadDefaultParameters(expertKey);
+            return defaults != null ? defaults : List.of();
+        } catch (RuntimeException ex) {
+            return List.of();
+        }
+    }
+
+    private static List<EaParameter> findLargestOptimizerSnapshot(CustomProject project) {
+        List<EaParameter> best = List.of();
+        for (WorkflowTask task : project.getTasks()) {
+            if (task == null || task.getType() != WorkflowTask.TaskType.OPTIMIZER) {
+                continue;
+            }
+            List<EaParameter> snapshot = task.getOptimizerParameterSnapshot();
+            if (snapshot != null && snapshot.size() > best.size()) {
+                best = snapshot;
+            }
+        }
+        return best;
+    }
+
+    private static Set<String> enabledOptimizeNames(List<EaParameter> snapshot) {
+        Set<String> enabled = new LinkedHashSet<>();
+        if (snapshot == null) {
+            return enabled;
+        }
+        for (EaParameter parameter : snapshot) {
+            if (parameter != null && parameter.isOptimizeEnabled()
+                    && parameter.getName() != null && !parameter.getName().isBlank()) {
+                enabled.add(parameter.getName().trim());
+            }
+        }
+        return enabled;
+    }
+
+    private static boolean stageRangesMatchSnapshot(List<EaParameter> snapshot, Stage stage) {
+        if (snapshot == null || snapshot.isEmpty()) {
+            return false;
+        }
+        Map<String, EaParameter> byName = new LinkedHashMap<>();
+        for (EaParameter parameter : snapshot) {
+            if (parameter == null || parameter.isSectionHeader()
+                    || parameter.getName() == null || parameter.getName().isBlank()) {
+                continue;
+            }
+            byName.putIfAbsent(parameter.getName(), parameter);
+        }
+        for (Range range : stage.ranges) {
+            EaParameter parameter = byName.get(range.parameterName);
+            if (parameter == null || !parameter.isOptimizeEnabled()) {
+                return false;
+            }
+            if (!safeEq(parameter.getOptimizeStart(), range.start)
+                    || !safeEq(parameter.getOptimizeStep(), range.step)
+                    || !safeEq(parameter.getOptimizeEnd(), range.end)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static boolean safeEq(String a, String b) {
+        String left = a == null ? "" : a.trim();
+        String right = b == null ? "" : b.trim();
+        return left.equals(right);
+    }
+
+    private static Stage findStageForTaskName(String taskName) {
+        if (taskName == null || taskName.isBlank()) {
+            return null;
+        }
+        String normalized = taskName.trim();
+        int sep = normalized.indexOf(" — ");
+        if (sep < 0) {
+            sep = normalized.indexOf(" - ");
+        }
+        String stageKey = sep > 0 ? normalized.substring(0, sep).trim() : normalized;
+        if (stageKey.toLowerCase(Locale.ROOT).endsWith(" optimizer")) {
+            stageKey = stageKey.substring(0, stageKey.length() - " optimizer".length()).trim();
+        }
+        for (Stage stage : STAGES) {
+            if (stageKey.equalsIgnoreCase(stage.name)
+                    || stageKey.regionMatches(true, 0, stage.name, 0, stage.name.length())) {
+                return stage;
+            }
+        }
+        return null;
     }
 
     private static WorkflowTask createDevelopmentTop20Task(String sourceDatabank,

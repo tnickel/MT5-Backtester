@@ -7,8 +7,12 @@ import com.backtester.workflow.DatabankManager;
 import com.backtester.workflow.GuidedOptimizationService;
 import com.backtester.workflow.WorkflowTask;
 import javafx.animation.PauseTransition;
+import javafx.application.Platform;
 import javafx.beans.property.SimpleObjectProperty;
 import javafx.beans.property.SimpleStringProperty;
+import javafx.collections.FXCollections;
+import javafx.collections.ObservableList;
+import javafx.collections.transformation.SortedList;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.control.Alert;
@@ -36,6 +40,7 @@ import javafx.scene.layout.VBox;
 import javafx.stage.Window;
 
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
@@ -69,6 +74,12 @@ public class ProjectWorkflowDatabankPanel {
         /** Reset task statuses / progress UI after databank wipe or adoption-touching delete. */
         void invalidateWorkflowResultsAfterDatabankClear(boolean allDatabanks, String databankName);
 
+        /**
+         * Full wipe: MT5 tester cache, leftover OptimizationReport files, and
+         * optimizer output folders for this project (in addition to databank clear).
+         */
+        void purgeWorkflowRunArtifacts();
+
         void adoptPassParameters(CombinedPass pass, String dbName);
 
         long findSensitivityRunTimestampForDatabank(String databankName);
@@ -94,6 +105,10 @@ public class ProjectWorkflowDatabankPanel {
     private Pane databankToolbar;
     private CheckBox persistDatabanksCheckBox;
     private Label parameterAdoptionBanner;
+    private boolean rebuildingDatabankTabs;
+
+    /** Fixed row height keeps VirtualFlow from inserting blank gaps after rebuilds. */
+    private static final double DATABANK_ROW_HEIGHT = 28.0;
 
     public ProjectWorkflowDatabankPanel(DatabankManager databankManager, Host host) {
         this.databankManager = databankManager;
@@ -144,24 +159,57 @@ public class ProjectWorkflowDatabankPanel {
         Tab currentTab = bottomDatabankTabPane.getSelectionModel().getSelectedItem();
         String activeDbName = targetTabToFocus != null ? targetTabToFocus : (currentTab != null ? currentTab.getText().replaceAll("\\s*\\(\\d+\\)$", "") : null);
 
-        bottomDatabankTabPane.getTabs().clear();
-        Tab tabToSelect = null;
+        rebuildingDatabankTabs = true;
+        try {
+            bottomDatabankTabPane.getTabs().clear();
+            Tab tabToSelect = null;
 
-        Set<DatabankColumnChooserDialog.DatabankColumn> visibleCols = DatabankColumnChooserDialog.getVisibleColumns();
+            Set<DatabankColumnChooserDialog.DatabankColumn> visibleCols = DatabankColumnChooserDialog.getVisibleColumns();
 
-        for (String dbName : databankManager.getDatabankNames()) {
-            boolean isStandard = dbName.equalsIgnoreCase("Results") || dbName.equalsIgnoreCase("Existing portfolio") || dbName.equalsIgnoreCase("Final");
-            List<CombinedPass> passes = databankManager.getDatabank(dbName);
-            Tab tab = new Tab(dbName + " (" + passes.size() + ")");
-            tab.setClosable(!isStandard);
-            tab.setOnCloseRequest(e -> {
-                e.consume();
-                deleteDatabankByName(dbName);
-            });
+            for (String dbName : databankManager.getDatabankNames()) {
+                boolean isStandard = dbName.equalsIgnoreCase("Results") || dbName.equalsIgnoreCase("Existing portfolio") || dbName.equalsIgnoreCase("Final");
+                List<CombinedPass> passes = databankManager.getDatabank(dbName);
+                Tab tab = new Tab(dbName + " (" + passes.size() + ")");
+                tab.setClosable(!isStandard);
+                tab.setOnCloseRequest(e -> {
+                    e.consume();
+                    deleteDatabankByName(dbName);
+                });
 
+                TableView<CombinedPass> table = createDatabankTable(dbName, passes, visibleCols);
+                tab.setContent(table);
+                bottomDatabankTabPane.getTabs().add(tab);
+
+                if (activeDbName != null && dbName.equalsIgnoreCase(activeDbName)) {
+                    tabToSelect = tab;
+                }
+            }
+
+            if (tabToSelect != null) {
+                bottomDatabankTabPane.getSelectionModel().select(tabToSelect);
+            }
+        } finally {
+            rebuildingDatabankTabs = false;
+        }
+
+        // TableViews rebuilt inside a SplitPane often get a broken VirtualFlow until
+        // the next tab switch; force the same repair that a manual tab change triggers.
+        Platform.runLater(() -> repairVisibleDatabankTable(true));
+    }
+
+    private TableView<CombinedPass> createDatabankTable(String dbName,
+                                                         List<CombinedPass> passes,
+                                                         Set<DatabankColumnChooserDialog.DatabankColumn> visibleCols) {
             TableView<CombinedPass> table = new TableView<>();
             table.getSelectionModel().setSelectionMode(SelectionMode.MULTIPLE);
-            table.getItems().setAll(passes);
+            table.setFixedCellSize(DATABANK_ROW_HEIGHT);
+            table.setColumnResizePolicy(TableView.UNCONSTRAINED_RESIZE_POLICY);
+            // SortedList + bound comparator: column-header clicks stay reliable with NaN metrics.
+            ObservableList<CombinedPass> rowItems = FXCollections.observableArrayList(passes);
+            SortedList<CombinedPass> sortedRows = new SortedList<>(rowItems);
+            sortedRows.comparatorProperty().bind(table.comparatorProperty());
+            table.setItems(sortedRows);
+            attachVirtualFlowRepairTriggers(table);
 
             table.setOnKeyPressed(event -> {
                 if (event.getCode() == KeyCode.DELETE) {
@@ -172,6 +220,7 @@ public class ProjectWorkflowDatabankPanel {
             if (visibleCols.contains(DatabankColumnChooserDialog.DatabankColumn.NAME)) {
                 TableColumn<CombinedPass, String> nameCol = new TableColumn<>("Strategy Name");
                 nameCol.setCellValueFactory(c -> new SimpleObjectProperty<>(c.getValue().getStrategyName()));
+                nameCol.setComparator(Comparator.nullsLast(String::compareToIgnoreCase));
                 nameCol.setPrefWidth(130);
                 table.getColumns().add(nameCol);
             }
@@ -179,6 +228,7 @@ public class ProjectWorkflowDatabankPanel {
             if (visibleCols.contains(DatabankColumnChooserDialog.DatabankColumn.PASS)) {
                 TableColumn<CombinedPass, Integer> passCol = new TableColumn<>("Pass");
                 passCol.setCellValueFactory(c -> new SimpleObjectProperty<>(c.getValue().getPassNumber()));
+                passCol.setComparator(Comparator.nullsLast(Integer::compareTo));
                 passCol.setPrefWidth(60);
                 table.getColumns().add(passCol);
             }
@@ -186,6 +236,7 @@ public class ProjectWorkflowDatabankPanel {
             if (visibleCols.contains(DatabankColumnChooserDialog.DatabankColumn.SCORE)) {
                 TableColumn<CombinedPass, Double> scoreCol = new TableColumn<>("Score");
                 scoreCol.setCellValueFactory(c -> new SimpleObjectProperty<>(c.getValue().getScore()));
+                scoreCol.setComparator(nanSafeDoubleComparator());
                 scoreCol.setPrefWidth(70);
                 table.getColumns().add(scoreCol);
             }
@@ -193,6 +244,7 @@ public class ProjectWorkflowDatabankPanel {
             if (visibleCols.contains(DatabankColumnChooserDialog.DatabankColumn.BT_PROFIT)) {
                 TableColumn<CombinedPass, Double> btProf = new TableColumn<>("BT Profit");
                 btProf.setCellValueFactory(c -> new SimpleObjectProperty<>(c.getValue().getBtProfit()));
+                btProf.setComparator(nanSafeDoubleComparator());
                 btProf.setPrefWidth(90);
                 table.getColumns().add(btProf);
             }
@@ -200,6 +252,7 @@ public class ProjectWorkflowDatabankPanel {
             if (visibleCols.contains(DatabankColumnChooserDialog.DatabankColumn.FW_PROFIT)) {
                 TableColumn<CombinedPass, Double> fwProf = new TableColumn<>("FW Profit");
                 fwProf.setCellValueFactory(c -> new SimpleObjectProperty<>(c.getValue().getFwProfit()));
+                fwProf.setComparator(nanSafeDoubleComparator());
                 fwProf.setPrefWidth(90);
                 table.getColumns().add(fwProf);
             }
@@ -207,6 +260,7 @@ public class ProjectWorkflowDatabankPanel {
             if (visibleCols.contains(DatabankColumnChooserDialog.DatabankColumn.LT_PROFIT)) {
                 TableColumn<CombinedPass, Double> ltProf = new TableColumn<>("LT Profit");
                 ltProf.setCellValueFactory(c -> new SimpleObjectProperty<>(c.getValue().getLtProfit()));
+                ltProf.setComparator(nanSafeDoubleComparator());
                 ltProf.setPrefWidth(90);
                 table.getColumns().add(ltProf);
             }
@@ -217,6 +271,7 @@ public class ProjectWorkflowDatabankPanel {
                     double v = c.getValue().getBtPf();
                     return new SimpleStringProperty(Double.isNaN(v) || v <= 0 ? "-" : String.format(Locale.US, "%.2f", v));
                 });
+                btPf.setComparator(OptimizationCombinedPanel.numericStringComparator());
                 btPf.setPrefWidth(115);
                 table.getColumns().add(btPf);
             }
@@ -227,6 +282,7 @@ public class ProjectWorkflowDatabankPanel {
                     double v = c.getValue().getFwPf();
                     return new SimpleStringProperty(Double.isNaN(v) || v <= 0 ? "-" : String.format(Locale.US, "%.2f", v));
                 });
+                fwPf.setComparator(OptimizationCombinedPanel.numericStringComparator());
                 fwPf.setPrefWidth(115);
                 table.getColumns().add(fwPf);
             }
@@ -237,6 +293,7 @@ public class ProjectWorkflowDatabankPanel {
                     double v = c.getValue().getLtPf();
                     return new SimpleStringProperty(Double.isNaN(v) || v <= 0 ? "-" : String.format(Locale.US, "%.2f", v));
                 });
+                ltPf.setComparator(OptimizationCombinedPanel.numericStringComparator());
                 ltPf.setPrefWidth(115);
                 table.getColumns().add(ltPf);
             }
@@ -244,6 +301,7 @@ public class ProjectWorkflowDatabankPanel {
             if (visibleCols.contains(DatabankColumnChooserDialog.DatabankColumn.BT_DD)) {
                 TableColumn<CombinedPass, Double> btDd = new TableColumn<>("BT DD %");
                 btDd.setCellValueFactory(c -> new SimpleObjectProperty<>(c.getValue().getBtDd()));
+                btDd.setComparator(nanSafeDoubleComparator());
                 btDd.setPrefWidth(80);
                 table.getColumns().add(btDd);
             }
@@ -251,6 +309,7 @@ public class ProjectWorkflowDatabankPanel {
             if (visibleCols.contains(DatabankColumnChooserDialog.DatabankColumn.FW_DD)) {
                 TableColumn<CombinedPass, Double> fwDd = new TableColumn<>("FW DD %");
                 fwDd.setCellValueFactory(c -> new SimpleObjectProperty<>(c.getValue().getFwDd()));
+                fwDd.setComparator(nanSafeDoubleComparator());
                 fwDd.setPrefWidth(80);
                 table.getColumns().add(fwDd);
             }
@@ -258,6 +317,7 @@ public class ProjectWorkflowDatabankPanel {
             if (visibleCols.contains(DatabankColumnChooserDialog.DatabankColumn.LT_DD)) {
                 TableColumn<CombinedPass, Double> ltDd = new TableColumn<>("LT DD %");
                 ltDd.setCellValueFactory(c -> new SimpleObjectProperty<>(c.getValue().getLtDd()));
+                ltDd.setComparator(nanSafeDoubleComparator());
                 ltDd.setPrefWidth(80);
                 table.getColumns().add(ltDd);
             }
@@ -265,6 +325,7 @@ public class ProjectWorkflowDatabankPanel {
             if (visibleCols.contains(DatabankColumnChooserDialog.DatabankColumn.BT_TRADES)) {
                 TableColumn<CombinedPass, Integer> btTr = new TableColumn<>("BT Trades");
                 btTr.setCellValueFactory(c -> new SimpleObjectProperty<>(c.getValue().getBtTrades()));
+                btTr.setComparator(Comparator.nullsLast(Integer::compareTo));
                 btTr.setPrefWidth(75);
                 table.getColumns().add(btTr);
             }
@@ -272,6 +333,7 @@ public class ProjectWorkflowDatabankPanel {
             if (visibleCols.contains(DatabankColumnChooserDialog.DatabankColumn.FW_TRADES)) {
                 TableColumn<CombinedPass, Integer> fwTr = new TableColumn<>("FW Trades");
                 fwTr.setCellValueFactory(c -> new SimpleObjectProperty<>(c.getValue().getFwTrades()));
+                fwTr.setComparator(Comparator.nullsLast(Integer::compareTo));
                 fwTr.setPrefWidth(75);
                 table.getColumns().add(fwTr);
             }
@@ -279,6 +341,7 @@ public class ProjectWorkflowDatabankPanel {
             if (visibleCols.contains(DatabankColumnChooserDialog.DatabankColumn.LT_TRADES)) {
                 TableColumn<CombinedPass, Integer> ltTr = new TableColumn<>("LT Trades");
                 ltTr.setCellValueFactory(c -> new SimpleObjectProperty<>(c.getValue().getLtTrades()));
+                ltTr.setComparator(Comparator.nullsLast(Integer::compareTo));
                 ltTr.setPrefWidth(75);
                 table.getColumns().add(ltTr);
             }
@@ -286,6 +349,7 @@ public class ProjectWorkflowDatabankPanel {
             if (visibleCols.contains(DatabankColumnChooserDialog.DatabankColumn.BT_SHARPE)) {
                 TableColumn<CombinedPass, Double> btSh = new TableColumn<>("BT Sharpe");
                 btSh.setCellValueFactory(c -> new SimpleObjectProperty<>(c.getValue().getBtSharpe()));
+                btSh.setComparator(nanSafeDoubleComparator());
                 btSh.setPrefWidth(80);
                 table.getColumns().add(btSh);
             }
@@ -293,6 +357,7 @@ public class ProjectWorkflowDatabankPanel {
             if (visibleCols.contains(DatabankColumnChooserDialog.DatabankColumn.FW_SHARPE)) {
                 TableColumn<CombinedPass, Double> fwSh = new TableColumn<>("FW Sharpe");
                 fwSh.setCellValueFactory(c -> new SimpleObjectProperty<>(c.getValue().getFwSharpe()));
+                fwSh.setComparator(nanSafeDoubleComparator());
                 fwSh.setPrefWidth(80);
                 table.getColumns().add(fwSh);
             }
@@ -300,6 +365,7 @@ public class ProjectWorkflowDatabankPanel {
             if (visibleCols.contains(DatabankColumnChooserDialog.DatabankColumn.BT_RECOVERY)) {
                 TableColumn<CombinedPass, Double> btRec = new TableColumn<>("BT Rec");
                 btRec.setCellValueFactory(c -> new SimpleObjectProperty<>(c.getValue().getBtRecovery()));
+                btRec.setComparator(nanSafeDoubleComparator());
                 btRec.setPrefWidth(80);
                 table.getColumns().add(btRec);
             }
@@ -307,6 +373,7 @@ public class ProjectWorkflowDatabankPanel {
             if (visibleCols.contains(DatabankColumnChooserDialog.DatabankColumn.FW_RECOVERY)) {
                 TableColumn<CombinedPass, Double> fwRec = new TableColumn<>("FW Rec");
                 fwRec.setCellValueFactory(c -> new SimpleObjectProperty<>(c.getValue().getFwRecovery()));
+                fwRec.setComparator(nanSafeDoubleComparator());
                 fwRec.setPrefWidth(80);
                 table.getColumns().add(fwRec);
             }
@@ -316,7 +383,27 @@ public class ProjectWorkflowDatabankPanel {
 
             // Context Menu & Row click handlers
             table.setRowFactory(tv -> {
-                TableRow<CombinedPass> row = new TableRow<>();
+                TableRow<CombinedPass> row = new TableRow<>() {
+                    @Override
+                    protected void updateItem(CombinedPass item, boolean empty) {
+                        super.updateItem(item, empty);
+                        getStyleClass().remove("databank-row-adopted");
+                        setTooltip(null);
+                        if (empty || item == null) {
+                            return;
+                        }
+                        if (GuidedOptimizationService.isAdoptedBasisPass(host.getProject(), dbName, item)) {
+                            getStyleClass().add("databank-row-adopted");
+                            List<String> consumers = GuidedOptimizationService.adoptedBasisConsumerNames(
+                                    host.getProject(), dbName, item);
+                            String consumerText = consumers.isEmpty()
+                                    ? "nächsten Optimizer"
+                                    : String.join(", ", consumers);
+                            setTooltip(new Tooltip("Hand-Pick übernommen → " + consumerText
+                                    + " (Pass #" + item.getPassNumber() + ")"));
+                        }
+                    }
+                };
 
                 ContextMenu contextMenu = new ContextMenu();
                 MenuItem inspectItem = new MenuItem("🔍 Details & EA Parameter anzeigen (Doppelklick)");
@@ -389,17 +476,40 @@ public class ProjectWorkflowDatabankPanel {
                 return row;
             });
 
-            tab.setContent(table);
-            bottomDatabankTabPane.getTabs().add(tab);
+            return table;
+    }
 
-            if (activeDbName != null && dbName.equalsIgnoreCase(activeDbName)) {
-                tabToSelect = tab;
+    private void attachVirtualFlowRepairTriggers(TableView<?> table) {
+        table.heightProperty().addListener((obs, oldHeight, newHeight) -> {
+            if (newHeight == null) return;
+            double next = newHeight.doubleValue();
+            double prev = oldHeight != null ? oldHeight.doubleValue() : 0.0;
+            if (next > 40 && prev < 40) {
+                Platform.runLater(() -> repairTableVirtualFlow(table));
             }
-        }
+        });
+        table.sceneProperty().addListener((obs, oldScene, newScene) -> {
+            if (oldScene == null && newScene != null) {
+                Platform.runLater(() -> repairTableVirtualFlow(table));
+            }
+        });
+    }
 
-        if (tabToSelect != null) {
-            bottomDatabankTabPane.getSelectionModel().select(tabToSelect);
+    private void repairVisibleDatabankTable(boolean deep) {
+        if (bottomDatabankTabPane == null || rebuildingDatabankTabs) return;
+        Tab selected = bottomDatabankTabPane.getSelectionModel().getSelectedItem();
+        if (selected == null || !(selected.getContent() instanceof TableView<?> table)) return;
+        repairTableVirtualFlow(table);
+        if (deep) {
+            // Second pulse after SplitPane finishes assigning real height.
+            Platform.runLater(() -> repairTableVirtualFlow(table));
         }
+    }
+
+    private static void repairTableVirtualFlow(TableView<?> table) {
+        if (table == null) return;
+        table.requestLayout();
+        table.refresh();
     }
 
     public void updateDatabankComboBoxes() {
@@ -477,16 +587,25 @@ public class ProjectWorkflowDatabankPanel {
 
         Button clearAllBtn = new Button("Clear all databanks");
         clearAllBtn.setStyle("-fx-background-color: transparent; -fx-text-fill: #ff5252; -fx-font-weight: bold; -fx-cursor: hand;");
+        clearAllBtn.setTooltip(new Tooltip(
+                "Leert alle Databanken, setzt Task-Status zurück und löscht MT5-Optimizer-Cache sowie Report-Artefakte dieses Workflows."));
         clearAllBtn.setOnAction(e -> {
-            if (!confirmDestructiveAction("Alle Databanken leeren",
-                    "Alle Strategien aus allen Databanken entfernen? (Die Databank-Tabs bleiben erhalten)")) return;
+            if (!confirmDestructiveAction("Workflow komplett zurücksetzen",
+                    "Wirklich ALLES für diesen Workflow löschen?\n\n"
+                            + "• alle Strategien in allen Databanken\n"
+                            + "• Task-Status / Adopted Bases → PENDING\n"
+                            + "• MT5 Tester-Cache (*.opt) für diesen EA\n"
+                            + "• OptimizationReport-Dateien in MT5\n"
+                            + "• Optimizer-Ausgabeordner dieses Projekts\n\n"
+                            + "Die Databank-Tabs bleiben erhalten.")) return;
             databankManager.clearAll();
             host.invalidateWorkflowResultsAfterDatabankClear(true, null);
+            host.purgeWorkflowRunArtifacts();
             host.flushProjectSaveAsync(() -> {
                 host.refreshTaskChain();
                 refreshDatabanksUI();
             });
-            host.logToConsole("DATABANK", "Alle Databanken wurden geleert.");
+            host.logToConsole("DATABANK", "Alle Databanken, Task-Status und Workflow-Caches wurden geleert.");
         });
 
         Button deleteDatabankBtn = new Button("🗑 Databank löschen");
@@ -559,6 +678,10 @@ public class ProjectWorkflowDatabankPanel {
 
         bottomDatabankTabPane = new TabPane();
         VBox.setVgrow(bottomDatabankTabPane, Priority.ALWAYS);
+        bottomDatabankTabPane.getSelectionModel().selectedItemProperty().addListener((obs, oldTab, newTab) -> {
+            if (rebuildingDatabankTabs || newTab == null) return;
+            Platform.runLater(() -> repairVisibleDatabankTable(true));
+        });
 
         parameterAdoptionBanner = new Label();
         parameterAdoptionBanner.setMaxWidth(Double.MAX_VALUE);
@@ -635,6 +758,18 @@ public class ProjectWorkflowDatabankPanel {
         Window owner = host.getOwnerWindow();
         if (owner != null) alert.initOwner(owner);
         return alert.showAndWait().orElse(ButtonType.CANCEL) == ButtonType.OK;
+    }
+
+    /** NaN/null last so TimSort stays contract-safe on incomplete FW/LT metrics. */
+    static Comparator<Double> nanSafeDoubleComparator() {
+        return (a, b) -> {
+            boolean aMissing = a == null || Double.isNaN(a);
+            boolean bMissing = b == null || Double.isNaN(b);
+            if (aMissing && bMissing) return 0;
+            if (aMissing) return 1;
+            if (bMissing) return -1;
+            return Double.compare(a, b);
+        };
     }
 
     private void deleteSelectedRowsFromDatabank(String dbName, TableView<CombinedPass> table) {

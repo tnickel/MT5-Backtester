@@ -224,10 +224,16 @@ public class OptimizationRunner {
                         }
                     }
                     
-                    // Refresh reportFile path check
+                    // Refresh reportFile path check — with ForwardMode wait for .forward.xml too
+                    // (same rule as keep-open mode; otherwise we treat the run as done too early).
                     reportFile = getOptimizationReportPath(mt5Dir, platform);
-                    if (Files.exists(reportFile)) {
+                    if (areOptimizationReportsReady(mt5Dir, platform, optConfig, reportFile)) {
                         finished = true;
+                        if (platform == MetaTraderPlatform.MT5 && optConfig.getForwardMode() > 0) {
+                            logMessage("Optimization and Forward Test finished (detected report files).");
+                        } else {
+                            logMessage("Optimization finished (detected report file).");
+                        }
                     }
                 }
                 
@@ -248,6 +254,8 @@ public class OptimizationRunner {
                     } else {
                         logMessage(platformName + " process delegated execution to existing running terminal instance.");
                     }
+                    // Brief grace window: MT5 may flush .forward.xml just around process exit.
+                    awaitForwardReportAfterExit(mt5Dir, platform, optConfig);
                 }
             } else {
                 logMessage("Waiting for optimization to finish (" + platformName + " will remain open)...");
@@ -271,22 +279,19 @@ public class OptimizationRunner {
                     if (Files.exists(reportFile)) {
                         // Let terminal finish writing to the file completely
                         Thread.sleep(2000);
-
-                        // If forward mode is enabled, wait for forward XML as well (only for MT5)
-                        if (platform == MetaTraderPlatform.MT5 && optConfig.getForwardMode() > 0) {
-                            Path forwardXml = mt5Dir.resolve(REPORT_FILENAME + ".forward.xml");
-                            if (Files.exists(forwardXml)) {
-                                finished = true;
-                                logMessage("Optimization and Forward Test finished (detected report files).");
-                            }
-                        } else {
+                        if (areOptimizationReportsReady(mt5Dir, platform, optConfig, reportFile)) {
                             finished = true;
-                            logMessage("Optimization finished (detected report file).");
+                            if (platform == MetaTraderPlatform.MT5 && optConfig.getForwardMode() > 0) {
+                                logMessage("Optimization and Forward Test finished (detected report files).");
+                            } else {
+                                logMessage("Optimization finished (detected report file).");
+                            }
                         }
                     }
                 }
                 if (!finished && !cancelled && !currentProcess.isAlive()) {
                     logMessage(platformName + " process exited unexpectedly before writing report.");
+                    awaitForwardReportAfterExit(mt5Dir, platform, optConfig);
                 }
             }
 
@@ -330,7 +335,7 @@ public class OptimizationRunner {
 
             // Look for forward test report if enabled (only for MT5)
             if (platform == MetaTraderPlatform.MT5 && optConfig.getForwardMode() > 0) {
-                Path forwardXml = mt5Dir.resolve(REPORT_FILENAME + ".forward.xml");
+                Path forwardXml = forwardReportPath(mt5Dir);
                 if (Files.exists(forwardXml)) {
                     Path destForwardXml = outputDir.resolve("optimization_forward.xml");
                     Files.copy(forwardXml, destForwardXml, StandardCopyOption.REPLACE_EXISTING);
@@ -511,6 +516,55 @@ public class OptimizationRunner {
             });
         } catch (IOException e) {
             log.warn("Could not clean up old reports in " + dir, e);
+        }
+    }
+
+    /**
+     * True when the main optimization report exists and — if MT5 ForwardMode is on —
+     * the companion {@code *.forward.xml} exists as well.
+     */
+    static boolean areOptimizationReportsReady(Path mt5Dir,
+                                               MetaTraderPlatform platform,
+                                               OptimizationConfig optConfig,
+                                               Path reportFile) {
+        if (reportFile == null || !Files.exists(reportFile)) {
+            return false;
+        }
+        if (platform == MetaTraderPlatform.MT5 && optConfig != null && optConfig.getForwardMode() > 0) {
+            return Files.exists(forwardReportPath(mt5Dir));
+        }
+        return true;
+    }
+
+    static Path forwardReportPath(Path mt5Dir) {
+        return mt5Dir.resolve(REPORT_FILENAME + ".forward.xml");
+    }
+
+    /**
+     * After the terminal process has already exited, give MT5 a short window to
+     * flush {@code *.forward.xml} to disk when ForwardMode is enabled.
+     */
+    private void awaitForwardReportAfterExit(Path mt5Dir,
+                                             MetaTraderPlatform platform,
+                                             OptimizationConfig optConfig) throws InterruptedException {
+        if (cancelled || platform != MetaTraderPlatform.MT5 || optConfig == null || optConfig.getForwardMode() <= 0) {
+            return;
+        }
+        Path forwardXml = forwardReportPath(mt5Dir);
+        if (Files.exists(forwardXml)) {
+            return;
+        }
+        logMessage("Waiting up to 15s for Forward report after terminal exit: " + forwardXml.getFileName());
+        long deadline = System.currentTimeMillis() + 15_000;
+        while (!cancelled && System.currentTimeMillis() < deadline) {
+            if (Files.exists(forwardXml)) {
+                logMessage("Forward report appeared after terminal exit.");
+                return;
+            }
+            Thread.sleep(500);
+        }
+        if (!Files.exists(forwardXml)) {
+            logMessage("WARNING: ForwardMode is on but " + forwardXml.getFileName() + " was not written.");
         }
     }
 

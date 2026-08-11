@@ -110,6 +110,25 @@ public class GuidedOptimizationServiceTest {
     }
 
     @Test
+    public void isAdoptedBasisPassMatchesDatabankAndPassNumber() {
+        CustomProject project = stagedProject();
+        WorkflowTask followUp = project.getTasks().get(3);
+        followUp.setOptimizerParameterBasisAdopted(true);
+        followUp.setOptimizerParameterBasisPassNumber(42);
+        followUp.setOptimizerParameterBasisDatabank("stage1-picked");
+
+        CombinedPass adopted = pass(42, Map.of("GridStep", "20"));
+        CombinedPass other = pass(7, Map.of("GridStep", "10"));
+
+        assertTrue(GuidedOptimizationService.isAdoptedBasisPass(project, "stage1-picked", adopted));
+        assertTrue(GuidedOptimizationService.isAdoptedBasisPass(project, "STAGE1-PICKED", adopted));
+        assertFalse(GuidedOptimizationService.isAdoptedBasisPass(project, "stage1-picked", other));
+        assertFalse(GuidedOptimizationService.isAdoptedBasisPass(project, "other-db", adopted));
+        assertEquals(List.of(followUp.getName()),
+                GuidedOptimizationService.adoptedBasisConsumerNames(project, "stage1-picked", adopted));
+    }
+
+    @Test
     public void resetClearsStaleAdoptedBasisLineage() {
         CustomProject project = stagedProject();
         WorkflowTask followUp = project.getTasks().get(3);

@@ -2337,11 +2337,12 @@ public class WorkflowEngine {
             throw new IllegalStateException("Optimizer-Task '" + task.getName()
                     + "' wartet auf einen Hand-Pick aus der vorherigen Stufe.");
         }
-        if (task.isOptimizerParameterBasisAdopted() && snapshot.isEmpty()) {
-            throw new IllegalStateException("Die übernommene Parameter-Basis für Optimizer-Task '"
-                    + task.getName() + "' ist leer.");
+        if (snapshot.isEmpty()) {
+            throw new IllegalStateException("Optimizer-Task '" + task.getName()
+                    + "' hat keinen Parameter-Snapshot. Guided-Projekte neu laden "
+                    + "(Search-Space-Repair) oder Task-Ziele neu setzen.");
         }
-        if (!snapshot.isEmpty()) setEaParameters(snapshot);
+        setEaParameters(snapshot);
     }
 
     public int getOptimizationMode() { return optimizationMode; }
