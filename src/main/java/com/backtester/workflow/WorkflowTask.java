@@ -115,6 +115,18 @@ public class WorkflowTask {
     private boolean optimizerParameterBasisAdopted;
     private int optimizerParameterBasisPassNumber = -1;
     private String optimizerParameterBasisDatabank = "";
+    /**
+     * Audit of the filter-gate decision applied when this optimizer received its
+     * parameter basis (automatic or manual hand-off). Empty when no Use_* gate
+     * was forced for this stage.
+     */
+    private String adoptedFilterGateParameter = "";
+    private String adoptedFilterGateVerdict = "";
+    private String adoptedFilterGateForcedValue = "";
+    private boolean adoptedFilterGateForced;
+    private Double adoptedFilterGateOnMedianScore;
+    private Double adoptedFilterGateOffMedianScore;
+    private String adoptedFilterGateNote = "";
     private long sensitivityRunTimestamp;
     /**
      * UI-level modelling mode. This is deliberately not the raw MT5 model
@@ -330,11 +342,97 @@ public class WorkflowTask {
         this.optimizerParameterBasisDatabank = databank != null ? databank.trim() : "";
     }
 
+    public String getAdoptedFilterGateParameter() {
+        return adoptedFilterGateParameter != null ? adoptedFilterGateParameter : "";
+    }
+
+    public void setAdoptedFilterGateParameter(String adoptedFilterGateParameter) {
+        this.adoptedFilterGateParameter = adoptedFilterGateParameter != null
+                ? adoptedFilterGateParameter.trim() : "";
+    }
+
+    public String getAdoptedFilterGateVerdict() {
+        return adoptedFilterGateVerdict != null ? adoptedFilterGateVerdict : "";
+    }
+
+    public void setAdoptedFilterGateVerdict(String adoptedFilterGateVerdict) {
+        this.adoptedFilterGateVerdict = adoptedFilterGateVerdict != null
+                ? adoptedFilterGateVerdict.trim() : "";
+    }
+
+    public String getAdoptedFilterGateForcedValue() {
+        return adoptedFilterGateForcedValue != null ? adoptedFilterGateForcedValue : "";
+    }
+
+    public void setAdoptedFilterGateForcedValue(String adoptedFilterGateForcedValue) {
+        this.adoptedFilterGateForcedValue = adoptedFilterGateForcedValue != null
+                ? adoptedFilterGateForcedValue.trim() : "";
+    }
+
+    public boolean isAdoptedFilterGateForced() { return adoptedFilterGateForced; }
+
+    public void setAdoptedFilterGateForced(boolean adoptedFilterGateForced) {
+        this.adoptedFilterGateForced = adoptedFilterGateForced;
+    }
+
+    public double getAdoptedFilterGateOnMedianScore() {
+        return adoptedFilterGateOnMedianScore != null ? adoptedFilterGateOnMedianScore : Double.NaN;
+    }
+
+    public void setAdoptedFilterGateOnMedianScore(double adoptedFilterGateOnMedianScore) {
+        this.adoptedFilterGateOnMedianScore = Double.isFinite(adoptedFilterGateOnMedianScore)
+                ? adoptedFilterGateOnMedianScore : null;
+    }
+
+    public double getAdoptedFilterGateOffMedianScore() {
+        return adoptedFilterGateOffMedianScore != null ? adoptedFilterGateOffMedianScore : Double.NaN;
+    }
+
+    public void setAdoptedFilterGateOffMedianScore(double adoptedFilterGateOffMedianScore) {
+        this.adoptedFilterGateOffMedianScore = Double.isFinite(adoptedFilterGateOffMedianScore)
+                ? adoptedFilterGateOffMedianScore : null;
+    }
+
+    public String getAdoptedFilterGateNote() {
+        return adoptedFilterGateNote != null ? adoptedFilterGateNote : "";
+    }
+
+    public void setAdoptedFilterGateNote(String adoptedFilterGateNote) {
+        this.adoptedFilterGateNote = adoptedFilterGateNote != null ? adoptedFilterGateNote.trim() : "";
+    }
+
+    public void clearAdoptedFilterGateAudit() {
+        adoptedFilterGateParameter = "";
+        adoptedFilterGateVerdict = "";
+        adoptedFilterGateForcedValue = "";
+        adoptedFilterGateForced = false;
+        adoptedFilterGateOnMedianScore = null;
+        adoptedFilterGateOffMedianScore = null;
+        adoptedFilterGateNote = "";
+    }
+
+    public void recordAdoptedFilterGate(String parameter,
+                                        String verdict,
+                                        String forcedValue,
+                                        boolean forced,
+                                        double onMedianScore,
+                                        double offMedianScore,
+                                        String note) {
+        setAdoptedFilterGateParameter(parameter);
+        setAdoptedFilterGateVerdict(verdict);
+        setAdoptedFilterGateForcedValue(forcedValue);
+        setAdoptedFilterGateForced(forced);
+        setAdoptedFilterGateOnMedianScore(onMedianScore);
+        setAdoptedFilterGateOffMedianScore(offMedianScore);
+        setAdoptedFilterGateNote(note);
+    }
+
     public void clearOptimizerParameterBasis() {
         optimizerParameterBasisAdopted = false;
         optimizerParameterBasisPassNumber = -1;
         optimizerParameterBasisDatabank = "";
         optimizerParameterSnapshot = new ArrayList<>();
+        clearAdoptedFilterGateAudit();
     }
 
     public boolean initializeOptimizerSettings(int mode, int criterion, int forwardMode, LocalDate forwardDate) {
@@ -533,6 +631,13 @@ public class WorkflowTask {
         copy.setOptimizerParameterBasisAdopted(optimizerParameterBasisAdopted);
         copy.setOptimizerParameterBasisPassNumber(optimizerParameterBasisPassNumber);
         copy.setOptimizerParameterBasisDatabank(optimizerParameterBasisDatabank);
+        copy.setAdoptedFilterGateParameter(adoptedFilterGateParameter);
+        copy.setAdoptedFilterGateVerdict(adoptedFilterGateVerdict);
+        copy.setAdoptedFilterGateForcedValue(adoptedFilterGateForcedValue);
+        copy.setAdoptedFilterGateForced(adoptedFilterGateForced);
+        copy.setAdoptedFilterGateOnMedianScore(getAdoptedFilterGateOnMedianScore());
+        copy.setAdoptedFilterGateOffMedianScore(getAdoptedFilterGateOffMedianScore());
+        copy.setAdoptedFilterGateNote(adoptedFilterGateNote);
         copy.setSensitivityRunTimestamp(sensitivityRunTimestamp);
         copy.setExecutionMode(getExecutionMode());
         copy.setDeleteFailed(deleteFailed);

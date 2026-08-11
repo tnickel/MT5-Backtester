@@ -17,6 +17,22 @@ import javafx.concurrent.Task;
 import javafx.scene.control.Alert;
 import javafx.scene.control.ButtonType;
 import javafx.stage.Window;
+import javafx.scene.control.TextArea;
+import javafx.scene.control.ProgressBar;
+import javafx.scene.control.Label;
+import javafx.scene.control.Button;
+import javafx.application.Platform;
+import javafx.geometry.Insets;
+import javafx.scene.Scene;
+import javafx.scene.layout.VBox;
+import javafx.scene.paint.Color;
+import javafx.scene.text.Font;
+import javafx.scene.text.FontWeight;
+import javafx.stage.Modality;
+import javafx.stage.Stage;
+import com.backtester.engine.WorkflowEngine;
+import java.util.Collection;
+import java.util.function.Consumer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -363,4 +379,201 @@ public class SingleBacktestHelper {
             return null;
         }
     }
+
+    /**
+     * Express Workflow single-pass backtest with progress dialog, cancel, visual mode,
+     * and auto-open report. Uses WorkflowEngine market/context settings.
+     * Behavior differs from {@link #runSingleBacktestInMetaTrader}: terminal shutdown
+     * follows {@code !visual}, deposit/leverage/currency come from the engine, and a
+     * modal progress UI is shown (existing helper keeps the terminal open with an info alert).
+     */
+    public static void runExpressWorkflowBacktest(CombinedPass cp, boolean visual,
+                                                   WorkflowEngine engine, Window owner,
+                                                   Collection<String> stylesheets,
+                                                   Consumer<String> openReport) {
+        if (cp == null || engine == null) return;
+        String expert = engine.getExpert();
+        if (expert == null || expert.isEmpty()) {
+            new Alert(Alert.AlertType.WARNING, "Bitte wählen Sie zuerst einen Expert Advisor aus!").show();
+            return;
+        }
+
+        String symbol = engine.getSymbol();
+        String period = engine.getPeriod();
+        LocalDate from = engine.getFromDate();
+        LocalDate to = engine.getToDate();
+        int deposit = engine.getDeposit();
+        String currency = engine.getCurrency();
+        String leverage = engine.getLeverage();
+        int tickModel = engine.getTickModel();
+
+        // 1. Prepare BacktestConfig
+        BacktestConfig btConfig = new BacktestConfig();
+        btConfig.setExpert(expert);
+        btConfig.setSymbol(symbol);
+        btConfig.setPeriod(period);
+        btConfig.setModel(tickModel);
+        btConfig.setFromDate(from);
+        btConfig.setToDate(to);
+        btConfig.setDeposit(deposit);
+        btConfig.setCurrency(currency);
+        btConfig.setLeverage(leverage);
+        btConfig.setShutdownTerminal(!visual);
+        btConfig.setVisualMode(visual);
+
+        // 2. Prepare parameter override file
+        String eaName = EaParameterManager.extractEaBaseName(expert);
+        EaParameterManager eaParamManager = new EaParameterManager();
+        com.backtester.report.PassPresetResolver.Resolution resolution =
+                com.backtester.report.PassPresetResolver.resolve(cp, expert);
+        List<EaParameter> params = resolution.parameters();
+        if (params != null && !params.isEmpty()) {
+            Path mt5Dir = AppConfig.getInstance().getMt5InstallDir();
+            if (mt5Dir != null) {
+                Path presetsDir = mt5Dir.resolve("MQL5").resolve("Profiles").resolve("Tester");
+                // A dedicated name: Backtester_<EA>.set is the optimizer's preset and
+                // overwriting it would destroy the record of the run being verified.
+                String presetFileName = "Backtester_" + eaName + "_Verify_Pass" + cp.getPassNumber() + ".set";
+                eaParamManager.writeSetFile(presetsDir.resolve(presetFileName), params, eaName);
+                btConfig.setExpertParameters(presetFileName);
+            }
+        }
+        if (resolution.warning() != null) {
+            new Alert(Alert.AlertType.WARNING, resolution.warning()).show();
+        }
+
+        // 3. Create dialog for logs and progress
+        Stage dialogStage = new Stage();
+        dialogStage.setTitle("Backtest - Pass " + cp.getPassNumber() + (visual ? " (Visuell)" : ""));
+        dialogStage.initModality(Modality.APPLICATION_MODAL);
+        if (owner != null) {
+            dialogStage.initOwner(owner);
+        }
+
+        VBox dialogBox = new VBox(12);
+        dialogBox.setPadding(new Insets(20));
+        dialogBox.setStyle("-fx-background-color: #0b0d13; -fx-border-color: #3e4555; -fx-border-width: 1px;");
+
+        Label titleLabel = new Label("BACKTEST LÄUFT...");
+        titleLabel.setFont(Font.font("Segoe UI", FontWeight.BOLD, 18));
+        titleLabel.setTextFill(Color.web("#00e5ff"));
+
+        Label statusLabel = new Label("Initialisiere MetaTrader 5...");
+        statusLabel.setTextFill(Color.web("#cbd5e1"));
+        statusLabel.setFont(Font.font("Segoe UI", 13));
+
+        ProgressBar pb = new ProgressBar(ProgressBar.INDETERMINATE_PROGRESS);
+        pb.setPrefWidth(560);
+
+        TextArea logArea = new TextArea();
+        logArea.setEditable(false);
+        logArea.setFont(Font.font("Consolas", 12));
+        logArea.setPrefHeight(300);
+        logArea.getStyleClass().add("text-area");
+        logArea.setStyle("-fx-control-inner-background: #14161c; -fx-text-fill: #b4bac8;");
+
+        Button cancelBtn = new Button("Abbrechen");
+        cancelBtn.getStyleClass().add("button");
+        cancelBtn.setStyle("-fx-background-color: #ff3b30; -fx-text-fill: white;");
+
+        dialogBox.getChildren().addAll(titleLabel, statusLabel, pb, logArea, cancelBtn);
+        
+        Scene dialogScene = new Scene(dialogBox, 600, 480);
+        if (stylesheets != null && !stylesheets.isEmpty()) {
+            dialogScene.getStylesheets().addAll(stylesheets);
+        }
+        dialogStage.setScene(dialogScene);
+
+        // 4. Set up task and runner
+        BacktestRunner runner = new BacktestRunner();
+        runner.setLogCallback(msg -> Platform.runLater(() -> {
+            logArea.appendText(msg + "\n");
+            logArea.selectPositionCaret(logArea.getLength());
+        }));
+
+        Task<BacktestResult> task = new Task<BacktestResult>() {
+            @Override
+            protected BacktestResult call() throws Exception {
+                return runner.runBacktest(btConfig);
+            }
+        };
+
+        cancelBtn.setOnAction(e -> {
+            if (task.isRunning()) {
+                runner.cancel();
+                task.cancel();
+            }
+            dialogStage.close();
+        });
+
+        task.setOnSucceeded(e -> {
+            BacktestResult result = task.getValue();
+            Platform.runLater(() -> {
+                pb.setProgress(1.0);
+                if (result != null && result.isSuccess()) {
+                    titleLabel.setText("BACKTEST ERFOLGREICH");
+                    titleLabel.setTextFill(Color.web("#00e676"));
+                    statusLabel.setText("Backtest abgeschlossen. Report wird geöffnet...");
+                    cancelBtn.setText("Schließen");
+                    cancelBtn.setStyle(""); // reset red background
+                    // Auto open HTML report
+                    if (openReport != null) {
+                        openReport.accept(result.getOutputDirectory());
+                    }
+                } else {
+                    titleLabel.setText("BACKTEST FEHLGESCHLAGEN");
+                    titleLabel.setTextFill(Color.web("#ff3b30"));
+                    statusLabel.setText(result != null ? "Fehler: " + result.getMessage() : "Fehler beim Ausführen des Backtests.");
+                    cancelBtn.setText("Schließen");
+                    cancelBtn.setStyle("");
+                }
+            });
+        });
+
+        task.setOnFailed(e -> {
+            Throwable ex = task.getException();
+            Platform.runLater(() -> {
+                pb.setProgress(0.0);
+                titleLabel.setText("BACKTEST FEHLER");
+                titleLabel.setTextFill(Color.web("#ff3b30"));
+                statusLabel.setText(ex != null ? ex.getMessage() : "Unbekannter Fehler.");
+                cancelBtn.setText("Schließen");
+                cancelBtn.setStyle("");
+            });
+        });
+
+        task.setOnCancelled(e -> {
+            Platform.runLater(() -> {
+                pb.setProgress(0.0);
+                titleLabel.setText("BACKTEST ABGEBROCHEN");
+                titleLabel.setTextFill(Color.web("#ffb300"));
+                statusLabel.setText("Der Backtest wurde vom Benutzer abgebrochen.");
+                cancelBtn.setText("Schließen");
+                cancelBtn.setStyle("");
+            });
+        });
+
+        // 5. Start background execution
+        Thread th = new Thread(task);
+        th.setDaemon(true);
+        th.start();
+
+        // 6. Show dialog
+        dialogStage.show();
+    }
+
+    public static void openReport(String directory, Consumer<String> onError) {
+        try {
+            javax.swing.SwingUtilities.invokeLater(() -> {
+                com.backtester.ui.ReportViewerDialog.showForDirectory(null, directory);
+            });
+        } catch (Exception e) {
+            if (onError != null) {
+                onError.accept("Could not open report: " + e.getMessage());
+            } else {
+                log.error("Could not open report: {}", e.getMessage());
+            }
+        }
+    }
+
 }

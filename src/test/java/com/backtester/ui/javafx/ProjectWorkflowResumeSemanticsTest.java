@@ -98,8 +98,9 @@ public class ProjectWorkflowResumeSemanticsTest {
         project.setAutomaticModeEnabled(true);
         assertTrue(ProjectWorkflowEditorView.shouldAutomaticallyAdoptBestPass(project, next));
 
+        // Already-adopted basis must still be refreshed in automatic mode.
         next.setOptimizerParameterBasisAdopted(true);
-        assertFalse(ProjectWorkflowEditorView.shouldAutomaticallyAdoptBestPass(project, next));
+        assertTrue(ProjectWorkflowEditorView.shouldAutomaticallyAdoptBestPass(project, next));
     }
 
     private static WorkflowTask completedTask(WorkflowTask.TaskType type) {

@@ -2,8 +2,6 @@ package com.backtester.ui.javafx;
 
 import com.backtester.report.OptimizationResult.CombinedPass;
 import javafx.application.Platform;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import javafx.beans.property.SimpleStringProperty;
 import javafx.collections.FXCollections;
 import javafx.collections.ObservableList;
@@ -12,11 +10,9 @@ import javafx.geometry.Pos;
 import javafx.scene.Scene;
 import javafx.scene.chart.BarChart;
 import javafx.scene.chart.CategoryAxis;
-import javafx.scene.chart.LineChart;
 import javafx.scene.chart.NumberAxis;
 import javafx.scene.chart.XYChart;
 import javafx.scene.control.*;
-import javafx.scene.control.cell.PropertyValueFactory;
 import javafx.scene.layout.*;
 import javafx.scene.paint.Color;
 import javafx.stage.Modality;
@@ -26,7 +22,6 @@ import java.util.*;
 import java.util.stream.Collectors;
 
 public class StrategyEvaluatorDialog extends Stage {
-    private static final Logger log = LoggerFactory.getLogger(StrategyEvaluatorDialog.class);
 
     private final List<CombinedPass> allPasses;
     private final OptimizationView parentView;
@@ -521,7 +516,7 @@ public class StrategyEvaluatorDialog extends Stage {
             TableRow<CombinedPass> row = new TableRow<>();
             row.setOnMouseClicked(event -> {
                 if (event.getClickCount() == 2 && (!row.isEmpty())) {
-                    showPassDetailsDialog(row.getItem());
+                    StrategyEvaluatorPassDetailsDialog.show(this, row.getItem(), parentView, referenceTrades, referenceProfit);
                 }
             });
             return row;
@@ -779,44 +774,11 @@ public class StrategyEvaluatorDialog extends Stage {
     }
 
     public static double calculateRobustnessIndex(CombinedPass cp) {
-        return calculateRobustnessIndex(cp, 80);
+        return StrategyEvaluatorMetrics.calculateRobustnessIndex(cp);
     }
 
     public static double calculateRobustnessIndex(CombinedPass cp, int referenceTrades) {
-        double rfBt = cp.getBtRecovery();
-        if (Double.isNaN(rfBt) || rfBt <= 0) {
-            rfBt = 0.0;
-        }
-
-        // 1. Trade-Anzahl Faktor (Je mehr Trades, desto besser. Sigmoid/Exponential-Annäherung)
-        int tradesBt = cp.getBtTrades();
-        double wTrades = 1.0 - Math.exp(-tradesBt / (double) referenceTrades);
-
-        // 2. Konsistenz-Faktor (Backtest vs Forward)
-        double wConsistency = 1.0;
-        if (cp.getForwardPass() != null) {
-            double rfFw = cp.getFwRecovery();
-            if (Double.isNaN(rfFw) || rfFw <= 0) {
-                wConsistency = 0.0; // Verlust im Forward ist ein K.O.-Kriterium
-            } else {
-                double ratio = rfFw / rfBt;
-                if (ratio >= 0.95) {
-                    wConsistency = 1.0; // Forward ist ungefähr gleich oder besser -> Kein Abzug
-                } else {
-                    wConsistency = ratio; // Linearer Abzug bei schlechterem Forward
-                }
-            }
-        } else {
-            // Kein Forward-Test vorhanden -> milder Abzug, da unbestätigt
-            wConsistency = 0.7;
-        }
-
-        // Berechne finalen Score: Recovery-Factor * Trades-Gewicht * Konsistenz-Gewicht
-        double ri = rfBt * wTrades * wConsistency;
-        if (Double.isNaN(ri) || Double.isInfinite(ri) || ri < 0) {
-            ri = 0.0;
-        }
-        return ri;
+        return StrategyEvaluatorMetrics.calculateRobustnessIndex(cp, referenceTrades);
     }
 
     private void showRobustnessIndexExplanation() {
@@ -905,87 +867,7 @@ public class StrategyEvaluatorDialog extends Stage {
     }
 
     public static void showRobustnessScoreExplanation(javafx.stage.Window owner) {
-        Stage infoStage = new Stage();
-        if (owner != null) {
-            infoStage.initOwner(owner);
-        }
-        infoStage.initModality(Modality.APPLICATION_MODAL);
-        infoStage.setTitle("Was ist der Robustness Score?");
-
-        VBox layout = new VBox(15);
-        layout.setPadding(new Insets(20));
-        layout.setStyle("-fx-background-color: #11141d; -fx-border-color: #ffd740; -fx-border-width: 1px; -fx-border-radius: 5px;");
-
-        Label title = new Label("Robustness Score (0-100) - Erklärung");
-        title.setFont(javafx.scene.text.Font.font("Segoe UI", javafx.scene.text.FontWeight.BOLD, 18));
-        title.setTextFill(Color.web("#ffd740"));
-
-        Label descText = new Label(
-            "Der Robustness Score ist ein von 0 bis 100 skalierter Gesamtwert, der auf 6 wesentlichen Säulen der Strategiequalität basiert. " +
-            "Er prüft detailliert, ob eine Strategie robust ist oder Anzeichen von Überoptimierung (Curve-Fitting) aufweist."
-        );
-        descText.setWrapText(true);
-        descText.setTextFill(Color.web("#e6e9f0"));
-
-        Label comparisonNote = new Label(
-            "⚠️ WICHTIGER UNTERSCHIED ZUM GESAMT-SCORE:\n" +
-            "Der normale Gesamt-Score bewertet ausschließlich die endgültigen Kennzahlen am Schluss (Gewinn, Drawdown, etc.). " +
-            "Der Robustness Score gewichtet zusätzlich Konsistenz (FW/BT), Sharpe Ratio und Stichprobengröße, " +
-            "um Glückstreffer oder instabile Strategien aufzudecken."
-        );
-        comparisonNote.setWrapText(true);
-        comparisonNote.setTextFill(Color.web("#ffd740"));
-        comparisonNote.setFont(javafx.scene.text.Font.font("Segoe UI", javafx.scene.text.FontWeight.BOLD, 12));
-
-        Label pillarsTitle = new Label("Die Säulen der Robustheit (nur echte Messdaten):");
-        pillarsTitle.setFont(javafx.scene.text.Font.font("Segoe UI", javafx.scene.text.FontWeight.BOLD, 13));
-        pillarsTitle.setTextFill(Color.web("#00e5ff"));
-
-        Label pillarsText = new Label(
-            "• 1. Profitabilität (BT + FW): Bewertet ROI und Profit Factor in beiden Phasen.\n" +
-            "• 2. Konsistenz (FW/BT): Reproduzierbarkeit der Ergebnisse im Forward-Test.\n" +
-            "• 3. Risiko-Verhältnis (Risk/Reward): Bewertet Calmar Ratio und Recovery Factor.\n" +
-            "• 4. Sharpe Ratio: Von MT5 gemessene Ertragsgleichmäßigkeit (BT + FW).\n" +
-            "• 5. Stichprobengröße (Sample Size): Trades und reale Testjahre.\n" +
-            "• 6. FW Trade Count: Statistische Belastbarkeit der Forward-Phase."
-        );
-        pillarsText.setWrapText(true);
-        pillarsText.setTextFill(Color.web("#e6e9f0"));
-
-        Label evaluationTitle = new Label("Bewertungsskala:");
-        evaluationTitle.setFont(javafx.scene.text.Font.font("Segoe UI", javafx.scene.text.FontWeight.BOLD, 13));
-        evaluationTitle.setTextFill(Color.web("#00e5ff"));
-
-        Label evaluationText = new Label(
-            "• >= 70 (Klasse A / B): Hervorragende Robustheit, sehr gut geeignet für Live-Tests.\n" +
-            "• 55 - 69 (Klasse C): Grenzwertig robuste Performance mit Schwächen.\n" +
-            "• < 55 (Klasse D / F): Mangelnde Robustheit, hohe Wahrscheinlichkeit von Curve-Fitting."
-        );
-        evaluationText.setWrapText(true);
-        evaluationText.setTextFill(Color.web("#e6e9f0"));
-
-        Button closeBtn = new Button("Verstanden");
-        closeBtn.getStyleClass().add("button");
-        closeBtn.setOnAction(e -> infoStage.close());
-
-        HBox btnBox = new HBox(closeBtn);
-        btnBox.setAlignment(Pos.CENTER_RIGHT);
-
-        layout.getChildren().addAll(title, descText, comparisonNote, pillarsTitle, pillarsText, evaluationTitle, evaluationText, btnBox);
-
-        ScrollPane scrollPane = new ScrollPane(layout);
-        scrollPane.setFitToWidth(true);
-        scrollPane.setStyle("-fx-background-color: transparent; -fx-background: #11141d; -fx-border-color: transparent;");
-        scrollPane.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
-
-        Scene scene = new Scene(scrollPane, 580, 580);
-        try {
-            scene.getStylesheets().add(StrategyEvaluatorDialog.class.getResource("/css/antigravity.css").toExternalForm());
-        } catch (Exception e) {
-            // Ignore
-        }
-        infoStage.setScene(scene);
-        infoStage.showAndWait();
+        StrategyEvaluatorMetrics.showRobustnessScoreExplanation(owner);
     }
 
     private VBox createKpiCard(String title, String colorHex, Label valueLabelRef) {
@@ -1048,70 +930,15 @@ public class StrategyEvaluatorDialog extends Stage {
     }
 
     public static Evaluation evaluatePass(CombinedPass cp) {
-        return evaluatePass(cp, 80, 500.0);
+        return StrategyEvaluatorMetrics.evaluatePass(cp);
     }
 
     public static Evaluation evaluatePass(CombinedPass cp, int referenceTrades) {
-        return evaluatePass(cp, referenceTrades, 500.0);
+        return StrategyEvaluatorMetrics.evaluatePass(cp, referenceTrades);
     }
 
     public static Evaluation evaluatePass(CombinedPass cp, int referenceTrades, double referenceProfit) {
-        double btProfit = cp.getBtProfit();
-        double fwProfit = cp.getFwProfit();
-        int btTrades = cp.getBtTrades();
-        int fwTrades = cp.getFwTrades();
-        double btDd = cp.getBtDd();
-        double fwDd = cp.getFwDd();
-        double consistency = cp.getConsistency();
-        double btPf = cp.getBtPf();
-        double fwPf = cp.getFwPf();
-
-        double ri = calculateRobustnessIndex(cp, referenceTrades);
-
-        // 1. Statistische Relevanz prüfen (Geringe Tradezahl)
-        if (btTrades < 10 || fwTrades < 10) {
-            return new Evaluation("BAD", String.format(Locale.US, "❌ Statistische Irrelevanz (RI: %.2f - zu wenig Trades)", ri), "#ff5252");
-        }
-        
-        // 2. Extremes Risiko prüfen (Drawdown)
-        if (btDd > 50.0 || fwDd > 50.0) {
-            return new Evaluation("BAD", String.format(Locale.US, "❌ Klippen-Risiko (RI: %.2f): Extrem hoher Drawdown (>50%%)", ri), "#ff5252");
-        }
-
-        // 3. Verlustreiche Läufe
-        if (btProfit <= 0 || fwProfit <= 0) {
-            return new Evaluation("BAD", String.format(Locale.US, "❌ Nicht profitabel im Back- oder Forward (RI: %.2f)", ri), "#ff5252");
-        }
-
-        // 4. Warnung bei mäßiger Tradeanzahl
-        if (btTrades < 40 || fwTrades < 40) {
-            if (btDd <= 10.0 && fwDd <= 10.0 && consistency >= 1.0) {
-                return new Evaluation("WARNING", String.format(Locale.US, "⚠️ Gute Konsistenz, aber geringe Tradeanzahl (RI: %.2f)", ri), "#ffd740");
-            }
-            return new Evaluation("WARNING", String.format(Locale.US, "⚠️ Geringe statistische Breite (RI: %.2f)", ri), "#ffd740");
-        }
-
-        // 5. Leistungseinbruch im Forward
-        if (consistency < 0.6) {
-            return new Evaluation("WARNING", String.format(Locale.US, "⚠️ Deutlicher Leistungseinbruch im Forward (RI: %.2f)", ri), "#ffd740");
-        }
-
-        // 6. Exzellente Kandidaten (Stabilität + hoher Profit)
-        if (consistency >= 1.0 && btTrades >= 80 && btDd <= 15.0 && fwDd <= 15.0 && btPf >= 1.5 && fwPf >= 1.5 && btProfit >= referenceProfit) {
-            return new Evaluation("EXCELLENT", String.format(Locale.US, "💎 Exzellent! Stabil, geringer Drawdown & konsistent (RI: %.2f)", ri), "#00e676");
-        }
-
-        // 7. Solide Kandidaten (Stabilität + hoher Profit)
-        if (consistency >= 0.8 && btTrades >= 50 && btDd <= 20.0 && fwDd <= 20.0 && btProfit >= referenceProfit * 0.6) {
-            return new Evaluation("GOOD", String.format(Locale.US, "✅ Solide & robuste Strategie für Live-Tests (RI: %.2f)", ri), "#00e676");
-        }
-
-        // Falls zwar stabil, aber mäßiger Profit
-        if (consistency >= 0.8 && btTrades >= 50 && btDd <= 20.0 && fwDd <= 20.0) {
-            return new Evaluation("GOOD", String.format(Locale.US, "ℹ️ Stabil, aber mäßiger Profit (RI: %.2f)", ri), "#80d8ff");
-        }
-
-        return new Evaluation("GOOD", String.format(Locale.US, "ℹ️ Solide Performance (RI: %.2f, Detailprüfung empfohlen)", ri), "#80d8ff");
+        return StrategyEvaluatorMetrics.evaluatePass(cp, referenceTrades, referenceProfit);
     }
 
     private void autoSelectTopFive() {
@@ -1257,459 +1084,7 @@ public class StrategyEvaluatorDialog extends Stage {
         }
     }
 
-    private Label addMetricRow(GridPane grid, int row, String labelText, String valueText) {
-        Label label = new Label(labelText);
-        label.setTextFill(Color.web("#7e889a"));
-        label.setFont(javafx.scene.text.Font.font("Segoe UI", javafx.scene.text.FontWeight.BOLD, 12));
-        
-        Label value = new Label(valueText);
-        value.setTextFill(Color.web("#e6e9f0"));
-        value.setFont(javafx.scene.text.Font.font("Segoe UI", 12));
-        
-        grid.add(label, 0, row);
-        grid.add(value, 1, row);
-        return value;
-    }
-
-    private void showPassDetailsDialog(CombinedPass cp) {
-        Stage detailStage = new Stage();
-        detailStage.initOwner(this);
-        detailStage.initModality(Modality.APPLICATION_MODAL);
-        detailStage.setTitle("Strategie-Details: Pass #" + cp.getPassNumber());
-
-        VBox layout = new VBox(15);
-        layout.setPadding(new Insets(20));
-        layout.setStyle("-fx-background-color: #11141d; -fx-border-color: #00e5ff; -fx-border-width: 1px; -fx-border-radius: 5px;");
-
-        // --- Header ---
-        Label titleLabel = new Label("STRATEGIE-DETAILS (PASS #" + cp.getPassNumber() + ")");
-        titleLabel.setFont(javafx.scene.text.Font.font("Segoe UI", javafx.scene.text.FontWeight.BOLD, 18));
-        titleLabel.setTextFill(Color.web("#00e5ff"));
-
-        String fromDateStr = "Unbekannt";
-        String toDateStr = "Unbekannt";
-        if (parentView != null && parentView.getLastOptResult() != null) {
-            if (parentView.getLastOptResult().getFromDate() != null && !parentView.getLastOptResult().getFromDate().isEmpty()) {
-                fromDateStr = parentView.getLastOptResult().getFromDate();
-            }
-            if (parentView.getLastOptResult().getToDate() != null && !parentView.getLastOptResult().getToDate().isEmpty()) {
-                toDateStr = parentView.getLastOptResult().getToDate();
-            }
-        }
-        Label subtitleLabel = new Label("Zeitraum: " + fromDateStr + " bis " + toDateStr);
-        subtitleLabel.setFont(javafx.scene.text.Font.font("Segoe UI", 13));
-        subtitleLabel.setTextFill(Color.web("#7e889a"));
-
-        layout.getChildren().addAll(titleLabel, subtitleLabel);
-
-        // --- Cards Pane ---
-        HBox cardsBox = new HBox(12);
-        cardsBox.setAlignment(Pos.TOP_LEFT);
-
-        // 1. Backtest Card
-        VBox btCard = new VBox(10);
-        btCard.setPadding(new Insets(12));
-        btCard.setStyle("-fx-background-color: #171b26; -fx-border-color: #00e676; -fx-border-width: 1px; -fx-border-radius: 4px; -fx-background-radius: 4px;");
-        HBox.setHgrow(btCard, Priority.ALWAYS);
-        Label btTitle = new Label("◀ BACKTEST METRIKEN");
-        btTitle.setFont(javafx.scene.text.Font.font("Segoe UI", javafx.scene.text.FontWeight.BOLD, 13));
-        btTitle.setTextFill(Color.web("#00e676"));
-        GridPane btGrid = new GridPane();
-        btGrid.setHgap(15);
-        btGrid.setVgap(6);
-        addMetricRow(btGrid, 0, "Nettoprofit:", String.format(Locale.US, "%.2f", cp.getBtProfit()));
-        addMetricRow(btGrid, 1, "Trades:", String.valueOf(cp.getBtTrades()));
-        addMetricRow(btGrid, 2, "Profit Factor:", String.format(Locale.US, "%.2f", cp.getBtPf()));
-        addMetricRow(btGrid, 3, "Max. Drawdown:", String.format(Locale.US, "%.2f%%", cp.getBtDd()));
-        addMetricRow(btGrid, 4, "Recovery Factor:", String.format(Locale.US, "%.2f", cp.getBtRecovery()));
-        addMetricRow(btGrid, 5, "Sharpe Ratio:", Double.isNaN(cp.getBtSharpe()) ? "—" : String.format(Locale.US, "%.2f", cp.getBtSharpe()));
-        addMetricRow(btGrid, 6, "Expected Payoff:", String.format(Locale.US, "%.2f", cp.getBtExpectedPayoff()));
-        btCard.getChildren().addAll(btTitle, btGrid);
-
-        // 2. Forward Card
-        VBox fwCard = new VBox(10);
-        fwCard.setPadding(new Insets(12));
-        fwCard.setStyle("-fx-background-color: #171b26; -fx-border-color: #00e5ff; -fx-border-width: 1px; -fx-border-radius: 4px; -fx-background-radius: 4px;");
-        HBox.setHgrow(fwCard, Priority.ALWAYS);
-        Label fwTitle = new Label("FORWARD METRIKEN ▶");
-        fwTitle.setFont(javafx.scene.text.Font.font("Segoe UI", javafx.scene.text.FontWeight.BOLD, 13));
-        fwTitle.setTextFill(Color.web("#00e5ff"));
-        GridPane fwGrid = new GridPane();
-        fwGrid.setHgap(15);
-        fwGrid.setVgap(6);
-
-        if (cp.getForwardPass() != null) {
-            addMetricRow(fwGrid, 0, "Nettoprofit:", String.format(Locale.US, "%.2f", cp.getFwProfit()));
-            addMetricRow(fwGrid, 1, "Trades:", String.valueOf(cp.getFwTrades()));
-            addMetricRow(fwGrid, 2, "Profit Factor:", Double.isNaN(cp.getFwPf()) ? "—" : String.format(Locale.US, "%.2f", cp.getFwPf()));
-            addMetricRow(fwGrid, 3, "Max. Drawdown:", Double.isNaN(cp.getFwDd()) ? "—" : String.format(Locale.US, "%.2f%%", cp.getFwDd()));
-            addMetricRow(fwGrid, 4, "Recovery Factor:", Double.isNaN(cp.getFwRecovery()) ? "—" : String.format(Locale.US, "%.2f", cp.getFwRecovery()));
-            addMetricRow(fwGrid, 5, "Sharpe Ratio:", Double.isNaN(cp.getFwSharpe()) ? "—" : String.format(Locale.US, "%.2f", cp.getFwSharpe()));
-            addMetricRow(fwGrid, 6, "Expected Payoff:", Double.isNaN(cp.getFwExpectedPayoff()) ? "—" : String.format(Locale.US, "%.2f", cp.getFwExpectedPayoff()));
-            fwCard.getChildren().addAll(fwTitle, fwGrid);
-        } else {
-            Label noFwLabel = new Label("Kein Forward-Test\ndurchgeführt.");
-            noFwLabel.setTextFill(Color.web("#7e889a"));
-            noFwLabel.setFont(javafx.scene.text.Font.font("Segoe UI", javafx.scene.text.FontWeight.BOLD, 12));
-            noFwLabel.setAlignment(Pos.CENTER);
-            VBox.setVgrow(noFwLabel, Priority.ALWAYS);
-            fwCard.getChildren().addAll(fwTitle, noFwLabel);
-        }
-
-        // 3. Evaluation Card
-        VBox evalCard = new VBox(10);
-        evalCard.setPadding(new Insets(12));
-        evalCard.setStyle("-fx-background-color: #171b26; -fx-border-color: #ffd740; -fx-border-width: 1px; -fx-border-radius: 4px; -fx-background-radius: 4px;");
-        HBox.setHgrow(evalCard, Priority.ALWAYS);
-        Label evalTitle = new Label("BEWERTUNG & ROBUSTHEIT");
-        evalTitle.setFont(javafx.scene.text.Font.font("Segoe UI", javafx.scene.text.FontWeight.BOLD, 13));
-        evalTitle.setTextFill(Color.web("#ffd740"));
-        GridPane evalGrid = new GridPane();
-        evalGrid.setHgap(15);
-        evalGrid.setVgap(6);
-
-        Evaluation eval = evaluatePass(cp, referenceTrades, referenceProfit);
-        addMetricRow(evalGrid, 0, "Score (Gewichtung):", String.format(Locale.US, "%.2f", cp.getScore()));
-        addMetricRow(evalGrid, 1, "Robustness-Index (RI):", String.format(Locale.US, "%.2f", calculateRobustnessIndex(cp, referenceTrades)));
-        addMetricRow(evalGrid, 2, "Forward-Konsistenz:", String.format(Locale.US, "%.2f", cp.getConsistency()));
-        Label verdictVal = addMetricRow(evalGrid, 3, "Analyse-Urteil:", eval.remark);
-        verdictVal.setTextFill(Color.web(eval.color));
-        verdictVal.setStyle("-fx-font-weight: bold;");
-        verdictVal.setWrapText(true);
-        verdictVal.setMaxWidth(160);
-        
-        evalCard.getChildren().addAll(evalTitle, evalGrid);
-
-        cardsBox.getChildren().addAll(btCard, fwCard, evalCard);
-        layout.getChildren().add(cardsBox);
-
-        // --- Equity Chart ---
-        Label chartTitleLabel = new Label("EQUITY-KURVE (KAPITALVERLAUF)");
-        chartTitleLabel.setFont(javafx.scene.text.Font.font("Segoe UI", javafx.scene.text.FontWeight.BOLD, 14));
-        chartTitleLabel.setTextFill(Color.web("#00e5ff"));
-        layout.getChildren().add(chartTitleLabel);
-
-        NumberAxis xAxis = new NumberAxis();
-        xAxis.setLabel("Trades");
-        xAxis.setTickLabelFill(Color.web("#7e889a"));
-        xAxis.setMinorTickVisible(false);
-
-        NumberAxis yAxis = new NumberAxis();
-        yAxis.setLabel("Equity");
-        yAxis.setTickLabelFill(Color.web("#7e889a"));
-        yAxis.setForceZeroInRange(false);
-
-        LineChart<Number, Number> equityChart = new LineChart<>(xAxis, yAxis);
-        equityChart.setCreateSymbols(false);
-        equityChart.setPrefHeight(200);
-        equityChart.setMinHeight(200);
-        equityChart.setMaxHeight(200);
-        equityChart.setAnimated(false);
-        equityChart.setStyle("-fx-background-color: transparent;");
-        equityChart.setHorizontalGridLinesVisible(true);
-        equityChart.setVerticalGridLinesVisible(false);
-        VBox.setVgrow(equityChart, Priority.ALWAYS);
-
-        // Generate curves
-        double btEndBalance = cp.getBacktestPass().getBalance();
-        double btStartBalance = btEndBalance - cp.getBtProfit();
-        if (btStartBalance <= 0) {
-            btStartBalance = 10000.0;
-        }
-
-        List<Double> btCurve = generateSyntheticEquityCurve(btStartBalance, cp.getBtProfit(), cp.getBtTrades(), cp.getBtPf(), cp.getPassNumber());
-        XYChart.Series<Number, Number> backtestSeries = new XYChart.Series<>();
-        backtestSeries.setName("Backtest");
-        for (int i = 0; i < btCurve.size(); i++) {
-            backtestSeries.getData().add(new XYChart.Data<>(i, btCurve.get(i)));
-        }
-        equityChart.getData().add(backtestSeries);
-
-        XYChart.Series<Number, Number> forwardSeries = null;
-        if (cp.getForwardPass() != null) {
-            double fwStartBalance = btCurve.get(btCurve.size() - 1);
-            List<Double> fwCurve = generateSyntheticEquityCurve(fwStartBalance, cp.getFwProfit(), cp.getFwTrades(), cp.getFwPf(), cp.getPassNumber() + 999);
-            forwardSeries = new XYChart.Series<>();
-            forwardSeries.setName("Forward");
-            
-            // Connect seamlessly
-            int offset = btCurve.size() - 1;
-            forwardSeries.getData().add(new XYChart.Data<>(offset, fwStartBalance));
-            for (int j = 1; j < fwCurve.size(); j++) {
-                forwardSeries.getData().add(new XYChart.Data<>(offset + j, fwCurve.get(j)));
-            }
-            equityChart.getData().add(forwardSeries);
-        }
-
-        layout.getChildren().add(equityChart);
-
-        // --- Parameter section ---
-        Label paramTitle = new Label("STRATEGIE-PARAMETER");
-        paramTitle.setFont(javafx.scene.text.Font.font("Segoe UI", javafx.scene.text.FontWeight.BOLD, 14));
-        paramTitle.setTextFill(Color.web("#00e5ff"));
-        layout.getChildren().add(paramTitle);
-
-        TableView<ParameterRow> paramTable = new TableView<>();
-        paramTable.setStyle("-fx-background-color: transparent;");
-        paramTable.setPrefHeight(200);
-        VBox.setVgrow(paramTable, Priority.ALWAYS);
-
-        TableColumn<ParameterRow, String> nameCol = new TableColumn<>("Parameter");
-        nameCol.setCellValueFactory(new PropertyValueFactory<>("name"));
-        nameCol.setPrefWidth(350);
-
-        TableColumn<ParameterRow, String> valCol = new TableColumn<>("Wert");
-        valCol.setCellValueFactory(new PropertyValueFactory<>("value"));
-        valCol.setPrefWidth(350);
-
-        paramTable.getColumns().addAll(nameCol, valCol);
-
-        List<ParameterRow> paramList = new ArrayList<>();
-        Map<String, String> params = cp.getBacktestPass().getParameterValues();
-        for (Map.Entry<String, String> entry : params.entrySet()) {
-            paramList.add(new ParameterRow(entry.getKey(), entry.getValue()));
-        }
-        paramTable.setItems(FXCollections.observableArrayList(paramList));
-        layout.getChildren().add(paramTable);
-
-        // --- Bottom bar ---
-        Button closeBtn = new Button("Schließen");
-        closeBtn.getStyleClass().add("button");
-        closeBtn.setOnAction(e -> detailStage.close());
-
-        HBox btnBox = new HBox(10, closeBtn);
-        btnBox.setAlignment(Pos.CENTER_RIGHT);
-        layout.getChildren().add(btnBox);
-
-        // --- Scorecard WebView (Right Side) ---
-        String symbolStr = parentView != null && parentView.getLastOptResult() != null ? parentView.getLastOptResult().getSymbol() : "EURUSD";
-        String periodStr = parentView != null && parentView.getLastOptResult() != null ? parentView.getLastOptResult().getPeriod() : "H1";
-        String expertStr = parentView != null && parentView.getLastOptResult() != null ? parentView.getLastOptResult().getExpert() : "";
-
-        double sensitivScoreVal = -1.0;
-        double kiScoreVal = -1.0;
-        if (parentView != null && parentView.getSensitivityResults() != null) {
-            for (com.backtester.report.SensitivityResult sr : parentView.getSensitivityResults()) {
-                if (sr.getOriginalPass() != null && sr.getOriginalPass().getPassNumber() == cp.getPassNumber()) {
-                    sensitivScoreVal = 100.0 - Math.max(sr.getOverallCV(), sr.getOverallCVFw());
-                    String kiRes = sr.getKiResult();
-                    if (kiRes != null && !kiRes.isEmpty()) {
-                        try {
-                            java.util.regex.Matcher m = java.util.regex.Pattern.compile("(\\d{1,3})\\s*/\\s*100").matcher(kiRes);
-                            if (m.find()) {
-                                kiScoreVal = Double.parseDouble(m.group(1));
-                            } else {
-                                kiScoreVal = Double.parseDouble(kiRes.trim());
-                            }
-                        } catch (Exception ignored) {}
-                    }
-                    break;
-                }
-            }
-        }
-
-        String htmlContent = com.backtester.report.RobustnessScorecardGenerator.generateHtml(
-            cp, expertStr, symbolStr, periodStr, fromDateStr, toDateStr, sensitivScoreVal, kiScoreVal
-        );
-
-        javafx.scene.web.WebView webView = new javafx.scene.web.WebView();
-        webView.getEngine().setOnAlert(event -> log.info("JS ALERT: " + event.getData()));
-        webView.getEngine().getLoadWorker().stateProperty().addListener((obs, oldState, newState) -> {
-            if (newState == javafx.concurrent.Worker.State.RUNNING || newState == javafx.concurrent.Worker.State.SUCCEEDED) {
-                try {
-                    netscape.javascript.JSObject window = (netscape.javascript.JSObject) webView.getEngine().executeScript("window");
-                    window.setMember("consoleBridge", new ConsoleLoggerBridge());
-                } catch (Exception ex) {
-                    // Ignore
-                }
-            }
-        });
-        webView.getEngine().getLoadWorker().exceptionProperty().addListener((obs, oldExc, newExc) -> {
-            if (newExc != null) {
-                log.error("WebView LoadWorker Exception: ", newExc);
-            }
-        });
-        webView.getEngine().loadContent(htmlContent);
-
-        VBox rightPane = new VBox(webView);
-        VBox.setVgrow(webView, Priority.ALWAYS);
-        rightPane.setStyle("-fx-background-color: #11141d;");
-
-        ScrollPane leftScroll = new ScrollPane(layout);
-        leftScroll.setFitToWidth(true);
-        leftScroll.setStyle("-fx-background-color: transparent; -fx-background: #11141d; -fx-box-border: transparent;");
-
-        SplitPane splitPane = new SplitPane();
-        splitPane.getItems().addAll(leftScroll, rightPane);
-        splitPane.setDividerPositions(0.55);
-        splitPane.setStyle("-fx-background-color: #11141d; -fx-box-border: transparent;");
-
-        Scene scene = new Scene(splitPane, 1500, 850);
-        try {
-            scene.getStylesheets().add(getClass().getResource("/css/antigravity.css").toExternalForm());
-        } catch (Exception e) {
-            // Ignore
-        }
-        detailStage.setScene(scene);
-
-        // Style chart after elements are shown
-        final XYChart.Series<Number, Number> finalFwSeries = forwardSeries;
-        detailStage.setOnShown(e -> {
-            if (backtestSeries.getNode() != null) {
-                backtestSeries.getNode().setStyle("-fx-stroke: #00e676; -fx-stroke-width: 3px;");
-            }
-            if (finalFwSeries != null && finalFwSeries.getNode() != null) {
-                finalFwSeries.getNode().setStyle("-fx-stroke: #00e5ff; -fx-stroke-width: 3px;");
-            }
-            javafx.scene.Node plotBg = equityChart.lookup(".chart-plot-background");
-            if (plotBg != null) {
-                plotBg.setStyle("-fx-background-color: #171b26; -fx-border-color: #3e4555; -fx-border-width: 1px;");
-            }
-        });
-
-        detailStage.showAndWait();
-    }
-
-    private void showRobustnessScorecardWebView(CombinedPass cp) {
-        Stage stage = new Stage();
-        stage.setTitle("🛡️ Robustness Scorecard: Pass #" + cp.getPassNumber());
-        stage.initOwner(this);
-        stage.initModality(Modality.APPLICATION_MODAL);
-
-        String fromDateStr = "Unbekannt";
-        String toDateStr = "Unbekannt";
-        if (parentView != null && parentView.getLastOptResult() != null) {
-            fromDateStr = parentView.getLastOptResult().getFromDate();
-            toDateStr = parentView.getLastOptResult().getToDate();
-        }
-        
-        String symbolStr = parentView != null && parentView.getLastOptResult() != null ? parentView.getLastOptResult().getSymbol() : "EURUSD";
-        String periodStr = parentView != null && parentView.getLastOptResult() != null ? parentView.getLastOptResult().getPeriod() : "H1";
-        String expertStr = parentView != null && parentView.getLastOptResult() != null ? parentView.getLastOptResult().getExpert() : "";
-
-        double sensitivScoreVal = -1.0;
-        double kiScoreVal = -1.0;
-        if (parentView != null && parentView.getSensitivityResults() != null) {
-            for (com.backtester.report.SensitivityResult sr : parentView.getSensitivityResults()) {
-                if (sr.getOriginalPass() != null && sr.getOriginalPass().getPassNumber() == cp.getPassNumber()) {
-                    sensitivScoreVal = 100.0 - Math.max(sr.getOverallCV(), sr.getOverallCVFw());
-                    String kiRes = sr.getKiResult();
-                    if (kiRes != null && !kiRes.isEmpty()) {
-                        try {
-                            java.util.regex.Matcher m = java.util.regex.Pattern.compile("(\\d{1,3})\\s*/\\s*100").matcher(kiRes);
-                            if (m.find()) {
-                                kiScoreVal = Double.parseDouble(m.group(1));
-                            } else {
-                                kiScoreVal = Double.parseDouble(kiRes.trim());
-                            }
-                        } catch (Exception ignored) {}
-                    }
-                    break;
-                }
-            }
-        }
-
-        String htmlContent = com.backtester.report.RobustnessScorecardGenerator.generateHtml(
-            cp, expertStr, symbolStr, periodStr, fromDateStr, toDateStr, sensitivScoreVal, kiScoreVal
-        );
-
-        javafx.scene.web.WebView webView = new javafx.scene.web.WebView();
-        webView.getEngine().setOnAlert(event -> log.info("JS ALERT: " + event.getData()));
-        webView.getEngine().getLoadWorker().stateProperty().addListener((obs, oldState, newState) -> {
-            if (newState == javafx.concurrent.Worker.State.RUNNING || newState == javafx.concurrent.Worker.State.SUCCEEDED) {
-                try {
-                    netscape.javascript.JSObject window = (netscape.javascript.JSObject) webView.getEngine().executeScript("window");
-                    window.setMember("consoleBridge", new ConsoleLoggerBridge());
-                } catch (Exception e) {
-                    // Ignore if window is not ready yet
-                }
-            }
-        });
-        webView.getEngine().getLoadWorker().exceptionProperty().addListener((obs, oldExc, newExc) -> {
-            if (newExc != null) {
-                log.error("WebView LoadWorker Exception: ", newExc);
-            }
-        });
-        webView.getEngine().loadContent(htmlContent);
-
-        VBox box = new VBox(webView);
-        VBox.setVgrow(webView, Priority.ALWAYS);
-        
-        Scene scene = new Scene(box, 750, 750);
-        stage.setScene(scene);
-        stage.show();
-    }
-
     public static List<Double> generateSyntheticEquityCurve(double startBalance, double profit, int trades, double pf, int passNumber) {
-        List<Double> curve = new ArrayList<>();
-        curve.add(startBalance);
-        if (trades <= 0) {
-            return curve;
-        }
-
-        // Determine Gross Profit and Gross Loss
-        double grossProfit;
-        double grossLoss;
-        double effectivePf = (Double.isNaN(pf) || pf <= 1.0) ? 1.5 : pf;
-        
-        if (effectivePf > 1.0) {
-            grossLoss = profit / (effectivePf - 1.0);
-            grossProfit = profit * effectivePf / (effectivePf - 1.0);
-        } else {
-            grossLoss = Math.abs(profit) * 2.0;
-            grossProfit = grossLoss + profit;
-        }
-
-        // Assume a win rate of around 55%
-        double winRate = 0.55;
-        int wins = (int) Math.round(trades * winRate);
-        if (wins < 1 && profit > 0) wins = 1;
-        int losses = trades - wins;
-        if (losses < 1 && profit < 0) losses = 1;
-        if (wins + losses != trades) {
-            losses = trades - wins;
-        }
-
-        double avgWin = wins > 0 ? grossProfit / wins : 0;
-        double avgLoss = losses > 0 ? grossLoss / losses : 0;
-
-        List<Double> tradeOutputs = new ArrayList<>();
-        for (int i = 0; i < wins; i++) {
-            tradeOutputs.add(avgWin);
-        }
-        for (int i = 0; i < losses; i++) {
-            tradeOutputs.add(-avgLoss);
-        }
-
-        // Shuffle deterministically based on passNumber seed
-        Random rand = new Random(passNumber * 1337L);
-        Collections.shuffle(tradeOutputs, rand);
-
-        double current = startBalance;
-        for (double trade : tradeOutputs) {
-            current += trade;
-            curve.add(current);
-        }
-        
-        // Adjust the last point slightly to make the final sum match the exact net profit
-        double targetEnd = startBalance + profit;
-        double currentEnd = curve.get(curve.size() - 1);
-        double difference = targetEnd - currentEnd;
-        
-        if (curve.size() > 1 && Math.abs(difference) > 1e-5) {
-            double stepDiff = difference / (curve.size() - 1);
-            double cumulative = 0;
-            for (int i = 1; i < curve.size(); i++) {
-                cumulative += stepDiff;
-                curve.set(i, curve.get(i) + cumulative);
-            }
-        }
-
-        return curve;
-    }
-
-    public static class ConsoleLoggerBridge {
-        public void log(String text) { log.info("JS CONSOLE: " + text); }
-        public void error(String text) { log.error("JS ERROR: " + text); }
+        return StrategyEvaluatorMetrics.generateSyntheticEquityCurve(startBalance, profit, trades, pf, passNumber);
     }
 }

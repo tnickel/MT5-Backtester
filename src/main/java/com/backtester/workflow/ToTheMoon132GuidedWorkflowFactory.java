@@ -7,7 +7,9 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 
 /** Builds the AUDCAD M5 guided optimization project around a proven v132 preset. */
@@ -303,6 +305,34 @@ public final class ToTheMoon132GuidedWorkflowFactory {
         Map<String, List<String>> result = new LinkedHashMap<>();
         for (Stage stage : STAGES) result.put(stage.name, stage.targetNames());
         return result;
+    }
+
+    /**
+     * Resolves the staged search-space parameter names from a workflow task title
+     * such as {@code 04 Envelopes unten — Optimizer}.
+     */
+    public static Optional<List<String>> resolveStageTargetsForTaskName(String taskName) {
+        if (taskName == null || taskName.isBlank()) return Optional.empty();
+        String normalized = taskName.trim();
+        int sep = normalized.indexOf(" — ");
+        if (sep < 0) sep = normalized.indexOf(" - ");
+        String stageKey = sep > 0 ? normalized.substring(0, sep).trim() : normalized;
+        if (stageKey.toLowerCase(Locale.ROOT).endsWith(" optimizer")) {
+            stageKey = stageKey.substring(0, stageKey.length() - " optimizer".length()).trim();
+        }
+
+        Map<String, List<String>> byStage = stageTargetParameters();
+        List<String> exact = byStage.get(stageKey);
+        if (exact != null && !exact.isEmpty()) {
+            return Optional.of(List.copyOf(exact));
+        }
+        for (Map.Entry<String, List<String>> entry : byStage.entrySet()) {
+            if (stageKey.equalsIgnoreCase(entry.getKey())
+                    || stageKey.regionMatches(true, 0, entry.getKey(), 0, entry.getKey().length())) {
+                return Optional.of(List.copyOf(entry.getValue()));
+            }
+        }
+        return Optional.empty();
     }
 
     private static void configureMarket(WorkflowTask task, String from, String to, int executionMode) {

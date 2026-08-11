@@ -220,6 +220,203 @@ public class GuidedOptimizationServiceTest {
         }
     }
 
+    @Test
+    public void applyFilterGateRecommendationForcesOnIntoConsumerSnapshot() {
+        CustomProject project = stagedProject();
+        WorkflowTask producer = project.getTasks().get(0);
+        producer.setOptimizerTargetParameters(List.of("Inp_Use_ADX_Filter", "Inp_ADX_Period"));
+        producer.setTargetDatabank("stage1");
+
+        WorkflowTask consumer = project.getTasks().get(3);
+        consumer.setOptimizerTargetParameters(List.of("Inp_Use_RSI_Filter"));
+        consumer.setOptimizerParameterBasisAdopted(true);
+        consumer.setOptimizerParameterSnapshot(List.of(
+                parameter("Inp_Use_ADX_Filter", "false", false),
+                parameter("Inp_ADX_Period", "14", false),
+                parameter("Inp_Use_RSI_Filter", "false", true)));
+
+        List<CombinedPass> passes = new java.util.ArrayList<>();
+        for (int i = 0; i < 6; i++) {
+            passes.add(scoredGatePass(i + 1, 90 - i, "Inp_Use_ADX_Filter", "true"));
+        }
+        for (int i = 0; i < 6; i++) {
+            passes.add(scoredGatePass(100 + i, 20 - i, "Inp_Use_ADX_Filter", "false"));
+        }
+        project.getDatabanks().put("stage1", passes);
+
+        DatabankManager manager = new DatabankManager();
+        manager.loadFromProject(project);
+
+        GuidedOptimizationService.FilterGateForceResult result =
+                GuidedOptimizationService.applyFilterGateRecommendation(
+                        producer, consumer, "C:/missing", manager);
+
+        assertTrue(result.isForced());
+        assertEquals(Boolean.TRUE, result.getForcedOn());
+        assertEquals("true", find(consumer.getOptimizerParameterSnapshot(), "Inp_Use_ADX_Filter").getValue());
+        assertFalse(find(consumer.getOptimizerParameterSnapshot(), "Inp_Use_ADX_Filter").isOptimizeEnabled());
+        assertTrue(consumer.isAdoptedFilterGateForced());
+        assertEquals("Inp_Use_ADX_Filter", consumer.getAdoptedFilterGateParameter());
+        assertEquals("true", consumer.getAdoptedFilterGateForcedValue());
+    }
+
+    @Test
+    public void applyFilterGateRecommendationForcesAllStageTargetGates() {
+        CustomProject project = stagedProject();
+        WorkflowTask producer = project.getTasks().get(0);
+        producer.setOptimizerTargetParameters(List.of(
+                "Inp_Use_Vol_Filter", "Inp_Vol_ATR_Period", "Inp_Use_Correlation_Filter"));
+        producer.setTargetDatabank("stage1");
+
+        WorkflowTask consumer = project.getTasks().get(3);
+        consumer.setOptimizerTargetParameters(List.of("Inp_Use_RSI_Filter"));
+        consumer.setOptimizerParameterBasisAdopted(true);
+        consumer.setOptimizerParameterSnapshot(List.of(
+                parameter("Inp_Use_Vol_Filter", "false", false),
+                parameter("Inp_Use_Correlation_Filter", "false", false),
+                parameter("Inp_Use_RSI_Filter", "false", true)));
+
+        List<CombinedPass> passes = new java.util.ArrayList<>();
+        for (int i = 0; i < 6; i++) {
+            CombinedPass on = scoredGatePass(i + 1, 90 - i, "Inp_Use_Vol_Filter", "true");
+            on.getBacktestPass().setParameter("Inp_Use_Correlation_Filter", "true");
+            passes.add(on);
+        }
+        for (int i = 0; i < 6; i++) {
+            CombinedPass off = scoredGatePass(100 + i, 20 - i, "Inp_Use_Vol_Filter", "false");
+            off.getBacktestPass().setParameter("Inp_Use_Correlation_Filter", "false");
+            passes.add(off);
+        }
+        project.getDatabanks().put("stage1", passes);
+
+        DatabankManager manager = new DatabankManager();
+        manager.loadFromProject(project);
+
+        GuidedOptimizationService.FilterGateForceResult result =
+                GuidedOptimizationService.applyFilterGateRecommendation(
+                        producer, consumer, "C:/missing", manager);
+
+        assertTrue(result.isForced());
+        assertEquals("true", find(consumer.getOptimizerParameterSnapshot(), "Inp_Use_Vol_Filter").getValue());
+        assertEquals("true", find(consumer.getOptimizerParameterSnapshot(), "Inp_Use_Correlation_Filter").getValue());
+        assertTrue(consumer.getAdoptedFilterGateParameter().contains("Inp_Use_Vol_Filter"));
+        assertTrue(consumer.getAdoptedFilterGateParameter().contains("Inp_Use_Correlation_Filter"));
+        assertEquals("MULTI_GATE", consumer.getAdoptedFilterGateVerdict());
+        assertEquals("true, true", consumer.getAdoptedFilterGateForcedValue());
+        assertEquals("MULTI_GATE", result.getVerdict());
+    }
+
+    @Test
+    public void applyFilterGateRecommendationKeepsForcedVerdictWhenLaterGateUnclear() {
+        CustomProject project = stagedProject();
+        WorkflowTask producer = project.getTasks().get(0);
+        producer.setOptimizerTargetParameters(List.of("Inp_Use_Vol_Filter", "Inp_Use_Correlation_Filter"));
+        producer.setTargetDatabank("stage1");
+
+        WorkflowTask consumer = project.getTasks().get(3);
+        consumer.setOptimizerTargetParameters(List.of("Inp_Use_RSI_Filter"));
+        consumer.setOptimizerParameterBasisAdopted(true);
+        consumer.setOptimizerParameterSnapshot(List.of(
+                parameter("Inp_Use_Vol_Filter", "false", false),
+                parameter("Inp_Use_Correlation_Filter", "false", false),
+                parameter("Inp_Use_RSI_Filter", "false", true)));
+
+        List<CombinedPass> passes = new java.util.ArrayList<>();
+        for (int i = 0; i < 6; i++) {
+            CombinedPass on = scoredGatePass(i + 1, 90 - i, "Inp_Use_Vol_Filter", "true");
+            // Correlation constant → no ON/OFF contrast → unclear / insufficient
+            on.getBacktestPass().setParameter("Inp_Use_Correlation_Filter", "true");
+            passes.add(on);
+        }
+        for (int i = 0; i < 6; i++) {
+            CombinedPass off = scoredGatePass(100 + i, 20 - i, "Inp_Use_Vol_Filter", "false");
+            off.getBacktestPass().setParameter("Inp_Use_Correlation_Filter", "true");
+            passes.add(off);
+        }
+        project.getDatabanks().put("stage1", passes);
+        DatabankManager manager = new DatabankManager();
+        manager.loadFromProject(project);
+
+        GuidedOptimizationService.FilterGateForceResult result =
+                GuidedOptimizationService.applyFilterGateRecommendation(
+                        producer, consumer, "C:/missing", manager);
+
+        assertTrue(result.isForced());
+        assertEquals("true", find(consumer.getOptimizerParameterSnapshot(), "Inp_Use_Vol_Filter").getValue());
+        assertEquals("FILTER_ON_BETTER", consumer.getAdoptedFilterGateVerdict());
+        assertEquals("Inp_Use_Vol_Filter", consumer.getAdoptedFilterGateParameter());
+    }
+
+    @Test
+    public void selectGatesForAnalysisIgnoresReportOnlyUseGates() {
+        WorkflowTask producer = new WorkflowTask("01 Grid", WorkflowTask.TaskType.OPTIMIZER);
+        producer.setOptimizerTargetParameters(List.of("Inp_Grid_Step", "Inp_Step_Multiplier"));
+        List<String> candidates = List.of("Inp_Use_ADX_Filter", "Inp_Use_RSI_Filter");
+        assertTrue(FilterGateAnalysisService.selectGatesForAnalysis(producer, candidates).isEmpty());
+    }
+
+    @Test
+    public void applyFilterGateRecommendationSoftFailsWhenGateMissingInSnapshot() {
+        CustomProject project = stagedProject();
+        WorkflowTask producer = project.getTasks().get(0);
+        producer.setOptimizerTargetParameters(List.of("Inp_Use_ADX_Filter"));
+        producer.setTargetDatabank("stage1");
+
+        WorkflowTask consumer = project.getTasks().get(3);
+        consumer.setOptimizerTargetParameters(List.of("Inp_Use_RSI_Filter"));
+        consumer.setOptimizerParameterBasisAdopted(true);
+        // Snapshot deliberately omits the producer gate.
+        consumer.setOptimizerParameterSnapshot(List.of(
+                parameter("Inp_Use_RSI_Filter", "false", true)));
+
+        List<CombinedPass> passes = new java.util.ArrayList<>();
+        for (int i = 0; i < 6; i++) {
+            passes.add(scoredGatePass(i + 1, 90 - i, "Inp_Use_ADX_Filter", "true"));
+        }
+        for (int i = 0; i < 6; i++) {
+            passes.add(scoredGatePass(100 + i, 20 - i, "Inp_Use_ADX_Filter", "false"));
+        }
+        project.getDatabanks().put("stage1", passes);
+        DatabankManager manager = new DatabankManager();
+        manager.loadFromProject(project);
+
+        GuidedOptimizationService.FilterGateForceResult result =
+                GuidedOptimizationService.applyFilterGateRecommendation(
+                        producer, consumer, "C:/missing", manager);
+
+        assertFalse(result.isForced());
+        assertTrue(result.getNote().toLowerCase(java.util.Locale.ROOT).contains("nicht geschrieben")
+                || result.getNote().toLowerCase(java.util.Locale.ROOT).contains("fehlt"));
+    }
+
+    @Test
+    public void databankWipeResetsCompletedTaskStatusToPending() {
+        CustomProject project = stagedProject();
+        WorkflowTask stage1 = project.getTasks().get(0);
+        WorkflowTask retest = new WorkflowTask("OOS", WorkflowTask.TaskType.RETESTER);
+        retest.setSourceDatabank("stage2");
+        retest.setTargetDatabank("oos");
+        retest.setStatus(WorkflowTask.TaskStatus.COMPLETED);
+        project.addTask(retest);
+        stage1.setStatus(WorkflowTask.TaskStatus.COMPLETED);
+        stage1.setTargetDatabank("stage1");
+
+        int reset = GuidedOptimizationService.resetTaskStatusesAfterDatabankWipe(project, true, null);
+        assertTrue(reset >= 2);
+        assertEquals(WorkflowTask.TaskStatus.PENDING, stage1.getStatus());
+        assertEquals(WorkflowTask.TaskStatus.PENDING, retest.getStatus());
+    }
+
+    @Test
+    public void isFollowUpOptimizerIgnoresExistingAdoptionFlag() {
+        CustomProject project = stagedProject();
+        WorkflowTask next = project.getTasks().get(3);
+        next.setOptimizerTargetParameters(List.of("EnvelopePeriod"));
+        next.setOptimizerParameterBasisAdopted(true);
+        assertTrue(GuidedOptimizationService.isFollowUpOptimizer(project, next));
+        assertFalse(GuidedOptimizationService.requiresAdoptedBasis(project, next));
+    }
+
     private static CustomProject stagedProject() {
         CustomProject project = new CustomProject("Guided", "EA.ex5", "AUDCAD", "M5");
         WorkflowTask stage1 = new WorkflowTask("Stage 1", WorkflowTask.TaskType.OPTIMIZER);
@@ -258,6 +455,16 @@ public class GuidedOptimizationServiceTest {
         Pass backtest = new Pass();
         backtest.setPassNumber(number);
         return new CombinedPass(backtest, null, score, 0.0, "test");
+    }
+
+    private static CombinedPass scoredGatePass(int number, double score, String gate, String value) {
+        Pass backtest = new Pass();
+        backtest.setPassNumber(number);
+        backtest.setProfit(score * 10);
+        backtest.setTotalTrades(100);
+        backtest.setDrawdownPercent(10);
+        backtest.setParameter(gate, value);
+        return new CombinedPass(backtest, null, score, 1.0, "test");
     }
 
     private static EaParameter find(List<EaParameter> parameters, String name) {
