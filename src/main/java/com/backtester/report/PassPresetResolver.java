@@ -324,6 +324,7 @@ public final class PassPresetResolver {
             }
 
             p.setOptimizeEnabled(false);
+            EaParameter.sanitizeTimeframeFieldsForSetFile(p);
             result.add(p);
             byName.put(p.getName(), p);
         }

@@ -98,9 +98,18 @@ public class OptimizationRunner {
             result.setOutputDirectory(outputDir.toString());
             logMessage("Created output directory: " + outputDir);
 
-            // 2. Cleanup old reports
+            // 2. Cleanup leftover OptimizationReport* only (NOT Tester/cache/*.opt).
+            // Wiping .opt on every run would force every guided stage to recompute from
+            // scratch. Cache is cleared only via explicit Clear-all.
+            // Kill leftover terminals for this install so /config launches do not
+            // "delegate" and exit without Forward.
             String terminalPath = config.getTerminalPath(optConfig.getExpert());
             Path mt5Dir = Paths.get(terminalPath).getParent();
+            int killed = Mt5ProcessGuard.killAllTerminalsForInstall(mt5Dir, this::logMessage);
+            if (killed > 0) {
+                logMessage("Beendet " + killed + " alte terminal64-Prozesse für diese MT5-Installation.");
+                Thread.sleep(800);
+            }
             cleanupOldReports(mt5Dir, REPORT_FILENAME);
 
             // 3. Generate tester.ini

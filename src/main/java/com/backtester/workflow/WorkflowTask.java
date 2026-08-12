@@ -91,6 +91,8 @@ public class WorkflowTask {
     /** Runtime cache; persisted databanks are the single source of truth. */
     private transient List<CombinedPass> outputPasses;
     private String lastExecutionLog;
+    /** Set when a quality filter removed the score leader — see FilterRejectionReport. */
+    private String filterRejectionNote = "";
 
     // --- StrategyQuant Databank & Retest / Ranking Settings ---
     private String sourceDatabank = "Results";
@@ -209,6 +211,11 @@ public class WorkflowTask {
 
     public String getLastExecutionLog() { return lastExecutionLog; }
     public void setLastExecutionLog(String lastExecutionLog) { this.lastExecutionLog = lastExecutionLog; }
+
+    public String getFilterRejectionNote() { return filterRejectionNote != null ? filterRejectionNote : ""; }
+    public void setFilterRejectionNote(String filterRejectionNote) {
+        this.filterRejectionNote = filterRejectionNote != null ? filterRejectionNote : "";
+    }
 
     public String getSourceDatabank() { return sourceDatabank != null ? sourceDatabank : "Results"; }
     public void setSourceDatabank(String sourceDatabank) { this.sourceDatabank = sourceDatabank; }
@@ -615,6 +622,7 @@ public class WorkflowTask {
         copy.setStatus(status);
         copy.setTaskConfigJson(taskConfigJson);
         copy.setLastExecutionLog(lastExecutionLog);
+        copy.setFilterRejectionNote(filterRejectionNote);
         copy.setSourceDatabank(sourceDatabank);
         copy.setTargetDatabank(targetDatabank);
         copy.setStartDate(startDate);
@@ -670,6 +678,7 @@ public class WorkflowTask {
         copy.setId(UUID.randomUUID().toString());
         copy.setStatus(TaskStatus.PENDING);
         copy.setLastExecutionLog("");
+        copy.setFilterRejectionNote("");
         copy.setSensitivityRunTimestamp(0);
         copy.setOutputPasses(new ArrayList<>());
         String baseName = getName() != null ? getName().trim() : getType().getDisplayName();

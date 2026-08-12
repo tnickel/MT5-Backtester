@@ -165,7 +165,10 @@ public class OptimizationView {
         expertField.textProperty().addListener((obs, oldVal, newVal) -> loadParameters());
 
         symbolCombo.valueProperty().addListener((obs, oldVal, newVal) -> loadParameters());
-        periodCombo.valueProperty().addListener((obs, oldVal, newVal) -> loadParameters());
+        periodCombo.valueProperty().addListener((obs, oldVal, newVal) -> {
+            if (newVal != null) EaParameterUiContext.setChartPeriod(newVal);
+            loadParameters();
+        });
 
         // Load state from DB after UI is built
         Platform.runLater(this::loadStateFromDb);
@@ -1698,6 +1701,7 @@ public class OptimizationView {
 
         symbolCombo.setValue(config.get("optimization.symbol", "EURUSD"));
         periodCombo.setValue(config.get("optimization.period", "H1"));
+        EaParameterUiContext.setChartPeriod(periodCombo.getValue());
 
         String savedModel = config.get("optimization.model", "Every tick");
         if (!modelCombo.getItems().contains(savedModel)) modelCombo.getSelectionModel().select(0);
@@ -1781,6 +1785,12 @@ public class OptimizationView {
 
         // Save current param table to custom .set
         if (!paramTable.getItems().isEmpty()) {
+            try {
+                EaParameter.requireValidOptimizeSteps(paramTable.getItems());
+            } catch (IllegalStateException ex) {
+                new Alert(Alert.AlertType.ERROR, ex.getMessage()).show();
+                return;
+            }
             String expert = expertField.getText().trim();
             String symbol = symbolCombo.getValue() != null ? symbolCombo.getValue() : "EURUSD";
             String period = periodCombo.getValue() != null ? periodCombo.getValue() : "H1";

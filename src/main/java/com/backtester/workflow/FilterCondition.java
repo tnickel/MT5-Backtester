@@ -118,6 +118,29 @@ public class FilterCondition {
         }
     }
 
+    /**
+     * Why {@code pass} fails this condition, e.g. {@code "Profit factor (Forward / OOS)
+     * = 1.14 verletzt >= 1.15"}. Empty when the pass is accepted.
+     */
+    public String describeFailure(CombinedPass pass) {
+        if (evaluate(pass)) return "";
+        double actual = pass != null && metric != null ? getPassMetricValue(pass) : Double.NaN;
+        String actualText = Double.isFinite(actual) ? formatNumber(actual) : "n/a";
+        return (metric != null ? metric.getDisplayName() : "?")
+                + " = " + actualText
+                + " verletzt " + (operator != null ? operator.getSymbol() : "?")
+                + " " + formatNumber(value);
+    }
+
+    private static String formatNumber(double number) {
+        if (!Double.isFinite(number)) return "n/a";
+        if (number == Math.rint(number) && Math.abs(number) < 1e12) {
+            return String.valueOf((long) number);
+        }
+        return String.format(java.util.Locale.ROOT, "%.4f", number)
+                .replaceAll("0+$", "").replaceAll("\\.$", "");
+    }
+
     private double getPassMetricValue(CombinedPass pass) {
         switch (metric) {
             case BT_PROFIT_FACTOR:

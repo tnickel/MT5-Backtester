@@ -773,7 +773,18 @@ public class EaParameterManager {
             log.error("Failed to read .set file: " + setFile, e);
         }
 
+        normalizeTimeframeOptimizeBands(params);
         return params;
+    }
+
+    /** Fixes legacy TF bands, boolean {@code false/0/true} steps, and label leaks. */
+    public static void normalizeTimeframeOptimizeBands(List<EaParameter> params) {
+        if (params == null) return;
+        for (EaParameter param : params) {
+            EaParameter.sanitizeTimeframeFieldsForSetFile(param);
+            EaParameter.normalizeTimeframeOptimizeBand(param);
+            EaParameter.normalizeBooleanOptimizeBand(param);
+        }
     }
 
     /**
@@ -859,6 +870,7 @@ public class EaParameterManager {
                     }
 
                     if (isMt4) {
+                        EaParameter.sanitizeTimeframeFieldsForSetFile(param);
                         writer.write(param.getName() + "=" + EaParameter.normalizeMql5Value(param.getValue()) + "\r\n");
                         if (!param.isStringType()) {
                             writer.write(param.getName() + ",F=" + (param.isOptimizeEnabled() ? "1" : "0") + "\r\n");
@@ -867,6 +879,7 @@ public class EaParameterManager {
                             writer.write(param.getName() + ",3=" + EaParameter.normalizeMql5Value(param.getOptimizeEnd()) + "\r\n");
                         }
                     } else {
+                        EaParameter.sanitizeTimeframeFieldsForSetFile(param);
                         writer.write(param.toSetFileLine() + "\r\n");
                     }
                 }

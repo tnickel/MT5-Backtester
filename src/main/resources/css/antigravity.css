@@ -123,6 +123,28 @@
     -fx-background-color: rgba(255, 215, 64, 0.48);
 }
 
+/* Setting/Suchraum: newest hand-pick (yellow) */
+.table-row-cell.optimizer-latest-change-row {
+    -fx-background-color: rgba(255, 215, 64, 0.30);
+}
+.table-row-cell.optimizer-latest-change-row:odd {
+    -fx-background-color: rgba(255, 215, 64, 0.36);
+}
+.table-row-cell.optimizer-latest-change-row:selected {
+    -fx-background-color: rgba(255, 215, 64, 0.48);
+}
+
+/* Setting/Suchraum: earlier changed params (orange) */
+.table-row-cell.optimizer-prior-change-row {
+    -fx-background-color: rgba(255, 152, 0, 0.28);
+}
+.table-row-cell.optimizer-prior-change-row:odd {
+    -fx-background-color: rgba(255, 152, 0, 0.34);
+}
+.table-row-cell.optimizer-prior-change-row:selected {
+    -fx-background-color: rgba(255, 152, 0, 0.46);
+}
+
 /* ProgressBar */
 .progress-bar {
     -fx-control-inner-background: #1a1e28;

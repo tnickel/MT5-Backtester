@@ -1,5 +1,6 @@
 package com.backtester.config;
 
+import org.junit.Assume;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
@@ -28,35 +29,8 @@ public class EaParameterSetfileTransportTest {
 
     @Test
     public void testSetfileLoadDisplayTransportAndVerification() throws Exception {
-        File setFile = new File(SOURCE_SETFILE_PATH);
-        Path sourcePath;
-
-        if (setFile.exists()) {
-            sourcePath = setFile.toPath();
-        } else {
-            // Fallback for CI/other environments: create a temporary test setfile with identical content
-            Path tempSource = Files.createTempFile("test_132_AUDCAD_", ".set");
-            String sampleContent =
-                "; saved on 2026.08.08 14:57:54\n" +
-                "; ---- INITIAL DATA ----\n" +
-                "Inp_Version=132||132||1||1320||N\n" +
-                "Inp_Order_Comment=1proz_Pass11429\n" +
-                "; ---- MONEY MANAGE ----\n" +
-                "Inp_Initial_Lot=0.01||0.01||0.001000||0.100000||N\n" +
-                "Inp_Min_Lot=0.01||0.01||0.001000||0.100000||N\n" +
-                "Inp_Max_Lot=0.1||0.1||0.010000||1.000000||N\n" +
-                "; ---- GRID MODE ----\n" +
-                "Inp_Grid_Step=725||600||1||6000||N\n" +
-                "Inp_Step_Multiplier=1.1||1.15||0.115000||11.500000||Y\n" +
-                "; ---- INDICATOR ENVELOPES (UPPER) ----\n" +
-                "TimeFrame_Envelopes=1||1||0||49153||Y\n" +
-                "Inp_Envelopes_Period=5||5||1||20||Y\n";
-            Files.write(tempSource, sampleContent.getBytes(java.nio.charset.StandardCharsets.UTF_8));
-            sourcePath = tempSource;
-        }
-
         // Step 1: Load config via EaParameterManager
-        List<EaParameter> loadedParams = manager.readSetFile(sourcePath);
+        List<EaParameter> loadedParams = manager.readSetFile(sourceSetFile());
         assertNotNull("Loaded parameter list must not be null", loadedParams);
         assertFalse("Loaded parameter list must not be empty", loadedParams.isEmpty());
 
@@ -124,29 +98,65 @@ public class EaParameterSetfileTransportTest {
         assertEquals(stepMult.getOptimizeEnd(), reloadedStepMult.getOptimizeEnd());
         assertEquals(stepMult.isOptimizeEnabled(), reloadedStepMult.isOptimizeEnabled());
 
-        // Step 5: Live transport to MetaTrader tester profiles & launch MT5 process on Desktop 2
+        // Clean up temp file
+        Files.deleteIfExists(tempExport);
+    }
+
+    /**
+     * Writes the parameter set into the real MetaTrader profile directory and opens a
+     * terminal for visual inspection. Overwrites {@code config/ea_params/*.set} and
+     * leaves the terminal running, so it stays opt-in:
+     * {@code mvn test -Dbacktester.liveMt5=true}.
+     */
+    @Test
+    public void liveTransportIntoTheRealTerminal() throws Exception {
+        Assume.assumeTrue("Opt-in via -Dbacktester.liveMt5=true — starts a real MT5 terminal",
+                Boolean.getBoolean("backtester.liveMt5"));
+
+        List<EaParameter> loadedParams = manager.readSetFile(sourceSetFile());
         String expertPath = "ToTheMoon_KI_v132";
         manager.saveCustomParameters(expertPath, loadedParams);
         String preparedSetFileName = manager.prepareForBacktest(expertPath);
 
         assertNotNull("Prepared setfile name should not be null", preparedSetFileName);
 
-        com.backtester.config.AppConfig config = com.backtester.config.AppConfig.getInstance();
+        AppConfig config = AppConfig.getInstance();
         String terminalPath = config.getTerminalPath(expertPath);
+        if (terminalPath == null || !new File(terminalPath).exists()) return;
 
-        if (terminalPath != null && new File(terminalPath).exists()) {
-            java.util.List<String> mt5Args = new java.util.ArrayList<>();
-            if (config.isPortableMode()) {
-                mt5Args.add("/portable");
-            }
-            // Attempt to launch terminal on Virtual Desktop 2 for visual verification if environment permits
-            Process liveMt5Process = com.backtester.engine.VirtualDesktopHelper.startOnDesktop2(terminalPath, mt5Args, Paths.get(terminalPath).getParent());
-            if (liveMt5Process != null) {
-                System.out.println("Live MT5 process launched with PID: " + liveMt5Process.pid());
-            }
+        java.util.List<String> mt5Args = new java.util.ArrayList<>();
+        if (config.isPortableMode()) {
+            mt5Args.add("/portable");
         }
+        Process liveMt5Process = com.backtester.engine.VirtualDesktopHelper.startOnDesktop2(
+                terminalPath, mt5Args, Paths.get(terminalPath).getParent());
+        if (liveMt5Process != null) {
+            System.out.println("Live MT5 process launched with PID: " + liveMt5Process.pid());
+        }
+    }
 
-        // Clean up temp file
-        Files.deleteIfExists(tempExport);
+    /** The developer's local setfile when present, a temporary equivalent otherwise. */
+    private static Path sourceSetFile() throws Exception {
+        File setFile = new File(SOURCE_SETFILE_PATH);
+        if (setFile.exists()) return setFile.toPath();
+
+        Path tempSource = Files.createTempFile("test_132_AUDCAD_", ".set");
+        String sampleContent =
+            "; saved on 2026.08.08 14:57:54\n" +
+            "; ---- INITIAL DATA ----\n" +
+            "Inp_Version=132||132||1||1320||N\n" +
+            "Inp_Order_Comment=1proz_Pass11429\n" +
+            "; ---- MONEY MANAGE ----\n" +
+            "Inp_Initial_Lot=0.01||0.01||0.001000||0.100000||N\n" +
+            "Inp_Min_Lot=0.01||0.01||0.001000||0.100000||N\n" +
+            "Inp_Max_Lot=0.1||0.1||0.010000||1.000000||N\n" +
+            "; ---- GRID MODE ----\n" +
+            "Inp_Grid_Step=725||600||1||6000||N\n" +
+            "Inp_Step_Multiplier=1.1||1.15||0.115000||11.500000||Y\n" +
+            "; ---- INDICATOR ENVELOPES (UPPER) ----\n" +
+            "TimeFrame_Envelopes=1||1||0||49153||Y\n" +
+            "Inp_Envelopes_Period=5||5||1||20||Y\n";
+        Files.write(tempSource, sampleContent.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        return tempSource;
     }
 }

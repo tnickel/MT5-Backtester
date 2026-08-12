@@ -3,11 +3,13 @@ package com.backtester.ui.javafx;
 import com.backtester.config.AppConfig;
 import com.backtester.engine.WorkflowEngine;
 import com.backtester.report.OptimizationResult.CombinedPass;
+import com.backtester.engine.MetaTraderRunLock;
 import com.backtester.workflow.CustomProject;
 import com.backtester.workflow.DatabankManager;
 import com.backtester.workflow.GuidedOptimizationService;
 import com.backtester.workflow.WorkflowConfigurationValidator;
 import com.backtester.workflow.WorkflowConfigurationValidator.RetesterOverwriteRisk;
+import com.backtester.workflow.WorkflowPauseException;
 import com.backtester.workflow.WorkflowTask;
 import javafx.application.Platform;
 import javafx.concurrent.Task;
@@ -327,15 +329,15 @@ public class ProjectWorkflowPipelineRunner {
 
     /**
      * Decides whether an already persisted task result can be reused on resume.
-     * Manual workflows only trust COMPLETED results. Automatic workflows also
-     * recover stale PENDING/RUNNING states when their strategy output is still
-     * present; FAILED results are always executed again.
+     * If the target databank still has strategies, the task is skipped — including
+     * after a later FAILED re-run attempt — until the user clears that databank
+     * (or Clear-all). Empty/missing output always runs again. DISABLED never runs.
+     * Strategy selection / portfolio export only trust COMPLETED (no strategy target).
      */
     public static boolean shouldReuseExistingTaskResult(WorkflowTask task,
                                                         boolean automaticMode,
                                                         java.util.function.Predicate<String> databankHasStrategies) {
         if (task == null || task.getType() == null || task.getStatus() == null
-                || task.getStatus() == WorkflowTask.TaskStatus.FAILED
                 || task.getStatus() == WorkflowTask.TaskStatus.DISABLED) {
             return false;
         }
@@ -343,11 +345,12 @@ public class ProjectWorkflowPipelineRunner {
                 || task.getType() == WorkflowTask.TaskType.PORTFOLIO_EXPORT) {
             return task.getStatus() == WorkflowTask.TaskStatus.COMPLETED;
         }
-        boolean resumableStatus = task.getStatus() == WorkflowTask.TaskStatus.COMPLETED
-                || (automaticMode && (task.getStatus() == WorkflowTask.TaskStatus.PENDING
-                        || task.getStatus() == WorkflowTask.TaskStatus.RUNNING));
-        return resumableStatus && databankHasStrategies != null
-                && databankHasStrategies.test(task.getTargetDatabank());
+        // Data presence is authoritative: keep finished work across FAILED retries
+        // until the user explicitly clears the target databank / Clear-all.
+        if (databankHasStrategies != null && databankHasStrategies.test(task.getTargetDatabank())) {
+            return true;
+        }
+        return false;
     }
 
     public static boolean shouldAutomaticallyAdoptBestPass(CustomProject project, WorkflowTask task) {
@@ -387,9 +390,32 @@ public class ProjectWorkflowPipelineRunner {
         activeProjectTask = new Task<Void>() {
             @Override
             protected Void call() throws Exception {
+                try (MetaTraderRunLock.Handle terminal = acquireTerminal("Einzelstep: " + task.getName())) {
+                    return runLocked();
+                }
+            }
+
+            private Void runLocked() throws Exception {
                 if (!host.flushProjectSave(host.projectSaveFlushTimeout())) {
                     throw new IllegalStateException("Projekt konnte vor dem Einzeltest nicht gespeichert werden.");
                 }
+
+                boolean reuseExistingResult = shouldReuseExistingTaskResult(task,
+                        project != null && project.isAutomaticModeEnabled(),
+                        databankName -> databankManager.hasDatabank(databankName)
+                                && !databankManager.getDatabank(databankName).isEmpty());
+                if (reuseExistingResult) {
+                    task.setStatus(WorkflowTask.TaskStatus.COMPLETED);
+                    String skipMessage = "Einzelstep übersprungen: Task '" + task.getName()
+                            + "' hat bereits Ergebnisse in Databank '" + task.getTargetDatabank()
+                            + "'. Neu rechnen erst nach Clear-all / leerer Zieldatabank.";
+                    task.setLastExecutionLog(skipMessage);
+                    host.logToConsole("SINGLE-STEP", skipMessage);
+                    updateProgressUI(1.0, "Übersprungen (Daten vorhanden): " + task.getName());
+                    host.saveProject();
+                    return null;
+                }
+
                 task.setStatus(WorkflowTask.TaskStatus.RUNNING);
                 Platform.runLater(() -> {
                     host.refreshTaskChain();
@@ -402,7 +428,12 @@ public class ProjectWorkflowPipelineRunner {
 
                 if (GuidedOptimizationService.isFollowUpOptimizer(project, task)) {
                     if (shouldAutomaticallyAdoptBestPass(project, task)) {
-                        host.adoptBestPassAutomatically(task);
+                        try {
+                            host.adoptBestPassAutomatically(task);
+                        } catch (WorkflowPauseException pause) {
+                            pauseChain(task, pause.getMessage(), 0.0);
+                            return null;
+                        }
                     } else if (GuidedOptimizationService.requiresAdoptedBasis(project, task)) {
                         task.setStatus(WorkflowTask.TaskStatus.PENDING);
                         String pickDb = handPickDatabankLabel(task);
@@ -521,6 +552,12 @@ public class ProjectWorkflowPipelineRunner {
                 List<CombinedPass> processed = databankManager.processTaskDatabanks(task, outputPasses);
                 task.setOutputPasses(processed);
                 task.setStatus(WorkflowTask.TaskStatus.COMPLETED);
+                // Otherwise an earlier pause message keeps claiming the task is waiting.
+                task.setLastExecutionLog("Erfolgreich beendet: " + processed.size()
+                        + " Strategien in '" + task.getTargetDatabank() + "'.");
+                if (!task.getFilterRejectionNote().isBlank()) {
+                    host.logToConsole("FILTER-WARNUNG", task.getFilterRejectionNote());
+                }
 
                 host.logToConsole("SINGLE-STEP", "=== EINZELSTEP ERFOLGREICH BEENDET. Databank '" + task.getTargetDatabank() + "' enthält " + processed.size() + " Strategien ===");
                 updateProgressUI(1.0, "Einzelstep beendet.");
@@ -593,6 +630,12 @@ public class ProjectWorkflowPipelineRunner {
         activeProjectTask = new Task<Void>() {
             @Override
             protected Void call() throws Exception {
+                try (MetaTraderRunLock.Handle terminal = acquireTerminal("Workflow: " + project.getName())) {
+                    return runLocked();
+                }
+            }
+
+            private Void runLocked() throws Exception {
                 if (!host.flushProjectSave(host.projectSaveFlushTimeout())) {
                     throw new IllegalStateException("Projekt konnte vor dem Workflow-Start nicht gespeichert werden.");
                 }
@@ -632,7 +675,12 @@ public class ProjectWorkflowPipelineRunner {
 
                     if (GuidedOptimizationService.isFollowUpOptimizer(project, task)) {
                         if (shouldAutomaticallyAdoptBestPass(project, task)) {
-                            host.adoptBestPassAutomatically(task);
+                            try {
+                                host.adoptBestPassAutomatically(task);
+                            } catch (WorkflowPauseException pause) {
+                                pauseChain(task, pause.getMessage(), (double) i / total);
+                                return null;
+                            }
                         } else if (GuidedOptimizationService.requiresAdoptedBasis(project, task)) {
                             task.setStatus(WorkflowTask.TaskStatus.PENDING);
                             String pickDb = handPickDatabankLabel(task);
@@ -747,6 +795,12 @@ public class ProjectWorkflowPipelineRunner {
                         List<CombinedPass> processed = databankManager.processTaskDatabanks(task, currentPipelinePasses);
                         task.setOutputPasses(processed);
                         task.setStatus(WorkflowTask.TaskStatus.COMPLETED);
+                        // Otherwise an earlier pause message keeps claiming the task is waiting.
+                        task.setLastExecutionLog("Erfolgreich beendet: " + processed.size()
+                                + " Strategien in '" + task.getTargetDatabank() + "'.");
+                        if (!task.getFilterRejectionNote().isBlank()) {
+                            host.logToConsole("FILTER-WARNUNG", task.getFilterRejectionNote());
+                        }
                         host.logToConsole("PROJECT", "Task " + (i + 1) + " (" + task.getName() + ") erfolgreich beendet. Databank '" + task.getTargetDatabank() + "' hat nun " + processed.size() + " Strategien.");
                     } catch (Exception taskEx) {
                         task.setStatus(WorkflowTask.TaskStatus.FAILED);
@@ -1018,6 +1072,40 @@ public class ProjectWorkflowPipelineRunner {
             return task.getSourceDatabank().trim();
         }
         return "der vorherigen Stufe";
+    }
+
+    /**
+     * Claims the MetaTrader terminal for this run. A reference backtest started from a
+     * hand-pick uses the same lock, so the two can no longer kill each other's terminal.
+     */
+    private MetaTraderRunLock.Handle acquireTerminal(String owner) throws InterruptedException {
+        if (MetaTraderRunLock.isBusyForOtherThread()) {
+            host.logToConsole("MT5", "Wartet auf MetaTrader — belegt durch: "
+                    + MetaTraderRunLock.currentOwner());
+        }
+        return MetaTraderRunLock.acquire(owner);
+    }
+
+    /**
+     * Deliberate stop, not a failure: the task stays reopenable and the user decides
+     * whether to continue. Restarting the chain is the confirmation.
+     */
+    private void pauseChain(WorkflowTask task, String reason, double progress) {
+        String message = reason != null && !reason.isBlank()
+                ? reason : "Der Workflow wurde angehalten.";
+        task.setStatus(WorkflowTask.TaskStatus.PENDING);
+        task.setLastExecutionLog(message);
+        host.logToConsole("WORKFLOW-PAUSE", message);
+        updateProgressUI(progress, "Angehalten vor '" + task.getName() + "'");
+        host.saveProject();
+        Platform.runLater(() -> {
+            Alert alert = new Alert(Alert.AlertType.WARNING, message, ButtonType.OK);
+            alert.setTitle("Workflow angehalten");
+            alert.setHeaderText("Kette wartet auf deine Entscheidung");
+            Window owner = host.getOwnerWindow();
+            if (owner != null) alert.initOwner(owner);
+            alert.showAndWait();
+        });
     }
 
     private void showHandPickRequiredDialog(String taskName, String pickDatabank) {

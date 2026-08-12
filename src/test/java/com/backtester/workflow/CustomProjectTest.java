@@ -24,6 +24,63 @@ public class CustomProjectTest {
     }
 
     @Test
+    public void theProvenMasterSurvivesACrashBecauseItIsPersistedAndDetached() {
+        // The candidate is written to the task snapshot before the minutes-long reference
+        // run; only this field says which basis a measurement actually confirmed, so it has
+        // to come back intact after a restart.
+        CustomProject project = new CustomProject("Guided", "EA", "AUDCAD", "M5");
+        EaParameter grid = new EaParameter("GridStep", "23");
+        project.setProvenMasterParameters(List.of(grid));
+
+        grid.setValue("999");
+        project.getProvenMasterParameters().get(0).setValue("777");
+        assertEquals("23", project.getProvenMasterParameters().get(0).getValue());
+
+        // Deliberately through copyMetadataForPersistence: that copy — not the live object —
+        // is what the save coordinator hands to SQLite. Serialising the project directly
+        // would pass even when the field never reaches the database.
+        CustomProject persisted = project.copyMetadataForPersistence();
+        String json = DatabaseManager.createCustomProjectGson().toJson(persisted);
+        CustomProject restored = DatabaseManager.createCustomProjectGson()
+                .fromJson(json, CustomProject.class);
+
+        assertEquals(1, restored.getProvenMasterParameters().size());
+        assertEquals("23", restored.getProvenMasterParameters().get(0).getValue());
+        assertTrue(restored.hasProvenMaster());
+    }
+
+    @Test
+    public void theFloorNeverOutlivesTheBasisItBelongsTo() {
+        // A floor without its parameters is a limit nothing can be measured against: after
+        // a restart it would reject every candidate while the chain has nothing to fall
+        // back to. The two are only meaningful together, so they are saved and cleared
+        // together.
+        CustomProject project = new CustomProject("Guided", "EA", "AUDCAD", "M5");
+        project.setProvenMasterParameters(List.of(new EaParameter("GridStep", "23")));
+        project.setProvenMasterContextKey("EA|AUDCAD|M5");
+        project.setMasterSelectionRatio(3.5);
+
+        CustomProject persisted = project.copyMetadataForPersistence();
+        assertEquals(3.5, persisted.getMasterSelectionRatio(), 1e-9);
+        assertEquals("EA|AUDCAD|M5", persisted.getProvenMasterContextKey());
+        assertTrue(persisted.hasProvenMaster());
+
+        project.clearProvenMaster();
+        assertFalse(project.hasProvenMaster());
+        assertTrue(Double.isNaN(project.getMasterSelectionRatio()));
+        assertEquals("", project.getProvenMasterContextKey());
+    }
+
+    @Test
+    public void aLegacyProjectWithoutAProvenMasterReportsAnEmptyBasis() {
+        CustomProject legacy = DatabaseManager.createCustomProjectGson().fromJson(
+                "{\"name\":\"Legacy\",\"tasks\":[]}", CustomProject.class);
+
+        assertNotNull(legacy);
+        assertTrue(legacy.getProvenMasterParameters().isEmpty());
+    }
+
+    @Test
     public void automaticModePersistsThroughProjectCopiesAndJson() {
         CustomProject project = new CustomProject("Guided", "EA", "AUDCAD", "M5");
         project.setAutomaticModeEnabled(true);

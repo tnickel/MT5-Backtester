@@ -769,6 +769,7 @@ public final class WorkflowStep1ConfigDialog {
             String expert = engine.getExpert() != null ? engine.getExpert().trim() : "";
             List<EaParameter> diskParams = eaParamManager.getEffectiveParameters(expert);
             List<EaParameter> mergedEngineParams = eaParamManager.mergeLoadedWithExisting(engine.getEaParameters(), diskParams);
+            EaParameterManager.normalizeTimeframeOptimizeBands(mergedEngineParams);
 
             List<EaParameter> currentParams = new ArrayList<>();
             for (EaParameter p : mergedEngineParams) {

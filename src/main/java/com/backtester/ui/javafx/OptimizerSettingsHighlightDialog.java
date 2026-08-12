@@ -2,10 +2,12 @@ package com.backtester.ui.javafx;
 
 import com.backtester.config.EaParameter;
 import com.backtester.config.EaParameterManager;
+import com.backtester.workflow.CustomProject;
 import com.backtester.workflow.DatabankManager;
 import com.backtester.workflow.FilterGateAnalysisService;
 import com.backtester.workflow.FilterGateAnalysisService.FilterGateAnalysis;
 import com.backtester.workflow.FilterGateAnalysisService.Verdict;
+import com.backtester.workflow.GuidedOptimizationService;
 import com.backtester.workflow.ToTheMoon132GuidedWorkflowFactory;
 import com.backtester.workflow.WorkflowTask;
 import javafx.application.Platform;
@@ -49,11 +51,24 @@ import java.util.Set;
  * Non-modal companion window: full EA setting with the current optimizer stage's
  * target parameters highlighted green on the left, and Filter-Nutzen extract +
  * next-step ON/OFF decision on the right.
+ *
+ * <p>Row colours (priority green &gt; yellow &gt; orange):
+ * <ul>
+ *   <li>Green — current stage optimization targets</li>
+ *   <li>Yellow — newest hand-pick (immediate previous stage targets + forced gates)</li>
+ *   <li>Orange — earlier stages' fixed parameters in the adoption chain</li>
+ * </ul>
  */
 public final class OptimizerSettingsHighlightDialog {
 
-    private static final String HIGHLIGHT_STYLE =
+    private static final String TARGET_STYLE =
             "-fx-background-color: rgba(0, 230, 118, 0.28); -fx-border-color: #00e676; "
+                    + "-fx-border-width: 0 0 0 4;";
+    private static final String LATEST_STYLE =
+            "-fx-background-color: rgba(255, 215, 64, 0.30); -fx-border-color: #ffd740; "
+                    + "-fx-border-width: 0 0 0 4;";
+    private static final String PRIOR_STYLE =
+            "-fx-background-color: rgba(255, 152, 0, 0.28); -fx-border-color: #ff9800; "
                     + "-fx-border-width: 0 0 0 4;";
     private static final String SECTION_STYLE =
             "-fx-background-color: #152238; -fx-font-weight: bold;";
@@ -62,12 +77,18 @@ public final class OptimizerSettingsHighlightDialog {
     private final Label titleLabel;
     private final Label subtitleLabel;
     private final Label countBadge;
+    private final Label legend;
     private final TextField filterField;
     private final TableView<EaParameter> table;
     private final StackPane analysisPane;
     private final ObservableList<EaParameter> masterItems = FXCollections.observableArrayList();
     private final FilteredList<EaParameter> filteredItems = new FilteredList<>(masterItems, p -> true);
+    /** Green: current optimize targets. */
     private final Set<String> highlightNames = new HashSet<>();
+    /** Yellow: newest adoption. */
+    private final Set<String> latestChangedNames = new HashSet<>();
+    /** Orange: older adoptions in the chain. */
+    private final Set<String> priorChangedNames = new HashSet<>();
 
     private OptimizerSettingsHighlightDialog(Window owner) {
         stage = new Stage();
@@ -96,9 +117,9 @@ public final class OptimizerSettingsHighlightDialog {
         HBox headerRow = new HBox(12, titleLabel, countBadge);
         headerRow.setAlignment(Pos.CENTER_LEFT);
 
-        Label legend = new Label(
-                "Links: Setting mit grünen Zielparametern  ·  Rechts: Filter-Nutzen-Extrakt & Entscheidung für nächsten Step");
-        legend.setStyle("-fx-text-fill: #69f0ae; -fx-font-size: 12px;");
+        legend = new Label(
+                "Grün = aktuelle Optimierungsziele  ·  Gelb = neueste Übernahme  ·  Orange = früher geändert  ·  Rechts: Filter-Nutzen");
+        legend.setStyle("-fx-text-fill: #9aa4b5; -fx-font-size: 12px;");
 
         filterField = new TextField();
         filterField.setPromptText("Suche Parameter / Sektion…");
@@ -154,7 +175,11 @@ public final class OptimizerSettingsHighlightDialog {
             @Override
             protected void updateItem(EaParameter item, boolean empty) {
                 super.updateItem(item, empty);
-                getStyleClass().removeAll("section-header-row", "optimizer-target-row");
+                getStyleClass().removeAll(
+                        "section-header-row",
+                        "optimizer-target-row",
+                        "optimizer-latest-change-row",
+                        "optimizer-prior-change-row");
                 if (empty || item == null) {
                     setStyle("");
                     return;
@@ -166,13 +191,21 @@ public final class OptimizerSettingsHighlightDialog {
                     }
                     return;
                 }
-                if (isHighlighted(item)) {
-                    setStyle(HIGHLIGHT_STYLE);
-                    if (!getStyleClass().contains("optimizer-target-row")) {
+                HighlightKind kind = resolveHighlightKind(item);
+                switch (kind) {
+                    case TARGET -> {
+                        setStyle(TARGET_STYLE);
                         getStyleClass().add("optimizer-target-row");
                     }
-                } else {
-                    setStyle("");
+                    case LATEST -> {
+                        setStyle(LATEST_STYLE);
+                        getStyleClass().add("optimizer-latest-change-row");
+                    }
+                    case PRIOR -> {
+                        setStyle(PRIOR_STYLE);
+                        getStyleClass().add("optimizer-prior-change-row");
+                    }
+                    case NONE -> setStyle("");
                 }
             }
         });
@@ -188,11 +221,16 @@ public final class OptimizerSettingsHighlightDialog {
                     setStyle("");
                     return;
                 }
-                setText(param.isOptimizeEnabled() || isHighlighted(param) ? "●" : "");
+                HighlightKind kind = resolveHighlightKind(param);
+                boolean mark = param.isOptimizeEnabled() || kind != HighlightKind.NONE;
+                setText(mark ? "●" : "");
                 setAlignment(Pos.CENTER);
-                setStyle(isHighlighted(param)
-                        ? "-fx-text-fill: #00e676; -fx-font-weight: bold;"
-                        : "-fx-text-fill: #546e7a;");
+                switch (kind) {
+                    case TARGET -> setStyle("-fx-text-fill: #00e676; -fx-font-weight: bold;");
+                    case LATEST -> setStyle("-fx-text-fill: #ffd740; -fx-font-weight: bold;");
+                    case PRIOR -> setStyle("-fx-text-fill: #ff9800; -fx-font-weight: bold;");
+                    case NONE -> setStyle("-fx-text-fill: #546e7a;");
+                }
             }
         });
 
@@ -239,11 +277,23 @@ public final class OptimizerSettingsHighlightDialog {
             List<EaParameter> fallbackEaParameters,
             String optimizerOutputDirectory,
             DatabankManager databankManager) {
+        return showOrRefresh(existing, owner, null, task, fallbackEaParameters,
+                optimizerOutputDirectory, databankManager);
+    }
+
+    public static OptimizerSettingsHighlightDialog showOrRefresh(
+            OptimizerSettingsHighlightDialog existing,
+            Window owner,
+            CustomProject project,
+            WorkflowTask task,
+            List<EaParameter> fallbackEaParameters,
+            String optimizerOutputDirectory,
+            DatabankManager databankManager) {
         OptimizerSettingsHighlightDialog dialog = existing;
         if (dialog == null || dialog.stage == null || !dialog.stage.isShowing()) {
             dialog = new OptimizerSettingsHighlightDialog(owner);
         }
-        dialog.refresh(task, fallbackEaParameters, optimizerOutputDirectory, databankManager);
+        dialog.refresh(project, task, fallbackEaParameters, optimizerOutputDirectory, databankManager);
         if (!dialog.stage.isShowing()) {
             dialog.stage.show();
         }
@@ -258,11 +308,14 @@ public final class OptimizerSettingsHighlightDialog {
         if (stage != null) stage.close();
     }
 
-    private void refresh(WorkflowTask task,
+    private void refresh(CustomProject project,
+                         WorkflowTask task,
                          List<EaParameter> fallbackEaParameters,
                          String optimizerOutputDirectory,
                          DatabankManager databankManager) {
         highlightNames.clear();
+        latestChangedNames.clear();
+        priorChangedNames.clear();
         if (filterField != null && filterField.getText() != null && !filterField.getText().isEmpty()) {
             filterField.setText("");
         }
@@ -287,6 +340,9 @@ public final class OptimizerSettingsHighlightDialog {
         List<EaParameter> display = resolveDisplayParameters(task, fallbackEaParameters);
         Set<String> targets = resolveHighlightNames(task, display);
         highlightNames.addAll(targets);
+        ChangeHighlights changes = resolveChangeHighlights(project, task, targets);
+        latestChangedNames.addAll(changes.latest());
+        priorChangedNames.addAll(changes.prior());
 
         EaParameterManager paramManager = new EaParameterManager();
         final List<EaParameter> rows = paramManager.ensureSectionHeaders(display);
@@ -296,23 +352,28 @@ public final class OptimizerSettingsHighlightDialog {
         table.getSelectionModel().clearSelection();
         table.refresh();
 
-        int marked = 0;
+        int green = 0;
+        int yellow = 0;
+        int orange = 0;
         for (EaParameter p : rows) {
-            if (p != null && !p.isSectionHeader() && isHighlighted(p)) marked++;
+            if (p == null || p.isSectionHeader()) continue;
+            HighlightKind kind = resolveHighlightKind(p);
+            if (kind == HighlightKind.TARGET) green++;
+            else if (kind == HighlightKind.LATEST) yellow++;
+            else if (kind == HighlightKind.PRIOR) orange++;
         }
-        countBadge.setText(marked + " markiert");
+        countBadge.setText(green + " grün · " + yellow + " gelb · " + orange + " orange");
 
         if (task.getType() != WorkflowTask.TaskType.OPTIMIZER) {
             subtitleLabel.setText(
                     "Kein Optimizer-Task — keine Stufe markiert. Klicke eine Optimizer-Kachel.");
             setAnalysisContent(createAnalysisPlaceholder(
                     "Kein Optimizer", "Filter-Nutzen nur für Optimizer-Kacheln."));
-        } else if (targets.isEmpty()) {
-            subtitleLabel.setText("Optimizer-Task ohne Zielparameter.");
+        } else if (targets.isEmpty() && latestChangedNames.isEmpty() && priorChangedNames.isEmpty()) {
+            subtitleLabel.setText("Optimizer-Task ohne Zielparameter und ohne übernommene Änderungen.");
             refreshFilterAnalysisPanel(task, optimizerOutputDirectory, databankManager);
         } else {
-            subtitleLabel.setText(
-                    "Grün markiert (" + marked + "): " + String.join(", ", new ArrayList<>(targets)));
+            subtitleLabel.setText(buildSubtitle(targets, changes.latest(), changes.prior()));
             refreshFilterAnalysisPanel(task, optimizerOutputDirectory, databankManager);
         }
 
@@ -320,6 +381,25 @@ public final class OptimizerSettingsHighlightDialog {
             table.refresh();
             scrollToFirstHighlight(rows);
         });
+    }
+
+    private static String buildSubtitle(Set<String> green, Set<String> yellow, Set<String> orange) {
+        StringBuilder sb = new StringBuilder();
+        if (!green.isEmpty()) {
+            sb.append("Grün (").append(green.size()).append("): ")
+                    .append(String.join(", ", green));
+        }
+        if (!yellow.isEmpty()) {
+            if (sb.length() > 0) sb.append("  ·  ");
+            sb.append("Gelb neueste (").append(yellow.size()).append("): ")
+                    .append(String.join(", ", yellow));
+        }
+        if (!orange.isEmpty()) {
+            if (sb.length() > 0) sb.append("  ·  ");
+            sb.append("Orange früher (").append(orange.size()).append("): ")
+                    .append(String.join(", ", orange));
+        }
+        return sb.toString();
     }
 
     private void refreshFilterAnalysisPanel(WorkflowTask task,
@@ -482,13 +562,109 @@ public final class OptimizerSettingsHighlightDialog {
         return names;
     }
 
-    private boolean isHighlighted(EaParameter param) {
-        if (param == null || param.isSectionHeader() || param.getName() == null) return false;
+    /**
+     * Yellow = immediate previous stage targets (plus forced filter gates).
+     * Orange = all earlier optimizer stage targets before that producer.
+     * Only when this task has an adopted parameter basis.
+     */
+    static ChangeHighlights resolveChangeHighlights(CustomProject project,
+                                                    WorkflowTask task,
+                                                    Set<String> greenTargets) {
+        LinkedHashSet<String> latest = new LinkedHashSet<>();
+        LinkedHashSet<String> prior = new LinkedHashSet<>();
+        if (project == null || task == null || task.getType() != WorkflowTask.TaskType.OPTIMIZER
+                || !task.isOptimizerParameterBasisAdopted()) {
+            return new ChangeHighlights(latest, prior);
+        }
+
+        Optional<WorkflowTask> producerOpt =
+                GuidedOptimizationService.findPreviousEnabledOptimizer(project, task);
+        WorkflowTask producer = producerOpt.orElse(null);
+
+        for (WorkflowTask candidate : project.getTasks()) {
+            if (candidate == task) break;
+            if (candidate == null || !candidate.isEnabled()
+                    || candidate.getType() != WorkflowTask.TaskType.OPTIMIZER) {
+                continue;
+            }
+            Set<String> stageTargets = resolveHighlightNames(candidate, null);
+            if (producer != null && candidate == producer) {
+                latest.addAll(stageTargets);
+            } else {
+                prior.addAll(stageTargets);
+            }
+        }
+
+        if (task.isAdoptedFilterGateForced()) {
+            for (String gate : splitCommaNames(task.getAdoptedFilterGateParameter())) {
+                latest.add(gate);
+            }
+        }
+
+        Set<String> greenKeys = toKeySet(greenTargets);
+        Set<String> latestKeys = toKeySet(latest);
+        latest.removeIf(name -> greenKeys.contains(normalizeKey(name)));
+        prior.removeIf(name -> greenKeys.contains(normalizeKey(name))
+                || latestKeys.contains(normalizeKey(name)));
+        return new ChangeHighlights(latest, prior);
+    }
+
+    static final class ChangeHighlights {
+        private final Set<String> latest;
+        private final Set<String> prior;
+
+        ChangeHighlights(Set<String> latest, Set<String> prior) {
+            this.latest = latest != null ? latest : Set.of();
+            this.prior = prior != null ? prior : Set.of();
+        }
+
+        Set<String> latest() { return latest; }
+        Set<String> prior() { return prior; }
+    }
+
+    enum HighlightKind {
+        NONE, TARGET, LATEST, PRIOR
+    }
+
+    private HighlightKind resolveHighlightKind(EaParameter param) {
+        if (param == null || param.isSectionHeader() || param.getName() == null) {
+            return HighlightKind.NONE;
+        }
         String name = param.getName().trim();
-        for (String highlighted : highlightNames) {
-            if (highlighted.equalsIgnoreCase(name)) return true;
+        if (containsIgnoreCase(highlightNames, name)) return HighlightKind.TARGET;
+        if (containsIgnoreCase(latestChangedNames, name)) return HighlightKind.LATEST;
+        if (containsIgnoreCase(priorChangedNames, name)) return HighlightKind.PRIOR;
+        return HighlightKind.NONE;
+    }
+
+    private static boolean containsIgnoreCase(Set<String> names, String name) {
+        if (names == null || name == null) return false;
+        for (String candidate : names) {
+            if (candidate != null && candidate.equalsIgnoreCase(name)) return true;
         }
         return false;
+    }
+
+    private static Set<String> toKeySet(Set<String> names) {
+        Set<String> keys = new HashSet<>();
+        if (names == null) return keys;
+        for (String name : names) {
+            if (name != null && !name.isBlank()) keys.add(normalizeKey(name));
+        }
+        return keys;
+    }
+
+    private static String normalizeKey(String name) {
+        return name != null ? name.trim().toLowerCase(Locale.ROOT) : "";
+    }
+
+    private static List<String> splitCommaNames(String raw) {
+        List<String> out = new ArrayList<>();
+        if (raw == null || raw.isBlank()) return out;
+        for (String part : raw.split(",")) {
+            if (part != null && !part.isBlank()) out.add(part.trim());
+        }
+        return out;
     }
 
     private void applyFilter() {
@@ -513,19 +689,24 @@ public final class OptimizerSettingsHighlightDialog {
 
     private void scrollToFirstHighlight(List<EaParameter> display) {
         if (display == null) return;
-        for (int i = 0; i < display.size(); i++) {
-            EaParameter p = display.get(i);
-            if (p != null && !p.isSectionHeader() && isHighlighted(p)) {
-                // Index in filtered list may differ; search there.
-                for (int f = 0; f < filteredItems.size(); f++) {
-                    EaParameter fp = filteredItems.get(f);
-                    if (fp != null && fp.getName() != null
-                            && fp.getName().equalsIgnoreCase(p.getName())) {
-                        table.getSelectionModel().select(f);
-                        table.scrollTo(Math.max(0, f - 2));
-                        return;
-                    }
+        EaParameter first = null;
+        for (HighlightKind prefer : List.of(
+                HighlightKind.TARGET, HighlightKind.LATEST, HighlightKind.PRIOR)) {
+            for (EaParameter p : display) {
+                if (p != null && !p.isSectionHeader() && resolveHighlightKind(p) == prefer) {
+                    first = p;
+                    break;
                 }
+            }
+            if (first != null) break;
+        }
+        if (first == null) return;
+        for (int f = 0; f < filteredItems.size(); f++) {
+            EaParameter fp = filteredItems.get(f);
+            if (fp != null && fp.getName() != null
+                    && fp.getName().equalsIgnoreCase(first.getName())) {
+                table.getSelectionModel().select(f);
+                table.scrollTo(Math.max(0, f - 2));
                 return;
             }
         }

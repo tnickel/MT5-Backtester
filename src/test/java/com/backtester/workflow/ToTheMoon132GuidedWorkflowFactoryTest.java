@@ -111,6 +111,42 @@ public class ToTheMoon132GuidedWorkflowFactoryTest {
     }
 
     @Test
+    public void indicatorStagesOptimizeEnumTimeframeBandThroughH1() {
+        Map<String, List<String>> stages = ToTheMoon132GuidedWorkflowFactory.stageTargetParameters();
+        assertTrue(stages.get("03 Envelopes oben").contains("TimeFrame_Envelopes"));
+        assertTrue(stages.get("04 Envelopes unten").contains("TimeFrame_Envelopes_Lower"));
+        assertTrue(stages.get("05 ADX-Regime").contains("Inp_ADX_Timeframe"));
+        assertTrue(stages.get("06 ATR-Gridabstand").contains("Inp_ATR_Timeframe"));
+        assertTrue(stages.get("07 Volatilität & Richtung").contains("Inp_Vol_ATR_Timeframe"));
+
+        CustomProject project = ToTheMoon132GuidedWorkflowFactory.create(
+                "Guided", completeSyntheticPreset(), null);
+
+        assertTimeframeBand(findOptimizer(project, "03 Envelopes oben"), "TimeFrame_Envelopes");
+        assertTimeframeBand(findOptimizer(project, "04 Envelopes unten"), "TimeFrame_Envelopes_Lower");
+        assertTimeframeBand(findOptimizer(project, "05 ADX-Regime"), "Inp_ADX_Timeframe");
+        assertTimeframeBand(findOptimizer(project, "06 ATR-Gridabstand"), "Inp_ATR_Timeframe");
+        assertTimeframeBand(findOptimizer(project, "07 Volatilität & Richtung"), "Inp_Vol_ATR_Timeframe");
+    }
+
+    @Test
+    public void safetyStageOptimizesSessionFilterBooleanGate() {
+        List<String> safety = ToTheMoon132GuidedWorkflowFactory.stageTargetParameters()
+                .get("11 Adaptive & Safety-Gates");
+        assertTrue(safety.contains("Inp_Use_Session_Filter"));
+        assertTrue(safety.contains("Inp_Use_Escalation_Block"));
+
+        CustomProject project = ToTheMoon132GuidedWorkflowFactory.create(
+                "Guided", completeSyntheticPreset(), null);
+        WorkflowTask optimizer = findOptimizer(project, "11 Adaptive & Safety-Gates");
+        EaParameter session = find(optimizer, "Inp_Use_Session_Filter");
+        assertTrue(session.isOptimizeEnabled());
+        assertEquals("false", session.getOptimizeStart());
+        assertEquals("1", session.getOptimizeStep());
+        assertEquals("true", session.getOptimizeEnd());
+    }
+
+    @Test
     public void upgradesLegacyGuidedProjectWithoutDiscardingG11Results() {
         CustomProject project = ToTheMoon132GuidedWorkflowFactory.create(
                 "Guided", completeSyntheticPreset(), null);
@@ -185,6 +221,33 @@ public class ToTheMoon132GuidedWorkflowFactoryTest {
     }
 
     @Test
+    public void repairScrubsLegacyTimeframeBandsWithoutRebuildingCorrectStage() {
+        CustomProject project = ToTheMoon132GuidedWorkflowFactory.create(
+                "Guided", completeSyntheticPreset(), Path.of("build", "guided-reports"));
+        WorkflowTask grid = findOptimizer(project, "01 Grid-Fundament");
+
+        List<EaParameter> snapshot = grid.getOptimizerParameterSnapshot();
+        EaParameter adxTf = snapshot.stream()
+                .filter(parameter -> "Inp_ADX_Timeframe".equals(parameter.getName()))
+                .findFirst().orElseThrow();
+        adxTf.setOptimizeStart("0");
+        adxTf.setOptimizeStep("0");
+        adxTf.setOptimizeEnd("49153");
+        adxTf.setOptimizeEnabled(false);
+        grid.setOptimizerParameterSnapshot(snapshot);
+
+        assertTrue(ToTheMoon132GuidedWorkflowFactory.repairStageOptimizerSearchSpaces(project));
+        assertFalse(ToTheMoon132GuidedWorkflowFactory.repairStageOptimizerSearchSpaces(project));
+
+        assertEquals("1", find(grid, "Inp_ADX_Timeframe").getOptimizeStart());
+        assertEquals("1", find(grid, "Inp_ADX_Timeframe").getOptimizeStep());
+        assertEquals("16385", find(grid, "Inp_ADX_Timeframe").getOptimizeEnd());
+        assertFalse(find(grid, "Inp_ADX_Timeframe").isOptimizeEnabled());
+        assertEquals(List.of("Inp_Grid_Step", "Inp_Step_Multiplier", "Inp_Next_Lot_Multiplier"),
+                grid.getOptimizerTargetParameters());
+    }
+
+    @Test
     public void repairsEmptyPersistedSnapshotsFromDiskPreset() {
         // Simulate the production Guided 4Y project: stage names present, snapshots empty.
         CustomProject project = new CustomProject("Guided", "ToTheMoon_KI_v132", "AUDCAD", "M5");
@@ -224,6 +287,23 @@ public class ToTheMoon132GuidedWorkflowFactoryTest {
         fixed.setOptimizeEnd("true");
         result.add(fixed);
         return result;
+    }
+
+    private static WorkflowTask findOptimizer(CustomProject project, String stagePrefix) {
+        return project.getTasks().stream()
+                .filter(task -> task.getType() == WorkflowTask.TaskType.OPTIMIZER)
+                .filter(task -> task.getName().startsWith(stagePrefix))
+                .findFirst()
+                .orElseThrow();
+    }
+
+    private static void assertTimeframeBand(WorkflowTask optimizer, String parameterName) {
+        assertTrue(optimizer.getOptimizerTargetParameters().contains(parameterName));
+        EaParameter parameter = find(optimizer, parameterName);
+        assertTrue(parameter.isOptimizeEnabled());
+        assertEquals("1", parameter.getOptimizeStart());
+        assertEquals("1", parameter.getOptimizeStep());
+        assertEquals("16385", parameter.getOptimizeEnd());
     }
 
     private static EaParameter find(WorkflowTask task, String name) {

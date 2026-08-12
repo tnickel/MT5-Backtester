@@ -4,16 +4,22 @@ import com.backtester.config.AppConfig;
 import com.backtester.config.EaParameter;
 import com.backtester.database.CustomProjectSaveCoordinator;
 import com.backtester.database.DatabaseManager;
+import com.backtester.engine.BacktestRunner;
+import com.backtester.engine.MetaTraderRunLock;
 import com.backtester.engine.OptimizationConfig;
 import com.backtester.engine.WorkflowEngine;
 import com.backtester.report.OptimizationResult.CombinedPass;
 import com.backtester.report.PassPresetResolver;
+import com.backtester.workflow.ChampionSearchSpaceAligner;
 import com.backtester.workflow.CustomProject;
 import com.backtester.workflow.DatabankManager;
 import com.backtester.workflow.FilterCondition;
 import com.backtester.workflow.FilterGateAnalysisService;
 import com.backtester.workflow.GuidedOptimizationService;
+import com.backtester.workflow.MasterStrategyEntry;
+import com.backtester.workflow.MasterStrategyLineageService;
 import com.backtester.workflow.ToTheMoon132GuidedWorkflowFactory;
+import com.backtester.workflow.WorkflowPauseException;
 import com.backtester.workflow.WorkflowTask;
 import java.util.Set;
 import java.util.LinkedHashSet;
@@ -52,6 +58,10 @@ import java.nio.charset.StandardCharsets;
 import java.util.Locale;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 
 /**
  * StrategyQuant-Style Custom Project Workflow Editor & Executor View (1:1 Layout Match).
@@ -66,7 +76,8 @@ public class ProjectWorkflowEditorView {
     private static final Duration PROJECT_SAVE_FLUSH_TIMEOUT = Duration.ofMinutes(2);
 
     private final BorderPane root;
-    private CustomProject project;
+    /** Volatile: the reference backtest worker checks whether it is still the loaded one. */
+    private volatile CustomProject project;
     private final WorkflowEngine engine;
     private final DatabankManager databankManager;
     private final EaParameterManager eaParamManager = new EaParameterManager();
@@ -92,6 +103,10 @@ public class ProjectWorkflowEditorView {
     private Button addTaskBtn;
     private WorkflowTask selectedTask;
     private OptimizerSettingsHighlightDialog optimizerSettingsHighlightDialog;
+    private MasterStrategyLineageWindow masterStrategyLineageWindow;
+    /** Serial queue: a pick during a running measurement is measured afterwards. */
+    private ExecutorService referenceBacktestExecutor;
+    private volatile BacktestRunner activeReferenceRunner;
 
     // Progress Tab Components
     private ProgressBar progressBar;
@@ -258,6 +273,7 @@ public class ProjectWorkflowEditorView {
             engine.changeExpert(proj.getExpert());
             engine.setSymbol(proj.getSymbol());
             engine.setPeriod(proj.getPeriod());
+            EaParameterUiContext.setChartPeriod(proj.getPeriod());
         }
         refreshTaskChain();
         if (databankPanel != null) databankPanel.refreshDatabanksUI();
@@ -333,6 +349,14 @@ public class ProjectWorkflowEditorView {
                         + "-fx-border-radius: 5; -fx-background-radius: 5; -fx-font-weight: bold;");
         showFlowBtn.setOnAction(e -> openWorkflowFlowSummary());
 
+        Button lineageBtn = new Button("📈 Master-Verlauf");
+        lineageBtn.setTooltip(new Tooltip(
+                "Referenz-Backtests aller Hand-Picks: Equitykurve und Kennzahlen im Vergleich."));
+        lineageBtn.setStyle(
+                "-fx-background-color: #1e2432; -fx-text-fill: #e6e9f0; -fx-border-color: #00e5ff; "
+                        + "-fx-border-radius: 5; -fx-background-radius: 5; -fx-font-weight: bold;");
+        lineageBtn.setOnAction(e -> openMasterStrategyLineageWindow());
+
         startBtn = new Button("▶ Start");
         startBtn.getStyleClass().add("button-start");
         startBtn.setOnAction(e -> pipelineRunner.start());
@@ -365,8 +389,20 @@ public class ProjectWorkflowEditorView {
         });
 
         bar.getChildren().addAll(backBtn, titleBox, spacer, automaticModeToggle, showFlowBtn,
-                startBtn, stopBtn, resetBtn, saveBtn, cloneBtn);
+                lineageBtn, startBtn, stopBtn, resetBtn, saveBtn, cloneBtn);
         return bar;
+    }
+
+    private void openMasterStrategyLineageWindow() {
+        if (project == null) return;
+        Window owner = root.getScene() != null ? root.getScene().getWindow() : null;
+        masterStrategyLineageWindow = MasterStrategyLineageWindow.showOrRefresh(
+                masterStrategyLineageWindow, owner, project, enabled -> {
+                    saveProject();
+                    logToConsole("MASTER-VERLAUF", enabled
+                            ? "Referenz-Backtest nach jedem Pick aktiviert."
+                            : "Referenz-Backtest nach dem Pick deaktiviert.");
+                });
     }
 
     private void openWorkflowFlowSummary() {
@@ -659,6 +695,7 @@ public class ProjectWorkflowEditorView {
                 selectedTask.setRetestPeriod(timeframeCombo.getValue());
                 if (project != null) project.setPeriod(timeframeCombo.getValue());
                 engine.setPeriod(timeframeCombo.getValue());
+                EaParameterUiContext.setChartPeriod(timeframeCombo.getValue());
                 saveProject();
             }
         });
@@ -1486,7 +1523,10 @@ public class ProjectWorkflowEditorView {
         openStep1Btn.setOnAction(e -> {
             if (selectedTask != null && selectedTask.getType() == WorkflowTask.TaskType.OPTIMIZER) {
                 List<EaParameter> taskSnapshot = selectedTask.getOptimizerParameterSnapshot();
-                if (!taskSnapshot.isEmpty()) engine.setEaParameters(taskSnapshot);
+                if (!taskSnapshot.isEmpty()) {
+                    EaParameterManager.normalizeTimeframeOptimizeBands(taskSnapshot);
+                    engine.setEaParameters(taskSnapshot);
+                }
             }
             WorkflowConfigDialogs.showStep1Dialog(engine, root.getScene().getWindow(), () -> {
                 if (selectedTask != null && selectedTask.getType() == WorkflowTask.TaskType.OPTIMIZER) {
@@ -2149,6 +2189,7 @@ public class ProjectWorkflowEditorView {
                 String taskPeriod = task.getRetestPeriod();
                 timeframeCombo.setValue(taskPeriod != null && !taskPeriod.isBlank()
                         ? taskPeriod : (project != null ? project.getPeriod() : "H1"));
+                EaParameterUiContext.setChartPeriod(timeframeCombo.getValue());
             }
             if (startDatePicker != null) {
                 LocalDate startVal = parseDateOrNull(task.getStartDate());
@@ -2265,6 +2306,7 @@ public class ProjectWorkflowEditorView {
             optimizerSettingsHighlightDialog = OptimizerSettingsHighlightDialog.showOrRefresh(
                     optimizerSettingsHighlightDialog,
                     owner,
+                    project,
                     selected,
                     fallback,
                     outputDir,
@@ -2485,18 +2527,26 @@ public class ProjectWorkflowEditorView {
                 default: fidelityText = "aktuelle EA-Konfiguration (nicht vollständig beweisbar)"; break;
             }
 
-            String warning = resolution.warning() != null && !resolution.warning().isBlank()
-                    ? "\n\nWARNUNG: " + resolution.warning() : "";
-            Alert confirmation = new Alert(Alert.AlertType.CONFIRMATION);
-            confirmation.setTitle("Parameter-Basis übernehmen");
-            confirmation.setHeaderText("Pass #" + selectedPass.getPassNumber() + " → " + nextOptimizer.getName());
-            confirmation.setContentText("Quelle: " + dbName
-                    + "\nParameterquelle: " + fidelityText
-                    + "\nNeue Optimierungsziele: " + targetCount
-                    + "\n\nAlle übrigen Parameter werden mit den Passwerten fixiert (N)."
-                    + warning);
-            confirmation.initOwner(root.getScene().getWindow());
-            if (confirmation.showAndWait().orElse(ButtonType.CANCEL) != ButtonType.OK) return;
+            // Same rule as in the automatic chain: symbol, period and expert can be changed
+            // at any time, and a master measured under the old conditions is no longer
+            // evidence here. Dropping it before the dialog also keeps the warning below from
+            // comparing this pass against a strategy from a different market.
+            if (MasterStrategyLineageService.rebaselineOnContextChange(project)) {
+                saveProject();
+                logToConsole("MASTER-VERLAUF", "Die Referenzbedingungen haben sich geändert: Die "
+                        + "bisher bestätigte Master-Strategie und ihre Untergrenze gelten nicht "
+                        + "mehr. Die nächste Messung legt die neue Basis fest.");
+            }
+
+            GuidedOptimizationService.AdoptionPreview preview = GuidedOptimizationService.previewPassAdoption(
+                    project, engine.getEaParameters(), resolution.parameters(), selectedPass, dbName);
+            Window owner = root.getScene() != null ? root.getScene().getWindow() : null;
+            double selectedRatio = GuidedOptimizationService
+                    .estimatedReturnToDrawdown(selectedPass).orElse(Double.NaN);
+            if (!ParameterAdoptionDiffDialog.confirm(owner, preview, fidelityText,
+                    appendRatioWarning(resolution.warning(), selectedRatio))) {
+                return;
+            }
 
             GuidedOptimizationService.AdoptionResult result = GuidedOptimizationService.adoptPassParameters(
                     project, engine.getEaParameters(), resolution.parameters(), selectedPass, dbName);
@@ -2509,7 +2559,16 @@ public class ProjectWorkflowEditorView {
                             consumer,
                             producer != null ? effectiveOptimizerOutputDirectory(producer) : "",
                             databankManager);
+            // The gate force mutates the consumer snapshot after the adoption produced its
+            // own copy, so only the snapshot describes what the next optimizer will run.
+            List<EaParameter> effectiveBasis = consumer.getOptimizerParameterSnapshot();
             engine.setEaParameters(consumer.getOptimizerParameterSnapshot());
+            List<String> invalidated = invalidateStaleDownstreamResults(consumer, dbName);
+            logSearchSpaceAdjustments(consumer, result.getSearchSpaceAdjustments());
+            // Same rule as in the automatic chain: the floor is the value of a measured
+            // master, so it only moves once the reference run confirms this pick. Raising
+            // it here would leave a limit behind that no measurement ever backed — and a
+            // deliberate pick below the current master would even lower it unmeasured.
             saveProject();
             refreshTaskChain();
             selectTask(consumer);
@@ -2518,6 +2577,9 @@ public class ProjectWorkflowEditorView {
             if (gateForce.isForced()) {
                 banner += " · Filter erzwungen (" + gateForce.getForcedDisplay() + ")";
             }
+            if (!invalidated.isEmpty()) {
+                banner += " · " + invalidated.size() + " veraltete Databank(s) geleert";
+            }
             showParameterAdoptionBanner(banner, true);
             if (databankPanel != null) {
                 databankPanel.refreshDatabanksUI(dbName);
@@ -2525,6 +2587,11 @@ public class ProjectWorkflowEditorView {
             logToConsole("GUIDED-OPT", result.getAdoptedParameterCount() + " Passparameter fixiert; "
                     + result.getEnabledTargetCount() + " Zielparameter für den nächsten Optimizer aktiviert."
                     + (gateForce.getNote().isBlank() ? "" : " " + gateForce.getNote()));
+            MasterStrategyLineageService.AdoptionSummary summary = MasterStrategyLineageService
+                    .summarize(preview, consumer, effectiveBasis);
+            logAdoptedParameterChanges(summary);
+            startReferenceBacktestAsync(consumer, dbName, result.getPassNumber(), effectiveBasis,
+                    summary, selectedRatio);
         } catch (IllegalArgumentException ex) {
             showParameterAdoptionBanner(ex.getMessage(), false);
             Alert alert = new Alert(Alert.AlertType.ERROR, ex.getMessage(), ButtonType.OK);
@@ -2538,13 +2605,67 @@ public class ProjectWorkflowEditorView {
         }
     }
 
+    /**
+     * Stores the profit/drawdown of the new master basis. It is the floor the next stage
+     * has to beat, so a stage can no longer silently downgrade the master strategy.
+     */
+    private void rememberMasterSelectionRatio(double ratio) {
+        if (project == null || !Double.isFinite(ratio)) return;
+        project.setMasterSelectionRatio(ratio);
+    }
+
+    private static String formatRatio(double ratio) {
+        return Double.isFinite(ratio) ? String.format(Locale.US, "%.2f", ratio) : "n/a";
+    }
+
+    /**
+     * A hand-pick below the current master profit/drawdown stays possible — but the user
+     * should see it before confirming, not only in the reference measurement afterwards.
+     */
+    private String appendRatioWarning(String existingWarning, double selectedRatio) {
+        double championRatio = project != null ? project.getMasterSelectionRatio() : Double.NaN;
+        String base = existingWarning != null ? existingWarning : "";
+        if (!Double.isFinite(championRatio) || !Double.isFinite(selectedRatio)
+                || selectedRatio >= championRatio) {
+            return base;
+        }
+        String hint = "Dieser Pass liegt mit Profit/DD " + formatRatio(selectedRatio)
+                + " unter der aktuellen Master-Basis (" + formatRatio(championRatio)
+                + "). Die Übernahme verschlechtert die Master-Strategie voraussichtlich.";
+        return base.isBlank() ? hint : base + "\n" + hint;
+    }
+
     private void adoptBestPassAutomatically(WorkflowTask nextOptimizer) {
         String sourceDatabank = nextOptimizer != null ? nextOptimizer.getSourceDatabank() : "";
         List<CombinedPass> candidates = databankManager.getDatabank(sourceDatabank);
-        CombinedPass bestPass = GuidedOptimizationService.selectBestPass(candidates)
-                .orElseThrow(() -> new IllegalStateException(
-                        "Automatikmodus: In Databank '" + sourceDatabank
-                                + "' existiert keine Strategie mit einem endlichen Score."));
+        // A master measured on another symbol, period or expert proves nothing here, and
+        // its floor would reject every candidate before one has been measured under the
+        // new conditions. Dropping both re-opens the chain for a fresh baseline.
+        if (MasterStrategyLineageService.rebaselineOnContextChange(project)) {
+            saveProject();
+            logToConsole("MASTER-VERLAUF", "Die Referenzbedingungen haben sich geändert: Die "
+                    + "bisher bestätigte Master-Strategie und ihre Untergrenze gelten nicht "
+                    + "mehr. Die nächste Messung legt die neue Basis fest.");
+        }
+        double championRatio = project != null ? project.getMasterSelectionRatio() : Double.NaN;
+        GuidedOptimizationService.AdoptionChoice choice = GuidedOptimizationService.chooseAdoptionPass(
+                candidates, GuidedOptimizationService.ADOPTION_SHORTLIST, championRatio);
+        if (choice.isBlockedByMasterFloor()) {
+            carryMasterBasisForward(nextOptimizer, sourceDatabank, choice, championRatio);
+            return;
+        }
+        CombinedPass bestPass = choice.getSelected().orElse(null);
+        if (bestPass == null) {
+            throw new IllegalStateException("Automatikmodus: In Databank '" + sourceDatabank
+                    + "' existiert keine Strategie mit einem endlichen Score.");
+        }
+        if (choice.isMasterFloorUnverified()) {
+            logToConsole("AUTOMATIK-WARNUNG", choice.getNote()
+                    + " Pass #" + bestPass.getPassNumber() + " wird übernommen, gilt aber als "
+                    + "ungeprüft: Der Referenz-Backtest ist für diese Stufe der einzige Beleg.");
+        } else if (!choice.getNote().isBlank()) {
+            logToConsole("AUTOMATIK", choice.getNote());
+        }
 
         PassPresetResolver.Resolution resolution = PassPresetResolver.resolve(
                 bestPass, project != null ? project.getExpert() : engine.getExpert());
@@ -2553,6 +2674,14 @@ public class ProjectWorkflowEditorView {
                     + " kann nicht sicher übernommen werden, weil kein archiviertes Lauf-Preset vorhanden ist. "
                     + "Die automatische Vererbung wurde gestoppt, statt Parameterwerte zu raten.");
         }
+
+        GuidedOptimizationService.AdoptionPreview preview = GuidedOptimizationService.previewPassAdoption(
+                project, engine.getEaParameters(), resolution.parameters(), bestPass, sourceDatabank);
+
+        // Kept so the measurement can put the proven master back if it does not confirm
+        // the pick. Captured before the adoption overwrites the task snapshot.
+        MasterRollbackPoint rollback = new MasterRollbackPoint(
+                currentMasterBasis(nextOptimizer), nextOptimizer.getOptimizerParameterSnapshot());
 
         GuidedOptimizationService.AdoptionResult result = GuidedOptimizationService.adoptPassParameters(
                 project, engine.getEaParameters(), resolution.parameters(), bestPass, sourceDatabank);
@@ -2568,15 +2697,29 @@ public class ProjectWorkflowEditorView {
                 GuidedOptimizationService.applyFilterGateRecommendation(
                         producer, nextOptimizer, producerOut, databankManager);
 
+        // Same as in the manual path: after the gate force only the consumer snapshot
+        // describes the strategy the next optimizer starts from.
+        List<EaParameter> effectiveBasis = nextOptimizer.getOptimizerParameterSnapshot();
         engine.setEaParameters(nextOptimizer.getOptimizerParameterSnapshot());
+        List<String> invalidated = invalidateStaleDownstreamResults(nextOptimizer, sourceDatabank);
+        logSearchSpaceAdjustments(nextOptimizer, result.getSearchSpaceAdjustments());
+        // The floor stays where it is until the measurement confirms this basis. Raising it
+        // here would survive a crash during the reference run and lock the chain to a level
+        // no measurement ever backed.
         saveProject();
         String scoreText = String.format(Locale.ROOT, "%.3f", bestPass.getScore());
         StringBuilder messageBuilder = new StringBuilder()
                 .append("Pass #").append(bestPass.getPassNumber())
-                .append(" mit höchstem Score ").append(scoreText)
-                .append(" aus '").append(sourceDatabank)
+                .append(" (Score ").append(scoreText)
+                .append(", Profit/DD ").append(formatRatio(choice.getSelectedRatio()))
+                .append(") aus '").append(sourceDatabank)
                 .append("' automatisch als Basis für '")
                 .append(nextOptimizer.getName()).append("' übernommen.");
+        if (choice.isMasterFloorUnverified()) {
+            messageBuilder.append(" Profit/DD ist nicht bestimmbar, die Master-Basis (")
+                    .append(formatRatio(championRatio))
+                    .append(") konnte für diese Stufe nicht geprüft werden.");
+        }
         if (gateForce.isForced()) {
             messageBuilder.append(" Filter-Empfehlung übernommen: ")
                     .append(gateForce.getForcedDisplay())
@@ -2584,14 +2727,543 @@ public class ProjectWorkflowEditorView {
         } else if (gateForce.getNote() != null && !gateForce.getNote().isBlank()) {
             messageBuilder.append(' ').append(gateForce.getNote());
         }
+        if (!invalidated.isEmpty()) {
+            messageBuilder.append(" Veraltete Databanks geleert: ")
+                    .append(String.join(", ", invalidated)).append('.');
+        }
         String message = messageBuilder.toString();
         logToConsole("AUTOMATIK", message);
         Platform.runLater(() -> {
-            showParameterAdoptionBanner(message, true);
+            showParameterAdoptionBanner(message, !choice.isMasterFloorUnverified());
             if (databankPanel != null) {
                 databankPanel.refreshDatabanksUI(sourceDatabank);
             }
         });
+
+        MasterStrategyLineageService.AdoptionSummary summary = MasterStrategyLineageService
+                .summarize(preview, nextOptimizer, effectiveBasis);
+        logAdoptedParameterChanges(summary);
+        runReferenceBacktestBlocking(nextOptimizer, sourceDatabank, result.getPassNumber(),
+                effectiveBasis, summary, rollback, choice.getSelectedRatio());
+    }
+
+    /**
+     * The parameter basis in force before this stage adopts anything: the consumer's own
+     * snapshot once it has one, otherwise the configuration the previous stage left in the
+     * engine. Same rule the adoption itself uses to pick its starting point.
+     *
+     * <p>Both accessors hand out detached copies, so the adoption that follows cannot reach
+     * the returned parameters. The rollback depends on that — it would silently restore the
+     * new values onto themselves if this list ever aliased the live configuration.
+     */
+    private List<EaParameter> currentMasterBasis(WorkflowTask consumer) {
+        // The measured master wins over any stage snapshot: the guided factory pre-seeds
+        // every optimizer with the original preset, so a stage that has not been adopted
+        // into yet still holds the values the chain started from. Falling back to those
+        // would throw away every improvement proven so far.
+        if (project == null) {
+            List<EaParameter> snapshot = consumer.getOptimizerParameterSnapshot();
+            return !snapshot.isEmpty() ? snapshot : engine.getEaParameters();
+        }
+        if (project.hasProvenMaster()) return project.getProvenMasterParameters();
+
+        // A project from before the master was stored explicitly still has its measured
+        // history, and the best measurement in it is that master. Recovering it once is
+        // better than falling back to the stage template, which is the very source this
+        // is meant to replace.
+        List<EaParameter> recovered = MasterStrategyLineageService.recoverProvenMasterFromLineage(project);
+        if (!recovered.isEmpty()) {
+            project.setProvenMasterParameters(recovered);
+            project.setProvenMasterContextKey(MasterStrategyLineageService.currentContextKey(project));
+            saveProject();
+            logToConsole("MASTER-VERLAUF", "Die bisher beste gemessene Strategie aus dem Verlauf "
+                    + "wurde als bestätigte Master-Basis übernommen.");
+            return project.getProvenMasterParameters();
+        }
+        List<EaParameter> snapshot = consumer.getOptimizerParameterSnapshot();
+        return !snapshot.isEmpty() ? snapshot : engine.getEaParameters();
+    }
+
+    /**
+     * The stage produced nothing above the master floor. Instead of making its best
+     * regression the new reference, the proven basis is handed on unchanged and only the
+     * next stage's targets are opened. Adopting the regression would move the floor down
+     * with it, so every further stage would measure itself against an already degraded
+     * basis and the loss would accumulate without a lower bound.
+     */
+    private void carryMasterBasisForward(WorkflowTask nextOptimizer,
+                                         String sourceDatabank,
+                                         GuidedOptimizationService.AdoptionChoice choice,
+                                         double championRatio) {
+        List<EaParameter> provenBasis = currentMasterBasis(nextOptimizer);
+        GuidedOptimizationService.AdoptionPreview preview = GuidedOptimizationService
+                .previewBasisCarryOver(project, provenBasis, sourceDatabank);
+        GuidedOptimizationService.AdoptionResult result = GuidedOptimizationService
+                .carryBasisToNextOptimizer(project, provenBasis, sourceDatabank);
+        if (result.getNextOptimizer() != nextOptimizer) {
+            throw new IllegalStateException("Automatikmodus hat einen unerwarteten Ziel-Task ermittelt: "
+                    + result.getNextOptimizer().getName());
+        }
+
+        List<EaParameter> effectiveBasis = nextOptimizer.getOptimizerParameterSnapshot();
+        engine.setEaParameters(nextOptimizer.getOptimizerParameterSnapshot());
+        logSearchSpaceAdjustments(nextOptimizer, result.getSearchSpaceAdjustments());
+        logBasisSchemaDrift(result.getSchemaDrift());
+        // No rememberMasterSelectionRatio: the basis is unchanged, so its floor still holds.
+        saveProject();
+
+        String rejected = choice.getBestAvailable()
+                .map(pass -> " Bester Pass #" + pass.getPassNumber() + " (Profit/DD "
+                        + formatRatio(choice.getBestAvailableRatio()) + ") wurde verworfen.")
+                .orElse("");
+        String message = "Die Stufe vor '" + nextOptimizer.getName() + "' hat die Master-Basis ("
+                + formatRatio(championRatio) + ") nicht erreicht." + rejected
+                + " Die bisherige Basis läuft unverändert in '" + nextOptimizer.getName() + "' weiter.";
+        logToConsole("AUTOMATIK-WARNUNG", choice.getNote() + " " + message);
+        logToConsole("MASTER-VERLAUF", "Kein Referenz-Backtest: Die Parameterbasis ist unverändert, "
+                + "der letzte Messpunkt gilt weiter.");
+        Platform.runLater(() -> {
+            showParameterAdoptionBanner(message, false);
+            if (databankPanel != null) {
+                databankPanel.refreshDatabanksUI(sourceDatabank);
+            }
+        });
+
+        MasterStrategyLineageService.AdoptionSummary summary = MasterStrategyLineageService
+                .summarize(preview, nextOptimizer, effectiveBasis);
+        logAdoptedParameterChanges(summary);
+    }
+
+    /**
+     * Writes the before/after values of the stage's optimized parameters into the run
+     * log. Without this the console only says how many parameters were fixed, never which.
+     */
+    private void logAdoptedParameterChanges(MasterStrategyLineageService.AdoptionSummary summary) {
+        if (summary == null) return;
+        List<MasterStrategyEntry.ParameterChange> optimized = summary.getOptimizedParameters();
+        if (optimized.isEmpty()) {
+            logToConsole("PARAMETER", "Für diese Übernahme konnten keine optimierten Parameter "
+                    + "ermittelt werden.");
+            return;
+        }
+        String stage = summary.getProducerStageName();
+        logToConsole("PARAMETER", "Optimierte Parameter"
+                + (stage.isBlank() ? "" : " aus '" + stage + "'") + " (alt → neu):");
+        for (MasterStrategyEntry.ParameterChange change : optimized) {
+            if (change == null) continue;
+            logToConsole("PARAMETER", "  " + (change.isChanged() ? "• " : "· ")
+                    + change.getName() + ": " + change.getOldValue() + " → " + change.getNewValue()
+                    + (change.isChanged() ? "" : "  (unverändert)"));
+        }
+        List<MasterStrategyEntry.ParameterChange> additional = summary.getAdditionalChanges();
+        if (!additional.isEmpty()) {
+            logToConsole("PARAMETER", "Weitere übernommene Werte aus dem Lauf-Preset (alt → neu):");
+            for (MasterStrategyEntry.ParameterChange change : additional) {
+                if (change == null) continue;
+                logToConsole("PARAMETER", "  • " + change.getName() + ": "
+                        + change.getOldValue() + " → " + change.getNewValue());
+            }
+        }
+        List<MasterStrategyEntry.OptimizationTarget> targets = summary.getNextStageTargets();
+        if (targets.isEmpty()) return;
+        logToConsole("PARAMETER", "Die nächste Stufe variiert (aktuell · Start/Schritt/Ende):");
+        for (MasterStrategyEntry.OptimizationTarget target : targets) {
+            if (target == null) continue;
+            logToConsole("PARAMETER", "  • " + target.getName() + ": "
+                    + blankToDash(target.getCurrentValue()) + " · "
+                    + blankToDash(target.getStart()) + "/"
+                    + blankToDash(target.getStep()) + "/"
+                    + blankToDash(target.getEnd()));
+        }
+    }
+
+    /**
+     * Reports parameters the carried master and the target stage do not share. The stage
+     * then runs on a mixture that was never measured in that form, which the user has to
+     * see while it happens — silence here is how a strategy drifts away from the one the
+     * measurement confirmed. Only reported when there really is drift, so it stays a
+     * signal instead of accompanying every hand-off.
+     */
+    private void logBasisSchemaDrift(GuidedOptimizationService.BasisSchemaDrift drift) {
+        if (drift == null || drift.isEmpty()) return;
+        logToConsole("AUTOMATIK-WARNUNG", drift.describe());
+    }
+
+    private static String blankToDash(String value) {
+        return value == null || value.isBlank() ? "—" : value.trim();
+    }
+
+    /**
+     * Reference backtest after a manual pick. Queued on a single worker so a second
+     * pick during a running measurement is measured afterwards instead of being
+     * dropped, and so two measurements never fight over the terminal.
+     *
+     * <p>{@code parameters} has to be the consumer's snapshot as it stands after any
+     * filter-gate force — measuring the adoption's own copy would sign and compare a
+     * strategy the next optimizer never runs.
+     */
+    private void startReferenceBacktestAsync(WorkflowTask consumer,
+                                             String sourceDatabank,
+                                             int passNumber,
+                                             List<EaParameter> parameters,
+                                             MasterStrategyLineageService.AdoptionSummary summary,
+                                             double selectedRatio) {
+        CustomProject targetProject = project;
+        if (targetProject == null) return;
+        if (!targetProject.isReferenceBacktestEnabled()) {
+            logToConsole("MASTER-VERLAUF", "Referenz-Backtest ist abgeschaltet: Die Übernahme wird "
+                    + "nicht gemessen und deshalb auch nicht als Master-Strategie hinterlegt.");
+            return;
+        }
+
+        logToConsole("MASTER-VERLAUF", "Referenz-Backtest für die neue Master-Strategie eingereiht …");
+        referenceBacktestExecutor().execute(() -> {
+            BacktestRunner runner = new BacktestRunner();
+            activeReferenceRunner = runner;
+            try (MetaTraderRunLock.Handle terminal =
+                         MetaTraderRunLock.acquire("Referenz-Backtest: " + targetProject.getName())) {
+                // A hand-pick is a deliberate decision, so a weak measurement is reported
+                // rather than rolled back; only the automatic chain reverts on its own.
+                ReferenceMeasurement measurement = measureReferenceBacktest(targetProject, consumer,
+                        sourceDatabank, passNumber, parameters, summary, runner);
+                if (measurement == null) return;
+                // A known result still has to reach the user: without this the green
+                // adoption banner would stay up over a measurement that already failed.
+                publishReferenceResult(targetProject, measurement.entry);
+                if (targetProject != project) {
+                    logToConsole("MASTER-VERLAUF", "Projekt wurde während der Messung gewechselt: "
+                            + "Die Master-Basis bleibt unverändert.");
+                    return;
+                }
+                // An unconfirmed hand-pick keeps running — the user chose it deliberately —
+                // but it does not become the master. Confirmation goes through the same
+                // commit as the automatic chain so basis, floor and context stay together.
+                if (confirmsImprovement(measurement.entry, targetProject.hasProvenMaster())) {
+                    commitProvenMaster(consumer, parameters, selectedRatio, measurement.entry);
+                }
+            } catch (InterruptedException ex) {
+                Thread.currentThread().interrupt();
+                logToConsole("MASTER-VERLAUF", "Referenz-Backtest abgebrochen.");
+            } catch (RuntimeException ex) {
+                logger.error("Referenz-Backtest nach Hand-Pick fehlgeschlagen", ex);
+                logToConsole("MASTER-VERLAUF", "Referenz-Backtest fehlgeschlagen: " + ex.getMessage());
+            } finally {
+                activeReferenceRunner = null;
+            }
+        });
+    }
+
+    /**
+     * Reference backtest inside the automatic chain. Runs on the pipeline thread, which
+     * already owns the terminal. The measurement — not the optimizer's estimate — decides
+     * whether the new basis becomes the master: anything that is not confirmed as an
+     * improvement is discarded and the last proven master is restored. A measurement that
+     * produced nothing is discarded the same way, but additionally pauses the chain — a
+     * measured regression is a result, a crashed run is a defect worth looking at.
+     */
+    private void runReferenceBacktestBlocking(WorkflowTask consumer,
+                                              String sourceDatabank,
+                                              int passNumber,
+                                              List<EaParameter> parameters,
+                                              MasterStrategyLineageService.AdoptionSummary summary,
+                                              MasterRollbackPoint rollback,
+                                              double selectedRatio) {
+        CustomProject targetProject = project;
+        if (targetProject == null) return;
+        if (!targetProject.isReferenceBacktestEnabled()) {
+            // Without a measurement nothing can be proven, so nothing is written that would
+            // later look proven: the basis advances, master and floor stay where the last
+            // real measurement left them.
+            logToConsole("MASTER-VERLAUF", "Referenz-Backtest ist abgeschaltet: Die Übernahme für '"
+                    + consumer.getName() + "' läuft ungeprüft weiter. Sie wird nicht als "
+                    + "Master-Strategie hinterlegt, und die Master-Untergrenze bleibt unverändert.");
+            return;
+        }
+
+        BacktestRunner runner = new BacktestRunner();
+        activeReferenceRunner = runner;
+        ReferenceMeasurement measurement;
+        try {
+            measurement = measureReferenceBacktest(targetProject, consumer, sourceDatabank,
+                    passNumber, parameters, summary, runner);
+        } finally {
+            activeReferenceRunner = null;
+        }
+        if (measurement == null) return;
+        MasterStrategyEntry entry = measurement.entry;
+        if (measurement.freshlyMeasured) {
+            publishReferenceResult(targetProject, entry);
+        }
+        if (targetProject != project) {
+            // Same guard as publishReferenceResult: a project switch during the run must
+            // not let this measurement rewrite the basis of a different project.
+            logToConsole("MASTER-VERLAUF", "Projekt wurde während der Messung gewechselt: "
+                    + "Die Master-Basis bleibt unverändert.");
+            return;
+        }
+
+        if (!entry.isBacktestSucceeded()) {
+            // Erst aufräumen, dann anhalten: Ein Absturz darf keine halb übernommene Basis
+            // hinterlassen, ist aber ein Fehlerfall, den der Nutzer sehen soll.
+            restoreProvenMasterBasis(consumer, sourceDatabank, rollback,
+                    "Der Referenz-Backtest für '" + consumer.getName()
+                            + "' lieferte kein Ergebnis (" + entry.getFailureMessage() + ")");
+            throw new WorkflowPauseException("Automatikmodus angehalten: Der Referenz-Backtest für '"
+                    + consumer.getName() + "' lieferte kein Ergebnis (" + entry.getFailureMessage()
+                    + "). Die Übernahme wurde verworfen, die zuletzt bestätigte Master-Strategie ist "
+                    + "wieder aktiv. Ein erneuter Start wiederholt Übernahme und Messung.");
+        }
+        if (confirmsImprovement(entry, targetProject.hasProvenMaster())) {
+            commitProvenMaster(consumer, parameters, selectedRatio, entry);
+            return;
+        }
+        restoreProvenMasterBasis(consumer, sourceDatabank, rollback,
+                describeUnconfirmedMeasurement(consumer, entry));
+    }
+
+    /**
+     * Only a measurement that is actually better makes the candidate the new master.
+     * {@code NEUTRAL} covers results up to two percent below the reference and
+     * {@code UNBEKANNT} means the comparison could not be computed — neither is proof of
+     * an improvement, and accepting them would let the master drift downwards in steps
+     * that each stay just under the warning threshold.
+     *
+     * <p>The one exception is the very first measurement: it has nothing to be compared
+     * against, which also reports as {@code UNBEKANNT}. That one establishes the master
+     * instead of being rejected against a master that does not exist yet. Whether one
+     * exists is decided by {@code hasProvenMaster} and not by the state of the lineage:
+     * an empty or non-comparable history also reports {@code UNBEKANNT}, and reading that
+     * as "first measurement" would let any candidate overwrite a confirmed master without
+     * a single comparison.
+     *
+     * <p>Even that first measurement has to be ratable. A run whose profit/drawdown is not
+     * a finite number tells us nothing, and a master nobody can compare against would
+     * block or wave through everything that comes after it.
+     */
+    static boolean confirmsImprovement(MasterStrategyEntry entry, boolean hasProvenMaster) {
+        if (entry == null || !entry.isBacktestSucceeded()) return false;
+        if (entry.getVerdict() == MasterStrategyEntry.Verdict.BESSER) return true;
+        return !hasProvenMaster
+                && entry.getVerdict() == MasterStrategyEntry.Verdict.UNBEKANNT
+                && Double.isFinite(entry.getReturnToDrawdown());
+    }
+
+    private static String describeUnconfirmedMeasurement(WorkflowTask consumer,
+                                                         MasterStrategyEntry entry) {
+        String stage = consumer != null ? consumer.getName() : "";
+        if (entry.getVerdict() == MasterStrategyEntry.Verdict.UNBEKANNT) {
+            return "Die Messung für '" + stage + "' liefert kein vergleichbares Profit/DD, "
+                    + "die Verbesserung ist damit nicht belegt";
+        }
+        String relation = entry.getVerdict() == MasterStrategyEntry.Verdict.NEUTRAL
+                ? "bringt gegenüber Messpunkt #" + entry.getComparedToSequence()
+                        + " keine Verbesserung"
+                : "ist schlechter als Messpunkt #" + entry.getComparedToSequence();
+        return "Die Messung für '" + stage + "' " + relation + " ("
+                + String.format(Locale.US, "Profit %+.2f, Profit/DD %+.2f",
+                        entry.getDeltaProfit(), entry.getDeltaReturnToDrawdown()) + ")";
+    }
+
+    /**
+     * The measurement confirmed the candidate, so it becomes the master: basis, floor and
+     * the conditions they were measured under are written together and forced to disk
+     * before the next stage starts. Everything the chain later falls back to is read from
+     * here, never from a stage snapshot.
+     *
+     * <p>The write is flushed rather than left to the debounced saver: the next stage runs
+     * MT5 for minutes and a crash in there would otherwise lose exactly the confirmation
+     * that was just earned. Called from worker threads only, never from the FX thread.
+     */
+    private void commitProvenMaster(WorkflowTask consumer,
+                                    List<EaParameter> parameters,
+                                    double selectedRatio,
+                                    MasterStrategyEntry entry) {
+        if (project == null) return;
+        project.setProvenMasterParameters(parameters);
+        project.setProvenMasterContextKey(entry.contextKey());
+        rememberMasterSelectionRatio(selectedRatio);
+        saveProject();
+        if (!projectSaveCoordinator.flush(PROJECT_SAVE_FLUSH_TIMEOUT)) {
+            logToConsole("MASTER-VERLAUF", "Warnung: Die bestätigte Master-Strategie konnte nicht "
+                    + "sofort gespeichert werden. Bei einem Absturz vor dem nächsten Speichern "
+                    + "gilt wieder die vorherige Basis.");
+        }
+        logToConsole("MASTER-VERLAUF", "Messpunkt #" + entry.getSequence()
+                + " bestätigt die Basis von '" + (consumer != null ? consumer.getName() : "")
+                + "' als neue Master-Strategie (Profit/DD "
+                + formatRatio(entry.getReturnToDrawdown()) + ").");
+    }
+
+    /**
+     * Puts the last proven master back in place after a measurement that did not confirm
+     * the new basis. The stage's result is discarded — it stays in the lineage as the
+     * record of what was tried — and the next stage starts from exactly the parameters
+     * that were in force before, with only its own targets opened.
+     */
+    private void restoreProvenMasterBasis(WorkflowTask consumer,
+                                          String sourceDatabank,
+                                          MasterRollbackPoint rollback,
+                                          String reason) {
+        if (rollback == null || rollback.provenBasis.isEmpty()) {
+            logToConsole("AUTOMATIK-WARNUNG", reason + ". Es ist keine frühere Master-Basis "
+                    + "hinterlegt, deshalb läuft die Kette auf der gemessenen Basis weiter.");
+            return;
+        }
+        // The gate audit describes the adoption that was just discarded; leaving it would
+        // make the UI and the handoff audit claim a forced filter gate that is gone.
+        consumer.clearAdoptedFilterGateAudit();
+        // The stage's own template goes back first. The discarded adoption not only wrote
+        // values into the snapshot, it also had the search bands shifted around them, and
+        // the carry takes that snapshot as its template. Without this the stage would keep
+        // searching the ranges that were aligned to the rejected pass.
+        if (!rollback.consumerTemplate.isEmpty()) {
+            consumer.setOptimizerParameterSnapshot(rollback.consumerTemplate);
+        }
+        // Values from the proven master, bands from the template just restored.
+        GuidedOptimizationService.AdoptionResult carried = GuidedOptimizationService
+                .carryBasisToNextOptimizer(project, rollback.provenBasis, sourceDatabank);
+        logBasisSchemaDrift(carried.getSchemaDrift());
+        engine.setEaParameters(consumer.getOptimizerParameterSnapshot());
+        // No floor to restore: it is only raised once a measurement confirms a basis.
+        saveProject();
+
+        String message = reason + ". Die Übernahme wurde verworfen; '" + consumer.getName()
+                + "' startet wieder von der zuletzt bestätigten Master-Strategie.";
+        logToConsole("AUTOMATIK-WARNUNG", message);
+        Platform.runLater(() -> showParameterAdoptionBanner(message, false));
+    }
+
+    /**
+     * Where the chain goes back to when a measurement does not confirm the adoption: the
+     * proven master supplies the values, the consumer's pre-adoption snapshot the search
+     * bands. Both have to be captured before the adoption overwrites them.
+     */
+    private static final class MasterRollbackPoint {
+        private final List<EaParameter> provenBasis;
+        private final List<EaParameter> consumerTemplate;
+
+        MasterRollbackPoint(List<EaParameter> provenBasis, List<EaParameter> consumerTemplate) {
+            this.provenBasis = provenBasis != null ? provenBasis : List.of();
+            this.consumerTemplate = consumerTemplate != null ? consumerTemplate : List.of();
+        }
+    }
+
+    /** A measurement result plus whether MT5 actually ran for it. */
+    private static final class ReferenceMeasurement {
+        private final MasterStrategyEntry entry;
+        private final boolean freshlyMeasured;
+
+        ReferenceMeasurement(MasterStrategyEntry entry, boolean freshlyMeasured) {
+            this.entry = entry;
+            this.freshlyMeasured = freshlyMeasured;
+        }
+    }
+
+    /**
+     * Measures the basis, or returns the existing measurement when this exact experiment
+     * already ran. The known result still counts: a basis that was measured and rejected
+     * once has to be rejected again after a restart.
+     */
+    private ReferenceMeasurement measureReferenceBacktest(CustomProject targetProject,
+                                                          WorkflowTask consumer,
+                                                          String sourceDatabank,
+                                                          int passNumber,
+                                                          List<EaParameter> parameters,
+                                                          MasterStrategyLineageService.AdoptionSummary summary,
+                                                          BacktestRunner runner) {
+        String signature = MasterStrategyLineageService.measurementSignature(
+                MasterStrategyLineageService.buildReferenceConfig(targetProject, ""), parameters);
+        Optional<MasterStrategyEntry> known =
+                MasterStrategyLineageService.findLatestMeasurement(targetProject, signature);
+        if (known.isPresent()) {
+            logToConsole("MASTER-VERLAUF", "Diese Parameterbasis ist bereits als Messpunkt #"
+                    + known.get().getSequence() + " gemessen; es gilt das damalige Ergebnis ("
+                    + known.get().getVerdict() + ").");
+            return new ReferenceMeasurement(known.get(), false);
+        }
+        MasterStrategyEntry entry = MasterStrategyLineageService.runAndAppend(
+                targetProject, consumer, sourceDatabank, passNumber, parameters, summary,
+                msg -> logToConsole("MASTER-VERLAUF", msg), runner);
+        return entry != null ? new ReferenceMeasurement(entry, true) : null;
+    }
+
+    /**
+     * The entry itself is already in the project; saving stays on the FX thread because
+     * a project snapshot taken from here would race with edits in the editor. Nothing is
+     * lost on shutdown: {@link #shutdown()} stops the measurement first and saves after.
+     */
+    private void publishReferenceResult(CustomProject targetProject, MasterStrategyEntry entry) {
+        if (targetProject != project) {
+            logToConsole("MASTER-VERLAUF", "Projekt wurde während der Messung gewechselt: "
+                    + "Messpunkt wird nicht in das aktuelle Projekt übernommen.");
+            return;
+        }
+        Platform.runLater(() -> {
+            if (targetProject != project) return;
+            saveProject();
+            masterStrategyLineageWindow = MasterStrategyLineageWindow.refreshIfOpen(
+                    masterStrategyLineageWindow, targetProject);
+            // Green only for a confirmed improvement: a neutral or uncomparable result is
+            // not what the chain keeps, so it must not look like a success.
+            showParameterAdoptionBanner(MasterStrategyLineageService.describeOutcome(entry),
+                    confirmsImprovement(entry, targetProject.hasProvenMaster()));
+        });
+    }
+
+    private synchronized ExecutorService referenceBacktestExecutor() {
+        if (referenceBacktestExecutor == null) {
+            referenceBacktestExecutor = Executors.newSingleThreadExecutor(runnable -> {
+                Thread thread = new Thread(runnable, "master-strategy-reference-backtest");
+                thread.setDaemon(true);
+                return thread;
+            });
+        }
+        return referenceBacktestExecutor;
+    }
+
+    /**
+     * Empties every databank produced from the parameter basis this adoption replaces
+     * and reopens the corresponding tasks. Without this the resume check — which only
+     * asks whether a target databank holds strategies — would skip those stages and the
+     * new basis would never be optimized.
+     */
+    private List<String> invalidateStaleDownstreamResults(WorkflowTask consumer, String pickedDatabank) {
+        List<String> stale = GuidedOptimizationService.listStaleDownstreamDatabanks(
+                project, consumer, pickedDatabank);
+        List<String> cleared = new ArrayList<>();
+        for (String databank : stale) {
+            if (!databankManager.hasDatabank(databank)) continue;
+            if (databankManager.getDatabank(databank).isEmpty()) continue;
+            databankManager.clearDatabank(databank);
+            cleared.add(databank);
+        }
+        if (cleared.isEmpty()) return cleared;
+
+        boolean atOrAfterConsumer = false;
+        for (WorkflowTask task : project.getTasks()) {
+            if (task == null) continue;
+            if (task == consumer) atOrAfterConsumer = true;
+            if (!atOrAfterConsumer) continue;
+            if (task.getStatus() == WorkflowTask.TaskStatus.DISABLED) continue;
+            if (task.getStatus() == WorkflowTask.TaskStatus.COMPLETED
+                    || task.getStatus() == WorkflowTask.TaskStatus.FAILED) {
+                task.setStatus(WorkflowTask.TaskStatus.PENDING);
+            }
+            task.getOutputPasses().clear();
+        }
+        logToConsole("GUIDED-OPT", "Neue Parameter-Basis: " + cleared.size()
+                + " nachgelagerte Databank(s) geleert, damit sie nicht mit veralteten "
+                + "Ergebnissen übersprungen werden (" + String.join(", ", cleared) + ").");
+        return cleared;
+    }
+
+    private void logSearchSpaceAdjustments(WorkflowTask consumer,
+                                           List<ChampionSearchSpaceAligner.Adjustment> adjustments) {
+        if (adjustments == null || adjustments.isEmpty()) return;
+        for (ChampionSearchSpaceAligner.Adjustment adjustment : adjustments) {
+            logToConsole(adjustment.isApplied() ? "SUCHRAUM" : "SUCHRAUM-WARNUNG",
+                    consumer.getName() + ": " + adjustment.describe());
+        }
     }
 
     private void showParameterAdoptionBanner(String message, boolean success) {
@@ -2796,6 +3468,7 @@ public class ProjectWorkflowEditorView {
             } catch (RuntimeException ignored) {
                 // best-effort; databank wipe must not fail because of engine state
             }
+            clearMasterStrategyLineage();
         }
         if (progressBar != null) progressBar.setProgress(0);
         if (progressPercentLabel != null) progressPercentLabel.setText("0%");
@@ -2805,6 +3478,22 @@ public class ProjectWorkflowEditorView {
                     : "Databanken geleert — Task-Status zurückgesetzt.");
         }
         if (currentTaskBannerLabel != null) currentTaskBannerLabel.setText("Aktueller Task: —");
+    }
+
+    /**
+     * The lineage describes the master strategy that the wiped databanks produced. Kept
+     * across a full reset it would compare the fresh run against measurements of a basis
+     * that no longer exists — including the profit/drawdown floor for the next adoption.
+     */
+    private void clearMasterStrategyLineage() {
+        stopReferenceBacktests();
+        int removed = MasterStrategyLineageService.clear(project);
+        masterStrategyLineageWindow = MasterStrategyLineageWindow.refreshIfOpen(
+                masterStrategyLineageWindow, project);
+        if (removed > 0) {
+            logToConsole("MASTER-VERLAUF", removed
+                    + " Messpunkt(e) und die Profit/DD-Schwelle der Master-Strategie gelöscht.");
+        }
     }
 
     private void purgeWorkflowRunArtifacts() {
@@ -2956,12 +3645,40 @@ public class ProjectWorkflowEditorView {
 
     /** Flushes pending project data before the application shuts down. */
     public void shutdown() {
+        stopReferenceBacktests();
         commitCurrentTaskDataSettings();
         saveProject();
         if (!projectSaveCoordinator.flush(PROJECT_SAVE_FLUSH_TIMEOUT)) {
             logger.warn("Pending Custom Project data could not be flushed during shutdown");
         }
         projectSaveCoordinator.close();
+    }
+
+    /**
+     * Aborts a running measurement and drops the queue before the final flush. Waiting
+     * for a multi-minute MT5 run on shutdown is worse than losing that one measurement,
+     * but everything already appended must still make it into the save below.
+     */
+    private void stopReferenceBacktests() {
+        BacktestRunner runner = activeReferenceRunner;
+        if (runner != null) {
+            logger.info("Cancelling running master strategy reference backtest for shutdown");
+            runner.cancel();
+        }
+        ExecutorService executor;
+        synchronized (this) {
+            executor = referenceBacktestExecutor;
+            referenceBacktestExecutor = null;
+        }
+        if (executor == null) return;
+        executor.shutdownNow();
+        try {
+            if (!executor.awaitTermination(10, TimeUnit.SECONDS)) {
+                logger.warn("Reference backtest worker did not stop within 10s");
+            }
+        } catch (InterruptedException ex) {
+            Thread.currentThread().interrupt();
+        }
     }
 
     private void logToConsole(String tag, String msg) {

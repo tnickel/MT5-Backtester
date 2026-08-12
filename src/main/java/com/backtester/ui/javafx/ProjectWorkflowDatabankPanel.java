@@ -588,12 +588,14 @@ public class ProjectWorkflowDatabankPanel {
         Button clearAllBtn = new Button("Clear all databanks");
         clearAllBtn.setStyle("-fx-background-color: transparent; -fx-text-fill: #ff5252; -fx-font-weight: bold; -fx-cursor: hand;");
         clearAllBtn.setTooltip(new Tooltip(
-                "Leert alle Databanken, setzt Task-Status zurück und löscht MT5-Optimizer-Cache sowie Report-Artefakte dieses Workflows."));
+                "Leert alle Databanken und den Master-Strategie-Verlauf, setzt Task-Status zurück "
+                        + "und löscht MT5-Optimizer-Cache sowie Report-Artefakte dieses Workflows."));
         clearAllBtn.setOnAction(e -> {
             if (!confirmDestructiveAction("Workflow komplett zurücksetzen",
                     "Wirklich ALLES für diesen Workflow löschen?\n\n"
                             + "• alle Strategien in allen Databanken\n"
                             + "• Task-Status / Adopted Bases → PENDING\n"
+                            + "• Master-Strategie-Verlauf inkl. Profit/DD-Schwelle\n"
                             + "• MT5 Tester-Cache (*.opt) für diesen EA\n"
                             + "• OptimizationReport-Dateien in MT5\n"
                             + "• Optimizer-Ausgabeordner dieses Projekts\n\n"

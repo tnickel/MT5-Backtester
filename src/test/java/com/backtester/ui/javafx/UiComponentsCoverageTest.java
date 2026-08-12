@@ -31,6 +31,14 @@ public class UiComponentsCoverageTest {
         }
     }
 
+    /**
+     * These tests check that the views build without blowing up, not how fast they build.
+     * The budget therefore only has to rule out a real deadlock on the JavaFX thread —
+     * a tight one turns a busy build machine into a red suite, because assembling the
+     * larger views takes seconds on the software rasterizer alone.
+     */
+    private static final long FX_ACTION_TIMEOUT_SECONDS = 90;
+
     private void runAndWait(Runnable r) {
         final CountDownLatch latch = new CountDownLatch(1);
         final Throwable[] error = new Throwable[1];
@@ -44,7 +52,7 @@ public class UiComponentsCoverageTest {
             }
         });
         try {
-            if (!latch.await(15, TimeUnit.SECONDS)) {
+            if (!latch.await(FX_ACTION_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
                 fail("JavaFX thread timed out waiting for action to complete");
             }
         } catch (InterruptedException e) {

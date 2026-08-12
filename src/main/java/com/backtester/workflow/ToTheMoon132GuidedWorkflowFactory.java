@@ -36,11 +36,13 @@ public final class ToTheMoon132GuidedWorkflowFactory {
                     range("Inp_Start_Wait_Next_Lot", "1", "1", "3"),
                     range("Inp_Stop_Wait_Next_Lot", "80", "10", "120")),
             stage("03 Envelopes oben", "g03_env_upper",
+                    timeframeRange("TimeFrame_Envelopes"),
                     range("Inp_Envelopes_Period", "3", "1", "15"),
                     range("Inp_Envelopes_Deviation", "0.005", "0.005", "0.030"),
                     range("Envelopes_Method", "0", "1", "3"),
                     range("Envelopes_Price", "0", "1", "7")),
             stage("04 Envelopes unten", "g04_env_lower",
+                    timeframeRange("TimeFrame_Envelopes_Lower"),
                     range("Inp_Envelopes_Period_Lower", "9", "2", "41"),
                     range("Inp_Envelopes_Deviation_Lower", "0.005", "0.005", "0.030"),
                     range("Envelopes_Method_Lower", "0", "1", "3"),
@@ -48,14 +50,17 @@ public final class ToTheMoon132GuidedWorkflowFactory {
             stage("05 ADX-Regime", "g05_adx",
                     range("Inp_Use_ADX_Filter", "false", "1", "true"),
                     range("Inp_ADX_Period", "9", "2", "31"),
+                    timeframeRange("Inp_ADX_Timeframe"),
                     range("Inp_ADX_Max_Level", "30", "2.5", "50")),
             stage("06 ATR-Gridabstand", "g06_atr_grid",
                     range("Inp_Use_ATR_Step", "false", "1", "true"),
                     range("Inp_ATR_Period", "5", "2", "19"),
+                    timeframeRange("Inp_ATR_Timeframe"),
                     range("Inp_ATR_Multiplier", "1.3", "0.2", "2.9")),
             stage("07 Volatilität & Richtung", "g07_vol_corr",
                     range("Inp_Use_Vol_Filter", "false", "1", "true"),
                     range("Inp_Vol_ATR_Period", "10", "2", "24"),
+                    timeframeRange("Inp_Vol_ATR_Timeframe"),
                     range("Inp_Vol_ATR_Max_Multiplier", "1.1", "0.1", "2.0"),
                     range("Inp_Use_Correlation_Filter", "false", "1", "true"),
                     range("Inp_Allow_Opposite_Direction", "false", "1", "true")),
@@ -78,7 +83,8 @@ public final class ToTheMoon132GuidedWorkflowFactory {
                     range("Inp_Adaptive_Max_Widen", "1.25", "0.25", "2.75"),
                     range("Inp_Use_Escalation_Block", "false", "1", "true"),
                     range("Inp_Esc_Lookback_Bars", "3", "1", "9"),
-                    range("Inp_Esc_ADX_Rise", "1.5", "0.5", "4.5"))
+                    range("Inp_Esc_ADX_Rise", "1.5", "0.5", "4.5"),
+                    range("Inp_Use_Session_Filter", "false", "1", "true"))
     );
 
     private ToTheMoon132GuidedWorkflowFactory() {
@@ -300,6 +306,13 @@ public final class ToTheMoon132GuidedWorkflowFactory {
                     || task.getOptimizerParameterSnapshot().isEmpty();
 
             if (!snapshotMissing && expected.equals(actualTargets) && expected.equals(actualEnabled) && !rangesWrong) {
+                // Stage search-space already correct — still scrub legacy TF bands (0/0/MN1)
+                // on non-target rows so the Parameter-Tabelle does not keep Schritt 0 / Stopp MN1.
+                List<EaParameter> scrubbed = task.getOptimizerParameterSnapshot();
+                if (normalizeTimeframeBandsInSnapshot(scrubbed)) {
+                    task.setOptimizerParameterSnapshot(scrubbed);
+                    changed = true;
+                }
                 continue;
             }
 
@@ -322,6 +335,23 @@ public final class ToTheMoon132GuidedWorkflowFactory {
             removeArchive(project, task.getTargetDatabank());
             removeArchive(project, pickDb);
             changed = true;
+        }
+        return changed;
+    }
+
+    /** Fixes legacy TF optimize bands in-place without changing Y/N targets. */
+    private static boolean normalizeTimeframeBandsInSnapshot(List<EaParameter> snapshot) {
+        if (snapshot == null || snapshot.isEmpty()) {
+            return false;
+        }
+        boolean changed = false;
+        for (EaParameter parameter : snapshot) {
+            boolean scrubbed = EaParameter.sanitizeTimeframeFieldsForSetFile(parameter);
+            scrubbed |= EaParameter.normalizeTimeframeOptimizeBand(parameter);
+            scrubbed |= EaParameter.normalizeBooleanOptimizeBand(parameter);
+            if (scrubbed) {
+                changed = true;
+            }
         }
         return changed;
     }
@@ -390,13 +420,27 @@ public final class ToTheMoon132GuidedWorkflowFactory {
             if (parameter == null || !parameter.isOptimizeEnabled()) {
                 return false;
             }
-            if (!safeEq(parameter.getOptimizeStart(), range.start)
-                    || !safeEq(parameter.getOptimizeStep(), range.step)
-                    || !safeEq(parameter.getOptimizeEnd(), range.end)) {
+            // Compare against the band the factory would actually produce: the configured
+            // range after champion alignment. Comparing against the raw range would flag
+            // every aligned stage as broken and rebuild it on each project load.
+            EaParameter expected = expectedStageBand(parameter, range);
+            if (!safeEq(parameter.getOptimizeStart(), expected.getOptimizeStart())
+                    || !safeEq(parameter.getOptimizeStep(), expected.getOptimizeStep())
+                    || !safeEq(parameter.getOptimizeEnd(), expected.getOptimizeEnd())) {
                 return false;
             }
         }
         return true;
+    }
+
+    private static EaParameter expectedStageBand(EaParameter current, Range range) {
+        EaParameter probe = current.copy();
+        probe.setOptimizeStart(range.start);
+        probe.setOptimizeStep(range.step);
+        probe.setOptimizeEnd(range.end);
+        probe.setOptimizeEnabled(true);
+        ChampionSearchSpaceAligner.align(probe);
+        return probe;
     }
 
     private static boolean safeEq(String a, String b) {
@@ -564,9 +608,15 @@ public final class ToTheMoon132GuidedWorkflowFactory {
                 copy.setOptimizeStep(range.step);
                 copy.setOptimizeEnd(range.end);
                 copy.setOptimizeEnabled(true);
+            } else {
+                EaParameter.sanitizeTimeframeFieldsForSetFile(copy);
+                EaParameter.normalizeTimeframeOptimizeBand(copy);
+                EaParameter.normalizeBooleanOptimizeBand(copy);
             }
             snapshot.add(copy);
         }
+        // A stage that cannot walk the value already in force may hand on a regression.
+        ChampionSearchSpaceAligner.align(snapshot);
         return snapshot;
     }
 
@@ -606,6 +656,17 @@ public final class ToTheMoon132GuidedWorkflowFactory {
 
     private static Range range(String parameterName, String start, String step, String end) {
         return new Range(parameterName, start, step, end);
+    }
+
+    /**
+     * ENUM_TIMEFRAMES search band for exhaustive MT5 runs: PERIOD_M1 (1) through
+     * PERIOD_H1 (16385). PERIOD_CURRENT (0) is intentionally excluded — MT5 shows it
+     * as "current" and often drops the step for that enum edge, so Opt=Y bands must
+     * start at a real timeframe. MT5 walks the real enum members in the band, not
+     * every integer from 1…16385. D1/W1/MN1 stay out of scope for M5 grid work.
+     */
+    private static Range timeframeRange(String parameterName) {
+        return range(parameterName, "1", "1", "16385");
     }
 
     private record Range(String parameterName, String start, String step, String end) {

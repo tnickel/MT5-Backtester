@@ -2,6 +2,7 @@ package com.backtester.engine;
 
 import javax.swing.*;
 import java.awt.*;
+import java.nio.file.Path;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -134,5 +135,64 @@ public class Mt5ProcessGuard {
             }
             return false;
         }
+    }
+
+    /**
+     * Kills every {@code terminal64.exe}/{@code terminal.exe} whose path belongs to
+     * {@code mtInstallDir}. Needed because a leftover terminal (not started by this
+     * JVM) makes the next {@code /config:…} launch exit immediately with
+     * "delegated execution" and skip Forward reports.
+     *
+     * @return number of processes destroyed
+     */
+    public static int killAllTerminalsForInstall(Path mtInstallDir,
+                                                 java.util.function.Consumer<String> logCallback) {
+        if (mtInstallDir == null) {
+            return 0;
+        }
+        Path normalizedInstall;
+        try {
+            normalizedInstall = mtInstallDir.toAbsolutePath().normalize();
+        } catch (Exception ex) {
+            return 0;
+        }
+        int killed = 0;
+        for (ProcessHandle ph : ProcessHandle.allProcesses().toList()) {
+            try {
+                var info = ph.info();
+                String cmd = info.command().orElse("");
+                if (cmd.isBlank()) continue;
+                Path exe;
+                try {
+                    exe = Path.of(cmd).toAbsolutePath().normalize();
+                } catch (Exception ex) {
+                    continue;
+                }
+                String fileName = exe.getFileName() != null
+                        ? exe.getFileName().toString().toLowerCase() : "";
+                if (!fileName.equals("terminal64.exe") && !fileName.equals("terminal.exe")) {
+                    continue;
+                }
+                Path parent = exe.getParent();
+                if (parent == null || !parent.equals(normalizedInstall)) {
+                    continue;
+                }
+                if (!ph.isAlive()) continue;
+                if (logCallback != null) {
+                    logCallback.accept("Beende MetaTrader an Installationspfad (PID " + ph.pid() + ")...");
+                }
+                ph.destroyForcibly();
+                ourPids.remove(ph.pid());
+                killed++;
+            } catch (Exception ignored) {
+                // Process may have exited while iterating.
+            }
+        }
+        if (killed > 0) {
+            try { Thread.sleep(500); } catch (InterruptedException ignored) {
+                Thread.currentThread().interrupt();
+            }
+        }
+        return killed;
     }
 }

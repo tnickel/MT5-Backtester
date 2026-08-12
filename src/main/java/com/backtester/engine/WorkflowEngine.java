@@ -592,6 +592,8 @@ public class WorkflowEngine {
                     "Das benutzerdefinierte Forward-Datum muss innerhalb des Optimierungszeitraums liegen.");
         }
 
+        EaParameter.requireValidOptimizeSteps(eaParameters);
+
         OptimizationConfig optConfig = new OptimizationConfig();
         optConfig.setExpert(expert);
 
@@ -2342,6 +2344,7 @@ public class WorkflowEngine {
                     + "' hat keinen Parameter-Snapshot. Guided-Projekte neu laden "
                     + "(Search-Space-Repair) oder Task-Ziele neu setzen.");
         }
+        EaParameter.requireValidOptimizeSteps(snapshot);
         setEaParameters(snapshot);
     }
 

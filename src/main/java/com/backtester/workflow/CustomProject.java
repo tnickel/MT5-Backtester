@@ -1,12 +1,15 @@
 package com.backtester.workflow;
 
+import com.backtester.config.EaParameter;
 import com.backtester.report.OptimizationResult.CombinedPass;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.function.Function;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -33,6 +36,38 @@ public class CustomProject {
     private Map<String, List<CombinedPass>> databanks = new HashMap<>();
     /** Global per-strategy backtest history keyed by passNumber+strategyName. */
     private Map<String, StrategyBacktestArchive> strategyArchives = new LinkedHashMap<>();
+    /** Append-only reference backtests of the master strategy, one per hand-pick. */
+    private List<MasterStrategyEntry> masterStrategyLineage = new ArrayList<>();
+    private transient Object lineageLock = new Object();
+    /** Run a reference backtest after every adoption so progress stays measurable. */
+    private boolean referenceBacktestEnabled = true;
+    /**
+     * Profit/drawdown of the currently adopted master basis, estimated from the optimizer
+     * report of the stage it came from. Floor for the next adoption.
+     *
+     * <p>Nullable instead of NaN: plain Gson rejects NaN, and "never adopted" is the
+     * normal state of a fresh project.
+     */
+    private Double masterSelectionRatio;
+    /**
+     * The parameter basis of the last reference measurement that confirmed an improvement —
+     * the master strategy itself. Written only after a measurement has proven it, so a
+     * crash during the minutes-long reference run cannot leave an unconfirmed candidate
+     * behind as the master.
+     *
+     * <p>This is the single source of truth for "what do we fall back to". Stage snapshots
+     * cannot serve that purpose: the guided factory pre-seeds every optimizer with the
+     * original preset, so a stage that has not been adopted into yet still carries the
+     * values the chain started from, not the ones it has since proven.
+     */
+    private List<EaParameter> provenMasterParameters = new ArrayList<>();
+    /**
+     * The reference conditions the master was measured under. A measurement only means
+     * something together with the symbol, period and expert it ran on, so basis, floor
+     * and this key form one unit: when the conditions change, the other two stop being
+     * evidence and have to go with it.
+     */
+    private String provenMasterContextKey = "";
 
     public CustomProject() {
         this.id = UUID.randomUUID().toString();
@@ -41,6 +76,7 @@ public class CustomProject {
         this.tasks = new ArrayList<>();
         this.databanks = new HashMap<>();
         this.strategyArchives = new LinkedHashMap<>();
+        this.masterStrategyLineage = new ArrayList<>();
     }
 
     public CustomProject(String name, String expert, String symbol, String period) {
@@ -62,6 +98,7 @@ public class CustomProject {
         clone.setPeriod(newPeriod != null && !newPeriod.isBlank() ? newPeriod : getPeriod());
         clone.setSaveDatabanksPersistently(isSaveDatabanksPersistently());
         clone.setAutomaticModeEnabled(isAutomaticModeEnabled());
+        clone.setReferenceBacktestEnabled(isReferenceBacktestEnabled());
         
         List<WorkflowTask> clonedTasks = new ArrayList<>();
         if (tasks != null) {
@@ -127,6 +164,107 @@ public class CustomProject {
     public void setStrategyArchives(Map<String, StrategyBacktestArchive> strategyArchives) {
         this.strategyArchives = strategyArchives != null
                 ? new LinkedHashMap<>(strategyArchives) : new LinkedHashMap<>();
+    }
+
+    /**
+     * Snapshot of the lineage, safe to iterate: the reference backtest appends from a
+     * background thread while the UI and the save coordinator read.
+     */
+    public List<MasterStrategyEntry> getMasterStrategyLineage() {
+        synchronized (lineageLock()) {
+            if (masterStrategyLineage == null) masterStrategyLineage = new ArrayList<>();
+            List<MasterStrategyEntry> snapshot = new ArrayList<>(masterStrategyLineage.size());
+            for (MasterStrategyEntry entry : masterStrategyLineage) {
+                // Damaged JSON can carry nulls; they must not blow up every reader.
+                if (entry != null) snapshot.add(entry);
+            }
+            return Collections.unmodifiableList(snapshot);
+        }
+    }
+
+    /**
+     * Runs {@code action} on the live lineage under the project lock. Read-modify-write
+     * sequences (append with sequence numbering and rating) must go through here,
+     * otherwise two writers can hand out the same sequence or lose an entry.
+     */
+    public <T> T withMasterStrategyLineage(Function<List<MasterStrategyEntry>, T> action) {
+        synchronized (lineageLock()) {
+            if (masterStrategyLineage == null) masterStrategyLineage = new ArrayList<>();
+            return action.apply(masterStrategyLineage);
+        }
+    }
+
+    public void setMasterStrategyLineage(List<MasterStrategyEntry> masterStrategyLineage) {
+        synchronized (lineageLock()) {
+            this.masterStrategyLineage = masterStrategyLineage != null
+                    ? new ArrayList<>(masterStrategyLineage) : new ArrayList<>();
+        }
+    }
+
+    /** Lazily created so a Gson instance built without the constructor still works. */
+    private Object lineageLock() {
+        synchronized (this) {
+            if (lineageLock == null) lineageLock = new Object();
+            return lineageLock;
+        }
+    }
+
+    public boolean isReferenceBacktestEnabled() { return referenceBacktestEnabled; }
+    public void setReferenceBacktestEnabled(boolean referenceBacktestEnabled) {
+        this.referenceBacktestEnabled = referenceBacktestEnabled;
+    }
+
+    /** NaN when no basis has been adopted yet. */
+    public double getMasterSelectionRatio() {
+        return masterSelectionRatio != null ? masterSelectionRatio : Double.NaN;
+    }
+
+    public void setMasterSelectionRatio(double masterSelectionRatio) {
+        this.masterSelectionRatio = Double.isFinite(masterSelectionRatio)
+                ? masterSelectionRatio : null;
+    }
+
+    /** Empty while no measurement has confirmed a basis yet. */
+    public List<EaParameter> getProvenMasterParameters() {
+        List<EaParameter> copy = new ArrayList<>();
+        if (provenMasterParameters != null) {
+            for (EaParameter parameter : provenMasterParameters) {
+                if (parameter != null) copy.add(parameter.copy());
+            }
+        }
+        return copy;
+    }
+
+    public void setProvenMasterParameters(List<EaParameter> parameters) {
+        this.provenMasterParameters = new ArrayList<>();
+        if (parameters == null) return;
+        for (EaParameter parameter : parameters) {
+            if (parameter != null) this.provenMasterParameters.add(parameter.copy());
+        }
+    }
+
+    /** True once a measurement has confirmed a basis; the fallback exists from then on. */
+    public boolean hasProvenMaster() {
+        return provenMasterParameters != null && !provenMasterParameters.isEmpty();
+    }
+
+    public String getProvenMasterContextKey() {
+        return provenMasterContextKey != null ? provenMasterContextKey : "";
+    }
+
+    public void setProvenMasterContextKey(String contextKey) {
+        this.provenMasterContextKey = contextKey != null ? contextKey : "";
+    }
+
+    /**
+     * Drops the confirmed master together with the floor derived from it. The floor is
+     * only meaningful as the value of that exact basis under those exact conditions —
+     * keeping it alone would block every candidate against a strategy that is gone.
+     */
+    public void clearProvenMaster() {
+        this.provenMasterParameters = new ArrayList<>();
+        this.provenMasterContextKey = "";
+        setMasterSelectionRatio(Double.NaN);
     }
 
     public void addTask(WorkflowTask task) {
@@ -264,6 +402,21 @@ public class CustomProject {
         copy.setSortOrder(sortOrder);
         copy.setSaveDatabanksPersistently(saveDatabanksPersistently);
         copy.setAutomaticModeEnabled(automaticModeEnabled);
+        copy.setReferenceBacktestEnabled(referenceBacktestEnabled);
+        copy.setMasterSelectionRatio(getMasterSelectionRatio());
+        // Basis, floor and context travel together: persisting the floor without the
+        // parameters it belongs to survives a restart as a limit no strategy can meet,
+        // and leaves the chain without anything to fall back to.
+        copy.setProvenMasterParameters(getProvenMasterParameters());
+        copy.setProvenMasterContextKey(getProvenMasterContextKey());
+        // The lineage is the only record of whether the chain improves — always kept.
+        copy.setMasterStrategyLineage(withMasterStrategyLineage(lineage -> {
+            List<MasterStrategyEntry> lineageCopy = new ArrayList<>(lineage.size());
+            for (MasterStrategyEntry entry : lineage) {
+                if (entry != null) lineageCopy.add(entry.copy());
+            }
+            return lineageCopy;
+        }));
 
         List<WorkflowTask> taskCopies = new ArrayList<>();
         for (WorkflowTask task : getTasks()) {

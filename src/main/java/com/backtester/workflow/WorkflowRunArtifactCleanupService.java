@@ -79,9 +79,8 @@ public final class WorkflowRunArtifactCleanupService {
 
     /**
      * Deletes {@code Tester/cache/<EA>*.opt} (case-insensitive folder name).
-     * Visible for unit tests.
      */
-    static int deleteTesterCacheForExpert(Path mtDir, String eaBaseName, List<String> details) {
+    public static int deleteTesterCacheForExpert(Path mtDir, String eaBaseName, List<String> details) {
         if (mtDir == null || eaBaseName == null || eaBaseName.isBlank()) {
             return 0;
         }

@@ -9,8 +9,14 @@ import java.util.Collections;
 
 public class VirtualDesktopHelperTest {
 
+    /**
+     * Opens a real Remote Desktop window to check that the helper moves it to virtual
+     * desktop 2, so it stays opt-in: {@code mvn test -Dbacktester.liveDesktop=true}.
+     */
     @Test
     public void testStartOnDesktop2() throws Exception {
+        Assume.assumeTrue("Opt-in via -Dbacktester.liveDesktop=true — opens mstsc.exe",
+                Boolean.getBoolean("backtester.liveDesktop"));
         String os = System.getProperty("os.name").toLowerCase();
         Assume.assumeTrue("Test only runs on Windows", os.contains("win"));
 

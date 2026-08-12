@@ -174,6 +174,13 @@ public class DatabankManager {
 
         List<CombinedPass> filteredOutput = filterPasses(task, candidates);
 
+        String rejectionNote = FilterRejectionReport.describeDroppedLeader(
+                task, candidates, filteredOutput);
+        task.setFilterRejectionNote(rejectionNote);
+        if (!rejectionNote.isBlank()) {
+            logger.warn("DATABANK FILTER: {}", rejectionNote);
+        }
+
         // A separate target is a copy. With an in-place route, deleteFailed
         // controls whether rejected strategies are removed or merely retained.
         if (!sourceName.equalsIgnoreCase(targetName) || task.isDeleteFailed()) {

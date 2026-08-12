@@ -3,7 +3,6 @@ package com.backtester.ui.javafx;
 import com.backtester.config.EaParameter;
 import javafx.geometry.Pos;
 import javafx.scene.control.*;
-import javafx.util.Callback;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -118,20 +117,19 @@ public class EaParameterTableHelper {
             });
         }
 
-        // Value & Range columns: clear text and disable editing for section headers
-        Callback<TableColumn<EaParameter, String>, TableCell<EaParameter, String>> cellFactory = EnumAwareParamCell.forTableColumn();
-
+        // Value & Range columns: clear text and disable editing for section headers.
+        // Timeframe labels for Value/Start/Stop; Step stays numeric (1 ≠ M1).
         if (valCol != null) {
-            valCol.setCellFactory(cellFactory);
+            valCol.setCellFactory(EnumAwareParamCell.forTableColumn(EnumAwareParamCell.FieldKind.VALUE));
         }
         if (startCol != null) {
-            startCol.setCellFactory(cellFactory);
+            startCol.setCellFactory(EnumAwareParamCell.forTableColumn(EnumAwareParamCell.FieldKind.START));
         }
         if (stepCol != null) {
-            stepCol.setCellFactory(cellFactory);
+            stepCol.setCellFactory(EnumAwareParamCell.forTableColumn(EnumAwareParamCell.FieldKind.STEP));
         }
         if (stopCol != null) {
-            stopCol.setCellFactory(cellFactory);
+            stopCol.setCellFactory(EnumAwareParamCell.forTableColumn(EnumAwareParamCell.FieldKind.STOP));
         }
     }
 
