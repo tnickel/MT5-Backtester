@@ -26,7 +26,7 @@ Write-Host "Isolating JAR for packaging..."
 New-Item -ItemType Directory -Force -Path "target\jpackage-input" | Out-Null
 Copy-Item -Path $jarPath -Destination "target\jpackage-input\$($AppName).jar" -Force
 
-$jpackagePath = "C:\Program Files\Java\jdk-21\bin\jpackage.exe"
+$jpackagePath = "C:\Users\tnickel\.jdk\jdk-25\bin\jpackage.exe"
 
 Write-Host "Step 1: Generating App Image..."
 if (Test-Path "target\app-image") { Remove-Item -Recurse -Force "target\app-image" }

@@ -138,7 +138,7 @@ A dedicated control tab for long-term database management, automated strategy va
 ### 3.1. Technologies Used
 | Component | Technology |
 |---|---|
-| **Language** | Java 17+ (compatible up to Java 21) |
+| **Language** | Java 25+ |
 | **Build Tool** | Maven (Shade plugin for single-file Uber-JAR deployment) |
 | **UI Framework** | Java Swing |
 | **Look & Feel** | FlatLaf 3.4 Dark Mode (custom grey/orange accent palette) |

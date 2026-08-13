@@ -2,7 +2,7 @@
   <h1>MT5 Backtester 📈</h1>
   <p><strong>A Full-Fledged Automated Execution, Optimization & Robustness Analysis Platform for MetaTrader 5</strong></p>
   <p>
-    <img src="https://img.shields.io/badge/Java-17%2B-blue?style=flat-square&logo=openjdk" alt="Java 17+"/>
+    <img src="https://img.shields.io/badge/Java-25%2B-blue?style=flat-square&logo=openjdk" alt="Java 25+"/>
     <img src="https://img.shields.io/badge/Platform-Windows-0078D6?style=flat-square&logo=windows" alt="Windows"/>
     <img src="https://img.shields.io/badge/Build-Maven-C71A36?style=flat-square&logo=apachemaven" alt="Maven"/>
     <img src="https://img.shields.io/badge/Database-SQLite-003B57?style=flat-square&logo=sqlite" alt="SQLite"/>
@@ -200,7 +200,7 @@ All backtest types are automatically saved to a local SQLite database:
 
 | Component | Technology |
 |---|---|
-| **Language** | Java 17+ (compatible up to Java 21) |
+| **Language** | Java 25+ |
 | **Build** | Maven with Shade plugin (single Uber-JAR) |
 | **GUI** | Java Swing with [FlatLaf](https://www.formdev.com/flatlaf/) Dark Mode |
 | **Charts** | Native `java.awt.Graphics2D` (app) + Chart.js (HTML reports) |
@@ -216,7 +216,7 @@ All backtest types are automatically saved to a local SQLite database:
 ## 🚀 Quickstart
 
 ### Prerequisites
-1. **Java JDK 17+** installed and available in your environment path.
+1. **Java JDK 25+** installed and available in your environment path.
 2. **MetaTrader 5** installed locally (path configurable in Settings tab).
 
 ### Build & Run
@@ -236,7 +236,7 @@ java -jar target/mt5-backtester-1.0.1.jar
 ### Windows Installer
 
 ```powershell
-# Generate MSI installer (requires JDK 17+ with jpackage and WiX Toolset)
+# Generate MSI installer (requires JDK 25+ with jpackage and WiX Toolset)
 .\build_installer.ps1
 ```
 
