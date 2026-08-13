@@ -690,7 +690,7 @@ public final class MasterStrategyLineageService {
             }
             String oldValue = old.getValue() != null ? old.getValue() : "";
             String newValue = actual.getValue() != null ? actual.getValue() : "";
-            if (!oldValue.equals(newValue)) {
+            if (!GuidedOptimizationService.valuesEquivalent(oldValue, newValue)) {
                 result.add(new MasterStrategyEntry.ParameterChange(
                         actual.getName(), oldValue, newValue));
             }

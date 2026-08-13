@@ -165,7 +165,7 @@ public class CustomProject {
             }
         }
         clone.setTasks(clonedTasks);
-        clone.sanitizeTasksMarketSettings();
+        clone.retargetTasksForClone();
 
         if ("ToTheMoon_KI_v132".equalsIgnoreCase(clone.getExpert())) {
             ToTheMoon132GuidedWorkflowFactory.repairStageOptimizerSearchSpaces(clone);
@@ -175,23 +175,18 @@ public class CustomProject {
     }
 
     /**
-     * Ensures all tasks of this project match the project's target symbol and
-     * period,
-     * replacing hardcoded or outdated symbol/period strings in task names, retest
-     * symbols,
-     * and output directories.
-     *
-     * @return true if any task was modified
+     * Retargets the copied task definitions to the clone's market. This must only run
+     * while creating a clone: ordinary project reads are not migrations and must never
+     * rewrite intentionally different task symbols, labels or output directories.
      */
-    public boolean sanitizeTasksMarketSettings() {
+    private void retargetTasksForClone() {
         if (tasks == null || tasks.isEmpty())
-            return false;
+            return;
         String currentSymbol = getSymbol();
         String currentPeriod = getPeriod();
         if (currentSymbol == null || currentSymbol.isBlank())
-            return false;
+            return;
 
-        boolean modified = false;
         List<String> knownSymbols = List.of(
                 "AUDCAD", "EURUSD", "GBPUSD", "USDJPY", "GBPJPY", "AUDUSD", "NZDUSD",
                 "USDCAD", "USDCHF", "EURGBP", "EURJPY", "EURCAD", "EURAUD", "GBPAUD",
@@ -204,14 +199,12 @@ public class CustomProject {
             // 1. Ensure retestSymbol matches project symbol
             if (!currentSymbol.equalsIgnoreCase(task.getRetestSymbol())) {
                 task.setRetestSymbol(currentSymbol);
-                modified = true;
             }
 
             // 2. Ensure retestPeriod matches project period
             if (currentPeriod != null && !currentPeriod.isBlank()
                     && !currentPeriod.equalsIgnoreCase(task.getRetestPeriod())) {
                 task.setRetestPeriod(currentPeriod);
-                modified = true;
             }
 
             // 3. Update task title if it contains an outdated symbol
@@ -219,9 +212,9 @@ public class CustomProject {
             if (name != null && !name.isBlank()) {
                 for (String sym : knownSymbols) {
                     if (!sym.equalsIgnoreCase(currentSymbol) && name.toUpperCase().contains(sym.toUpperCase())) {
-                        name = name.replaceAll("(?i)" + sym, currentSymbol);
+                        name = name.replaceAll("(?i)" + java.util.regex.Pattern.quote(sym),
+                                java.util.regex.Matcher.quoteReplacement(currentSymbol));
                         task.setName(name);
-                        modified = true;
                     }
                 }
             }
@@ -231,14 +224,13 @@ public class CustomProject {
             if (outDir != null && !outDir.isBlank()) {
                 for (String sym : knownSymbols) {
                     if (!sym.equalsIgnoreCase(currentSymbol) && outDir.toUpperCase().contains(sym.toUpperCase())) {
-                        outDir = outDir.replaceAll("(?i)" + sym, currentSymbol);
+                        outDir = outDir.replaceAll("(?i)" + java.util.regex.Pattern.quote(sym),
+                                java.util.regex.Matcher.quoteReplacement(currentSymbol));
                         task.setOptimizerOutputDirectory(outDir);
-                        modified = true;
                     }
                 }
             }
         }
-        return modified;
     }
 
     public String getId() {

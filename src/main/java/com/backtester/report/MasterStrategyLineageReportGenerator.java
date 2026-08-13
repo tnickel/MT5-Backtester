@@ -346,8 +346,8 @@ public class MasterStrategyLineageReportGenerator {
         sb.append("          <tr><td>Zeitpunkt:</td><td>").append(TIMESTAMP_FORMATTER.format(Instant.ofEpochMilli(entry.getCreatedAt()))).append("</td></tr>\n");
         sb.append("          <tr><td>Stage:</td><td>").append(escapeHtml(entry.getStageTaskName())).append("</td></tr>\n");
         sb.append("          <tr><td>Databank:</td><td><code>").append(escapeHtml(entry.getSourceDatabank())).append("</code></td></tr>\n");
-        sb.append("          <tr><td>Pass:</td><td>").append(entry.getSourcePassNumber() > 0
-                ? "#" + entry.getSourcePassNumber() : "Master weitergetragen").append("</td></tr>\n");
+        sb.append("          <tr><td>Pass:</td><td>").append(entry.sourcePassLabel())
+                .append("</td></tr>\n");
         sb.append("          <tr><td>Markt:</td><td>").append(escapeHtml(entry.getSymbol())).append(" ").append(escapeHtml(entry.getPeriod())).append("</td></tr>\n");
         sb.append("          <tr><td>Vergleich:</td><td>").append(entry.getComparedToSequence() > 0
                 ? "gegen bestätigten Master #" + entry.getComparedToSequence()

@@ -5,10 +5,22 @@ import org.junit.Test;
 
 import java.util.List;
 
+import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
 public class MasterStrategyLineageWindowTest {
+
+    @Test
+    public void passZeroIsARealOptimizerPassAndOnlyNegativeMeansCarryForward() {
+        MasterStrategyEntry firstPass = new MasterStrategyEntry();
+        firstPass.setSourcePassNumber(0);
+        MasterStrategyEntry carried = new MasterStrategyEntry();
+        carried.setSourcePassNumber(-1);
+
+        assertEquals("#0", firstPass.sourcePassLabel());
+        assertEquals("Master weitergetragen", carried.sourcePassLabel());
+    }
 
     @Test
     public void rejectedLatestMeasurementIsNotPresentedAsTheCurrentMaster() {

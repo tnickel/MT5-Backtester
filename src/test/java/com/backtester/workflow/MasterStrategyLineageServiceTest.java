@@ -744,6 +744,46 @@ public class MasterStrategyLineageServiceTest {
     }
 
     @Test
+    public void numericFormattingDoesNotCreateAnAdditionalDiffAgainstTheConfirmedMaster() {
+        CustomProject project = new CustomProject("P", "EA", "AUDCAD", "M5");
+        WorkflowTask producer = new WorkflowTask("Producer", WorkflowTask.TaskType.OPTIMIZER);
+        producer.setTargetDatabank("producer");
+        producer.setOptimizerTargetParameters(List.of("GridStep"));
+        WorkflowTask consumer = new WorkflowTask("Consumer", WorkflowTask.TaskType.OPTIMIZER);
+        consumer.setTargetDatabank("consumer");
+        consumer.setOptimizerTargetParameters(List.of("NextTarget"));
+        project.addTask(producer);
+        project.addTask(consumer);
+
+        List<EaParameter> confirmed = List.of(
+                optimizable("GridStep", "15", "10", "1", "30"),
+                parameter("FixedRisk", "1.0"),
+                optimizable("NextTarget", "5", "1", "1", "10"));
+        Pass backtest = new Pass();
+        backtest.setPassNumber(3);
+        backtest.setParameterValues(new java.util.LinkedHashMap<>(java.util.Map.of(
+                "GridStep", "23")));
+        CombinedPass selected = new CombinedPass(backtest, null, 70.0, 0.0, "test");
+
+        GuidedOptimizationService.AdoptionPreview preview =
+                GuidedOptimizationService.previewPassAdoption(
+                        project, confirmed, null, selected, "producer");
+        GuidedOptimizationService.AdoptionResult adoption =
+                GuidedOptimizationService.adoptPassParameters(
+                        project, confirmed, null, selected, "producer");
+        List<EaParameter> effective = adoption.getParameters();
+        effective.stream()
+                .filter(parameter -> "FixedRisk".equals(parameter.getName()))
+                .findFirst().orElseThrow().setValue("1");
+
+        MasterStrategyLineageService.AdoptionSummary summary =
+                MasterStrategyLineageService.summarize(
+                        preview, adoption.getNextOptimizer(), effective, confirmed);
+
+        assertTrue(summary.getAdditionalChanges().isEmpty());
+    }
+
+    @Test
     public void legacyMasterStrategyEntryWithMissingOrNullStructuredFieldsUsesFallback() {
         // Entries written before the structured fields existed, and entries whose lists
         // were serialised as explicit null, both have to stay readable.

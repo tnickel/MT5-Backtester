@@ -240,7 +240,6 @@ public class ProjectWorkflowEditorView {
         this.selectedTask = null;
         if (proj != null) {
             boolean projectChanged = proj.migrateLegacyTaskDefinitions();
-            projectChanged |= proj.sanitizeTasksMarketSettings();
             projectChanged |= ToTheMoon132GuidedWorkflowFactory.ensureDevelopmentTop20Selection(proj);
             projectChanged |= ToTheMoon132GuidedWorkflowFactory.repairStageOptimizerSearchSpaces(proj);
             if (projectChanged) {

@@ -182,6 +182,9 @@ public class MasterStrategyEntry {
 
     public int getSourcePassNumber() { return sourcePassNumber; }
     public void setSourcePassNumber(int sourcePassNumber) { this.sourcePassNumber = sourcePassNumber; }
+    public String sourcePassLabel() {
+        return sourcePassNumber >= 0 ? "#" + sourcePassNumber : "Master weitergetragen";
+    }
 
     public String getExpert() { return safe(expert); }
     public void setExpert(String expert) { this.expert = safe(expert); }

@@ -93,7 +93,9 @@ public class MasterStrategyLineageReportGeneratorTest {
     public void confirmedMasterNotTheLastRejectedMeasurementDefinesCurrentState() throws Exception {
         CustomProject project = new CustomProject("ReportMaster", "EA", "EURUSD", "M5");
         MasterStrategyEntry confirmed = measured(1, "Bestätigte Basis", 1000.0, 4.0);
+        confirmed.setSourcePassNumber(0);
         MasterStrategyEntry rejected = measured(2, "Verworfener Versuch", 200.0, 0.8);
+        rejected.setSourcePassNumber(-1);
         rejected.setVerdict(MasterStrategyEntry.Verdict.SCHLECHTER);
         rejected.setComparedToSequence(1);
         project.setMasterStrategyLineage(List.of(confirmed, rejected));
@@ -110,6 +112,8 @@ public class MasterStrategyLineageReportGeneratorTest {
             assertTrue(content.contains("confirmed-master-card\" id=\"pick-1\""));
             assertFalse(content.contains("confirmed-master-card\" id=\"pick-2\""));
             assertTrue(content.contains("BESTÄTIGTER MASTER"));
+            assertTrue(content.contains("<tr><td>Pass:</td><td>#0</td></tr>"));
+            assertTrue(content.contains("<tr><td>Pass:</td><td>Master weitergetragen</td></tr>"));
         } finally {
             Files.deleteIfExists(reportPath);
         }

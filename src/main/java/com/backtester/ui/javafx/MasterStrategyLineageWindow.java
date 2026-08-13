@@ -548,8 +548,7 @@ public final class MasterStrategyLineageWindow {
         addText(grid, row++, "Zeitpunkt", TIMESTAMP.format(Instant.ofEpochMilli(entry.getCreatedAt())));
         addText(grid, row++, "Stage", entry.getStageTaskName());
         addText(grid, row++, "Databank", entry.getSourceDatabank());
-        addText(grid, row++, "Pass", entry.getSourcePassNumber() > 0
-                ? "#" + entry.getSourcePassNumber() : "Master weitergetragen");
+        addText(grid, row++, "Pass", entry.sourcePassLabel());
         addText(grid, row++, "Markt", entry.getSymbol() + " " + entry.getPeriod());
         addText(grid, row++, "Zeitraum", entry.getFromDate() + " bis " + entry.getToDate());
         addText(grid, row++, "Modell", entry.getTickModel());

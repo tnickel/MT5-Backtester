@@ -118,6 +118,7 @@ public class CustomProjectTest {
         WorkflowTask task0 = new WorkflowTask("00 Strategie-Auswahl — ToTheMoon132 AUDCAD M5", WorkflowTask.TaskType.STRATEGY_SELECTION);
         task0.setRetestSymbol("AUDCAD");
         task0.setRetestPeriod("M5");
+        task0.setOptimizerOutputDirectory("D:\\optimizer\\AUDCAD\\stage-00");
         task0.setStatus(WorkflowTask.TaskStatus.COMPLETED);
         source.addTask(task0);
 
@@ -132,6 +133,8 @@ public class CustomProjectTest {
         assertEquals("00 Strategie-Auswahl — ToTheMoon132 GBPJPY M5", clonedTask0.getName());
         assertEquals("GBPJPY", clonedTask0.getRetestSymbol());
         assertEquals("M5", clonedTask0.getRetestPeriod());
+        assertEquals("D:\\optimizer\\GBPJPY\\stage-00",
+                clonedTask0.getOptimizerOutputDirectory());
         assertEquals(WorkflowTask.TaskStatus.PENDING, clonedTask0.getStatus());
     }
 
@@ -234,6 +237,35 @@ public class CustomProjectTest {
 
         // Clean up test project
         DatabaseManager.getInstance().deleteCustomProject(proj.getId());
+    }
+
+    @Test
+    public void listingProjectsDoesNotRewriteCustomTaskMarketsNamesOrOutputPaths() {
+        DatabaseManager db = DatabaseManager.getInstance();
+        CustomProject project = new CustomProject(
+                "Custom GBPJPY", "CustomEA.ex5", "GBPJPY", "M5");
+        WorkflowTask task = new WorkflowTask(
+                "Filter aus EURUSD-Lauf", WorkflowTask.TaskType.RETESTER);
+        task.setRetestSymbol("EURUSD");
+        task.setRetestPeriod("H1");
+        task.setOptimizerOutputDirectory("D:\\opt\\EURUSD\\comparison");
+        project.addTask(task);
+
+        db.saveCustomProject(project);
+        try {
+            CustomProject loaded = db.getAllCustomProjects().stream()
+                    .filter(candidate -> project.getId().equals(candidate.getId()))
+                    .findFirst().orElseThrow();
+            WorkflowTask loadedTask = loaded.getTasks().get(0);
+
+            assertEquals("Filter aus EURUSD-Lauf", loadedTask.getName());
+            assertEquals("EURUSD", loadedTask.getRetestSymbol());
+            assertEquals("H1", loadedTask.getRetestPeriod());
+            assertEquals("D:\\opt\\EURUSD\\comparison",
+                    loadedTask.getOptimizerOutputDirectory());
+        } finally {
+            db.deleteCustomProject(project.getId());
+        }
     }
 
     @Test
