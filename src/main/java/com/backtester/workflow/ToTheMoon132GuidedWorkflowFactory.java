@@ -35,18 +35,20 @@ public final class ToTheMoon132GuidedWorkflowFactory {
                     range("Inp_Wait_Next_Lot", "420", "60", "780"),
                     range("Inp_Start_Wait_Next_Lot", "1", "1", "3"),
                     range("Inp_Stop_Wait_Next_Lot", "80", "10", "120")),
-            stage("03 Envelopes oben", "g03_env_upper",
+            geneticStage("03 Envelopes oben", "g03_env_upper",
                     timeframeRange("TimeFrame_Envelopes"),
                     range("Inp_Envelopes_Period", "3", "1", "15"),
-                    range("Inp_Envelopes_Deviation", "0.005", "0.005", "0.030"),
+                    // iEnvelopes expects percentage points. Keep the shipped v132
+                    // domain so an incumbent such as 1.47 % remains reproducible.
+                    range("Inp_Envelopes_Deviation", "0.01", "0.01", "1.70"),
                     range("Envelopes_Method", "0", "1", "3"),
-                    range("Envelopes_Price", "0", "1", "7")),
-            stage("04 Envelopes unten", "g04_env_lower",
+                    range("Envelopes_Price", "1", "1", "7")),
+            geneticStage("04 Envelopes unten", "g04_env_lower",
                     timeframeRange("TimeFrame_Envelopes_Lower"),
                     range("Inp_Envelopes_Period_Lower", "9", "2", "41"),
-                    range("Inp_Envelopes_Deviation_Lower", "0.005", "0.005", "0.030"),
+                    range("Inp_Envelopes_Deviation_Lower", "0.01", "0.01", "2.00"),
                     range("Envelopes_Method_Lower", "0", "1", "3"),
-                    range("Envelopes_Price_Lower", "0", "1", "7")),
+                    range("Envelopes_Price_Lower", "1", "1", "7")),
             stage("05 ADX-Regime", "g05_adx",
                     range("Inp_Use_ADX_Filter", "false", "1", "true"),
                     range("Inp_ADX_Period", "9", "2", "31"),
@@ -93,18 +95,29 @@ public final class ToTheMoon132GuidedWorkflowFactory {
     public static CustomProject create(String projectName,
                                        List<EaParameter> provenPreset,
                                        Path optimizerReportsRoot) {
+        return create(projectName, "AUDCAD", "M5", provenPreset, optimizerReportsRoot);
+    }
+
+    public static CustomProject create(String projectName,
+                                       String symbol,
+                                       String period,
+                                       List<EaParameter> provenPreset,
+                                       Path optimizerReportsRoot) {
         if (provenPreset == null || provenPreset.isEmpty()) {
             throw new IllegalArgumentException("Das bewährte ToTheMoon132-Preset ist leer.");
         }
         Map<String, EaParameter> baseByName = indexParameters(provenPreset);
         validateRequiredParameters(baseByName);
 
-        CustomProject project = new CustomProject(projectName, "ToTheMoon_KI_v132", "AUDCAD", "M5");
+        String sym = symbol != null && !symbol.isBlank() ? symbol.trim() : "AUDCAD";
+        String per = period != null && !period.isBlank() ? period.trim() : "M5";
+
+        CustomProject project = new CustomProject(projectName, "ToTheMoon_KI_v132", sym, per);
         project.setSaveDatabanksPersistently(true);
 
-        WorkflowTask selection = new WorkflowTask("00 Strategie-Auswahl — ToTheMoon132 AUDCAD M5",
+        WorkflowTask selection = new WorkflowTask("00 Strategie-Auswahl — ToTheMoon132 " + sym + " " + per,
                 WorkflowTask.TaskType.STRATEGY_SELECTION);
-        configureMarket(selection, DEVELOPMENT_FROM, DEVELOPMENT_TO, WorkflowTask.MODE_OHLC_M1);
+        configureMarket(selection, sym, per, DEVELOPMENT_FROM, DEVELOPMENT_TO, WorkflowTask.MODE_OHLC_M1);
         selection.setSourceDatabank(DatabankManager.RESULTS);
         selection.setTargetDatabank(DatabankManager.RESULTS);
         project.addTask(selection);
@@ -113,10 +126,10 @@ public final class ToTheMoon132GuidedWorkflowFactory {
         for (int i = 0; i < STAGES.size(); i++) {
             Stage stage = STAGES.get(i);
             WorkflowTask optimizer = new WorkflowTask(stage.name + " — Optimizer", WorkflowTask.TaskType.OPTIMIZER);
-            configureMarket(optimizer, DEVELOPMENT_FROM, DEVELOPMENT_TO, WorkflowTask.MODE_OHLC_M1);
+            configureMarket(optimizer, sym, per, DEVELOPMENT_FROM, DEVELOPMENT_TO, WorkflowTask.MODE_OHLC_M1);
             optimizer.setSourceDatabank(previousPick);
             optimizer.setTargetDatabank(stage.databankPrefix + "_raw");
-            optimizer.setOptimizerMode(1); // Small staged spaces: exhaustive search, no genetic blind spots.
+            optimizer.setOptimizerMode(stage.optimizerMode);
             optimizer.setOptimizerCriterion(7); // MT5 complex criterion includes sample size and risk.
             optimizer.setOptimizerForwardMode(4);
             optimizer.setOptimizerForwardDate(FORWARD_FROM);
@@ -134,7 +147,7 @@ public final class ToTheMoon132GuidedWorkflowFactory {
 
             WorkflowTask filter = new WorkflowTask(stage.name + " — Trade/Qualitätsfilter",
                     WorkflowTask.TaskType.PRE_FILTER);
-            configureMarket(filter, DEVELOPMENT_FROM, DEVELOPMENT_TO, WorkflowTask.MODE_OHLC_M1);
+            configureMarket(filter, sym, per, DEVELOPMENT_FROM, DEVELOPMENT_TO, WorkflowTask.MODE_OHLC_M1);
             filter.setSourceDatabank(stage.databankPrefix + "_raw");
             filter.setTargetDatabank(stage.databankPrefix + "_pick");
             filter.setDeleteFailed(true);
@@ -148,57 +161,24 @@ public final class ToTheMoon132GuidedWorkflowFactory {
                 .filter(task -> task.getType() == WorkflowTask.TaskType.OPTIMIZER)
                 .reduce((first, second) -> second).orElseThrow();
         WorkflowTask developmentTop20 = createDevelopmentTop20Task(
-                previousPick, finalOptimizer.getOptimizerParameterSnapshot());
+                previousPick, finalOptimizer.getOptimizerParameterSnapshot(), sym, per);
         project.addTask(developmentTop20);
         previousPick = DEVELOPMENT_TOP20_DATABANK;
 
-        WorkflowTask developmentTick = new WorkflowTask("13 Development-Retest — Every Tick (3 Jahre)",
-                WorkflowTask.TaskType.RETESTER);
-        configureMarket(developmentTick, DEVELOPMENT_FROM, DEVELOPMENT_TO, WorkflowTask.MODE_EVERY_TICK);
-        developmentTick.setSourceDatabank(previousPick);
-        developmentTick.setTargetDatabank("g12_dev_tick");
-        developmentTick.setDeleteFailed(true);
-        developmentTick.setFilterConditions(List.of(
-                condition(FilterCondition.Metric.LT_NET_PROFIT, FilterCondition.Operator.GREATER_THAN, 0),
-                condition(FilterCondition.Metric.LT_TOTAL_TRADES, FilterCondition.Operator.GREATER_EQUAL, 1200),
-                condition(FilterCondition.Metric.LT_PROFIT_FACTOR, FilterCondition.Operator.GREATER_EQUAL, 1.25),
-                condition(FilterCondition.Metric.LT_MAX_DD_PERCENT, FilterCondition.Operator.LESS_EQUAL, 10)));
+        WorkflowTask developmentTick = createDevelopmentRetestTask(sym, per);
         project.addTask(developmentTick);
 
-        WorkflowTask oosTick = new WorkflowTask("14 OOS-Retest — Every Tick (unberührtes Jahr)",
-                WorkflowTask.TaskType.RETESTER);
-        configureMarket(oosTick, OOS_FROM, FINAL_TO, WorkflowTask.MODE_EVERY_TICK);
-        oosTick.setSourceDatabank("g12_dev_tick");
-        oosTick.setTargetDatabank("g13_oos_tick");
-        oosTick.setDeleteFailed(true);
-        oosTick.setFilterConditions(List.of(
-                condition(FilterCondition.Metric.LT_NET_PROFIT, FilterCondition.Operator.GREATER_THAN, 0),
-                condition(FilterCondition.Metric.LT_TOTAL_TRADES, FilterCondition.Operator.GREATER_EQUAL, 350),
-                condition(FilterCondition.Metric.LT_PROFIT_FACTOR, FilterCondition.Operator.GREATER_EQUAL, 1.15),
-                condition(FilterCondition.Metric.LT_MAX_DD_PERCENT, FilterCondition.Operator.LESS_EQUAL, 12)));
+        WorkflowTask oosTick = createOosRetestTask(sym, per);
         project.addTask(oosTick);
 
-        WorkflowTask finalFourYears = new WorkflowTask("15 Finaler Every-Tick-Retest — volle 4 Jahre",
-                WorkflowTask.TaskType.RETESTER);
-        configureMarket(finalFourYears, DEVELOPMENT_FROM, FINAL_TO, WorkflowTask.MODE_EVERY_TICK);
-        finalFourYears.setSourceDatabank("g13_oos_tick");
-        finalFourYears.setTargetDatabank("g14_final_4y");
-        finalFourYears.setDeleteFailed(true);
+        WorkflowTask finalFourYears = createFinalFourYearsTask(sym, per);
         project.addTask(finalFourYears);
 
-        WorkflowTask finalFilter = new WorkflowTask("16 Finale Auswahl — viele Trades, PF und niedriger DD",
-                WorkflowTask.TaskType.PRE_FILTER);
-        configureMarket(finalFilter, DEVELOPMENT_FROM, FINAL_TO, WorkflowTask.MODE_EVERY_TICK);
-        finalFilter.setSourceDatabank("g14_final_4y");
-        finalFilter.setTargetDatabank(DatabankManager.FINAL);
-        finalFilter.setDeleteFailed(true);
-        finalFilter.setFilterConditions(List.of(
-                condition(FilterCondition.Metric.LT_NET_PROFIT, FilterCondition.Operator.GREATER_THAN, 0),
-                condition(FilterCondition.Metric.LT_TOTAL_TRADES, FilterCondition.Operator.GREATER_EQUAL, 1800),
-                condition(FilterCondition.Metric.LT_PROFIT_FACTOR, FilterCondition.Operator.GREATER_EQUAL, 1.25),
-                condition(FilterCondition.Metric.LT_MAX_DD_PERCENT, FilterCondition.Operator.LESS_EQUAL, 8),
-                condition(FilterCondition.Metric.LT_RECOVERY_FACTOR, FilterCondition.Operator.GREATER_EQUAL, 2)));
-        project.addTask(finalFilter);
+        // OOS already made the final selection. This routing-only step publishes every
+        // successful 4Y run; applying LT thresholds here would select on the combined
+        // development+OOS period a second time and bias the untouched OOS decision.
+        WorkflowTask finalPublication = createFinalPublicationTask(sym, per);
+        project.addTask(finalPublication);
 
         return project;
     }
@@ -209,9 +189,7 @@ public final class ToTheMoon132GuidedWorkflowFactory {
      * only the obsolete downstream retest outputs are invalidated.
      */
     public static boolean ensureDevelopmentTop20Selection(CustomProject project) {
-        if (project == null || !"ToTheMoon_KI_v132".equalsIgnoreCase(project.getExpert())
-                || !"AUDCAD".equalsIgnoreCase(project.getSymbol())
-                || !"M5".equalsIgnoreCase(project.getPeriod())) {
+        if (project == null || !"ToTheMoon_KI_v132".equalsIgnoreCase(project.getExpert())) {
             return false;
         }
 
@@ -226,35 +204,53 @@ public final class ToTheMoon132GuidedWorkflowFactory {
                 .filter(task -> task != null && task.getType() == WorkflowTask.TaskType.DIVERSITY_FILTER
                         && DEVELOPMENT_TOP20_DATABANK.equalsIgnoreCase(task.getTargetDatabank()))
                 .findFirst().orElse(null);
-        if (selection != null) return false;
+        int earliestChangedIndex = Integer.MAX_VALUE;
+        boolean changed = false;
 
-        int retestIndex = tasks.indexOf(developmentRetest);
-        String source = developmentRetest.getSourceDatabank();
-        WorkflowTask finalOptimizer = tasks.subList(0, retestIndex).stream()
-                .filter(task -> task != null && task.getType() == WorkflowTask.TaskType.OPTIMIZER)
-                .reduce((first, second) -> second).orElse(null);
-        selection = createDevelopmentTop20Task(source,
-                finalOptimizer != null ? finalOptimizer.getOptimizerParameterSnapshot() : List.of());
-        tasks.add(retestIndex, selection);
-        developmentRetest.setSourceDatabank(DEVELOPMENT_TOP20_DATABANK);
-
-        renameTaskPrefix(developmentRetest, "12 ", "13 ");
-        renameTaskPrefix(findByTarget(tasks, "g13_oos_tick"), "13 ", "14 ");
-        renameTaskPrefix(findByTarget(tasks, "g14_final_4y"), "14 ", "15 ");
-        renameTaskPrefix(findByTarget(tasks, DatabankManager.FINAL), "15 ", "16 ");
-
-        project.getDatabanks().put(DEVELOPMENT_TOP20_DATABANK, new ArrayList<>());
-        for (int i = retestIndex + 1; i < tasks.size(); i++) {
-            WorkflowTask downstream = tasks.get(i);
-            if (downstream == null) continue;
-            if (downstream.getStatus() != WorkflowTask.TaskStatus.DISABLED) {
-                downstream.setStatus(WorkflowTask.TaskStatus.PENDING);
-            }
-            downstream.setLastExecutionLog("");
-            clearDatabank(project, downstream.getTargetDatabank());
-            removeArchive(project, downstream.getTargetDatabank());
+        if (selection == null) {
+            int retestIndex = tasks.indexOf(developmentRetest);
+            String source = developmentRetest.getSourceDatabank();
+            WorkflowTask finalOptimizer = tasks.subList(0, retestIndex).stream()
+                    .filter(task -> task != null && task.getType() == WorkflowTask.TaskType.OPTIMIZER)
+                    .reduce((first, second) -> second).orElse(null);
+            selection = createDevelopmentTop20Task(source,
+                    finalOptimizer != null ? finalOptimizer.getOptimizerParameterSnapshot() : List.of(),
+                    project.getSymbol(), project.getPeriod());
+            tasks.add(retestIndex, selection);
+            earliestChangedIndex = retestIndex;
+            changed = true;
+        } else if (!selection.isDiversityDeduplicateEffectiveV132()) {
+            selection.setDiversityDeduplicateEffectiveV132(true);
+            earliestChangedIndex = tasks.indexOf(selection);
+            changed = true;
         }
-        return true;
+
+        WorkflowTask desiredDevelopment = createDevelopmentRetestTask(project.getSymbol(), project.getPeriod());
+        WorkflowTask desiredOos = createOosRetestTask(project.getSymbol(), project.getPeriod());
+        WorkflowTask desiredFourYears = createFinalFourYearsTask(project.getSymbol(), project.getPeriod());
+        WorkflowTask desiredPublication = createFinalPublicationTask(project.getSymbol(), project.getPeriod());
+
+        WorkflowTask[] existingTail = {
+                developmentRetest,
+                findByTarget(tasks, "g13_oos_tick"),
+                findByTarget(tasks, "g14_final_4y"),
+                findByTarget(tasks, DatabankManager.FINAL)
+        };
+        WorkflowTask[] desiredTail = {
+                desiredDevelopment, desiredOos, desiredFourYears, desiredPublication
+        };
+        for (int i = 0; i < existingTail.length; i++) {
+            WorkflowTask existing = existingTail[i];
+            if (existing != null && synchronizeTailTask(existing, desiredTail[i])) {
+                earliestChangedIndex = Math.min(earliestChangedIndex, tasks.indexOf(existing));
+                changed = true;
+            }
+        }
+
+        if (changed && earliestChangedIndex >= 0 && earliestChangedIndex < tasks.size()) {
+            invalidateTasksFrom(project, earliestChangedIndex);
+        }
+        return changed;
     }
 
     /**
@@ -267,8 +263,6 @@ public final class ToTheMoon132GuidedWorkflowFactory {
      */
     public static boolean repairStageOptimizerSearchSpaces(CustomProject project) {
         if (project == null || !"ToTheMoon_KI_v132".equalsIgnoreCase(project.getExpert())
-                || !"AUDCAD".equalsIgnoreCase(project.getSymbol())
-                || !"M5".equalsIgnoreCase(project.getPeriod())
                 || project.getTasks() == null) {
             return false;
         }
@@ -282,6 +276,7 @@ public final class ToTheMoon132GuidedWorkflowFactory {
         }
 
         boolean changed = false;
+        int earliestChangedIndex = Integer.MAX_VALUE;
 
         for (WorkflowTask task : project.getTasks()) {
             if (task == null || task.getType() != WorkflowTask.TaskType.OPTIMIZER) {
@@ -302,16 +297,20 @@ public final class ToTheMoon132GuidedWorkflowFactory {
             }
             Set<String> actualEnabled = enabledOptimizeNames(task.getOptimizerParameterSnapshot());
             boolean rangesWrong = !stageRangesMatchSnapshot(task.getOptimizerParameterSnapshot(), stage);
+            boolean optimizerModeWrong = task.getOptimizerMode() != stage.optimizerMode;
             boolean snapshotMissing = task.getOptimizerParameterSnapshot() == null
                     || task.getOptimizerParameterSnapshot().isEmpty();
 
-            if (!snapshotMissing && expected.equals(actualTargets) && expected.equals(actualEnabled) && !rangesWrong) {
+            if (!snapshotMissing && expected.equals(actualTargets) && expected.equals(actualEnabled)
+                    && !rangesWrong && !optimizerModeWrong) {
                 // Stage search-space already correct — still scrub legacy TF bands (0/0/MN1)
                 // on non-target rows so the Parameter-Tabelle does not keep Schritt 0 / Stopp MN1.
                 List<EaParameter> scrubbed = task.getOptimizerParameterSnapshot();
                 if (normalizeTimeframeBandsInSnapshot(scrubbed)) {
                     task.setOptimizerParameterSnapshot(scrubbed);
                     changed = true;
+                    earliestChangedIndex = Math.min(earliestChangedIndex,
+                            project.getTasks().indexOf(task));
                 }
                 continue;
             }
@@ -322,19 +321,16 @@ public final class ToTheMoon132GuidedWorkflowFactory {
 
             task.setOptimizerTargetParameters(expectedTargets);
             task.setOptimizerParameterSnapshot(buildStageSnapshot(base, stage));
-            if (task.getStatus() == WorkflowTask.TaskStatus.COMPLETED
-                    || task.getStatus() == WorkflowTask.TaskStatus.FAILED
-                    || task.getStatus() == WorkflowTask.TaskStatus.RUNNING) {
-                task.setStatus(WorkflowTask.TaskStatus.PENDING);
-            }
+            task.setOptimizerMode(stage.optimizerMode);
             task.setLastExecutionLog("Search-Space auf Factory-Definition für '"
                     + stage.name + "' korrigiert.");
-            clearDatabank(project, task.getTargetDatabank());
-            String pickDb = stage.databankPrefix + "_pick";
-            clearDatabank(project, pickDb);
-            removeArchive(project, task.getTargetDatabank());
-            removeArchive(project, pickDb);
             changed = true;
+            earliestChangedIndex = Math.min(earliestChangedIndex,
+                    project.getTasks().indexOf(task));
+        }
+        if (changed && earliestChangedIndex >= 0
+                && earliestChangedIndex < project.getTasks().size()) {
+            invalidateTasksFrom(project, earliestChangedIndex);
         }
         return changed;
     }
@@ -472,13 +468,17 @@ public final class ToTheMoon132GuidedWorkflowFactory {
     }
 
     private static WorkflowTask createDevelopmentTop20Task(String sourceDatabank,
-                                                            List<EaParameter> comparisonParameters) {
+                                                            List<EaParameter> comparisonParameters,
+                                                            String symbol,
+                                                            String period) {
         WorkflowTask task = new WorkflowTask("12 Top-20 nach Score & Diversität",
                 WorkflowTask.TaskType.DIVERSITY_FILTER);
-        configureMarket(task, DEVELOPMENT_FROM, DEVELOPMENT_TO, WorkflowTask.MODE_OHLC_M1);
+        configureMarket(task, symbol, period,
+                DEVELOPMENT_FROM, DEVELOPMENT_TO, WorkflowTask.MODE_OHLC_M1);
         task.setSourceDatabank(sourceDatabank);
         task.setTargetDatabank(DEVELOPMENT_TOP20_DATABANK);
         task.setDiversityRankByScore(true);
+        task.setDiversityDeduplicateEffectiveV132(true);
         task.setDiversityParamDiffPct(WorkflowTask.DEFAULT_DIVERSITY_PARAM_DIFF_PCT);
         task.setDiversityTradeDiffPct(WorkflowTask.DEFAULT_DIVERSITY_TRADE_DIFF_PCT);
         // Stage 11 varies six parameters. With identical performance plateaus,
@@ -490,6 +490,139 @@ public final class ToTheMoon132GuidedWorkflowFactory {
         task.setDiversityParameterSnapshot(comparisonParameters);
         task.setDeleteFailed(true);
         return task;
+    }
+
+    private static WorkflowTask createDevelopmentRetestTask(String symbol, String period) {
+        WorkflowTask task = new WorkflowTask("13 Development-Retest — Every Tick (3 Jahre)",
+                WorkflowTask.TaskType.RETESTER);
+        configureMarket(task, symbol, period,
+                DEVELOPMENT_FROM, DEVELOPMENT_TO, WorkflowTask.MODE_EVERY_TICK);
+        task.setSourceDatabank(DEVELOPMENT_TOP20_DATABANK);
+        task.setTargetDatabank("g12_dev_tick");
+        task.setDeleteFailed(true);
+        task.setFilterConditions(List.of(
+                condition(FilterCondition.Metric.LT_NET_PROFIT, FilterCondition.Operator.GREATER_THAN, 0),
+                condition(FilterCondition.Metric.LT_TOTAL_TRADES, FilterCondition.Operator.GREATER_EQUAL, 1200),
+                condition(FilterCondition.Metric.LT_PROFIT_FACTOR, FilterCondition.Operator.GREATER_EQUAL, 1.25),
+                condition(FilterCondition.Metric.LT_MAX_DD_PERCENT, FilterCondition.Operator.LESS_EQUAL, 10)));
+        return task;
+    }
+
+    private static WorkflowTask createOosRetestTask(String symbol, String period) {
+        WorkflowTask task = new WorkflowTask(
+                "14 OOS-Retest — Every Tick (einziges finales Selektionsgate)",
+                WorkflowTask.TaskType.RETESTER);
+        configureMarket(task, symbol, period, OOS_FROM, FINAL_TO, WorkflowTask.MODE_EVERY_TICK);
+        task.setSourceDatabank("g12_dev_tick");
+        task.setTargetDatabank("g13_oos_tick");
+        task.setDeleteFailed(true);
+        task.setFilterConditions(List.of(
+                condition(FilterCondition.Metric.LT_NET_PROFIT, FilterCondition.Operator.GREATER_THAN, 0),
+                condition(FilterCondition.Metric.LT_TOTAL_TRADES, FilterCondition.Operator.GREATER_EQUAL, 350),
+                condition(FilterCondition.Metric.LT_PROFIT_FACTOR, FilterCondition.Operator.GREATER_EQUAL, 1.15),
+                condition(FilterCondition.Metric.LT_MAX_DD_PERCENT, FilterCondition.Operator.LESS_EQUAL, 12)));
+        return task;
+    }
+
+    private static WorkflowTask createFinalFourYearsTask(String symbol, String period) {
+        WorkflowTask task = new WorkflowTask(
+                "15 4Y-Retest — Every Tick (durchgehender DD/Report, kein Gate)",
+                WorkflowTask.TaskType.RETESTER);
+        configureMarket(task, symbol, period,
+                DEVELOPMENT_FROM, FINAL_TO, WorkflowTask.MODE_EVERY_TICK);
+        task.setSourceDatabank("g13_oos_tick");
+        task.setTargetDatabank("g14_final_4y");
+        task.setDeleteFailed(true);
+        task.setFilterConditions(List.of());
+        return task;
+    }
+
+    private static WorkflowTask createFinalPublicationTask(String symbol, String period) {
+        WorkflowTask task = new WorkflowTask(
+                "16 Veröffentlichung — alle erfolgreichen 4Y-Runs (keine Zusatzfilter)",
+                WorkflowTask.TaskType.PRE_FILTER);
+        configureMarket(task, symbol, period,
+                DEVELOPMENT_FROM, FINAL_TO, WorkflowTask.MODE_EVERY_TICK);
+        task.setSourceDatabank("g14_final_4y");
+        task.setTargetDatabank(DatabankManager.FINAL);
+        task.setDeleteFailed(true);
+        task.setFilterConditions(List.of());
+        return task;
+    }
+
+    /** Updates an existing persisted tail task without replacing its stable task id/enabled flag. */
+    private static boolean synchronizeTailTask(WorkflowTask existing, WorkflowTask desired) {
+        if (existing == null || desired == null) return false;
+        boolean changed = !safeEq(existing.getName(), desired.getName())
+                || existing.getType() != desired.getType()
+                || !safeEq(existing.getSourceDatabank(), desired.getSourceDatabank())
+                || !safeEq(existing.getTargetDatabank(), desired.getTargetDatabank())
+                || !safeEq(existing.getStartDate(), desired.getStartDate())
+                || !safeEq(existing.getEndDate(), desired.getEndDate())
+                || !safeEq(existing.getRetestSymbol(), desired.getRetestSymbol())
+                || !safeEq(existing.getRetestPeriod(), desired.getRetestPeriod())
+                || existing.getExecutionMode() != desired.getExecutionMode()
+                || existing.isDeleteFailed() != desired.isDeleteFailed()
+                || !sameFilterConditions(existing.getFilterConditions(), desired.getFilterConditions());
+        if (!changed) return false;
+
+        existing.setName(desired.getName());
+        existing.setType(desired.getType());
+        existing.setSourceDatabank(desired.getSourceDatabank());
+        existing.setTargetDatabank(desired.getTargetDatabank());
+        existing.setStartDate(desired.getStartDate());
+        existing.setEndDate(desired.getEndDate());
+        existing.setRetestSymbol(desired.getRetestSymbol());
+        existing.setRetestPeriod(desired.getRetestPeriod());
+        existing.setExecutionMode(desired.getExecutionMode());
+        existing.setDeleteFailed(desired.isDeleteFailed());
+        List<FilterCondition> filters = new ArrayList<>();
+        for (FilterCondition filter : desired.getFilterConditions()) {
+            if (filter != null) filters.add(filter.copyForPersistence());
+        }
+        existing.setFilterConditions(filters);
+        return true;
+    }
+
+    private static boolean sameFilterConditions(List<FilterCondition> left,
+                                                List<FilterCondition> right) {
+        if (left == null || right == null || left.size() != right.size()) return false;
+        for (int i = 0; i < left.size(); i++) {
+            FilterCondition a = left.get(i);
+            FilterCondition b = right.get(i);
+            if (a == null || b == null || a.getMetric() != b.getMetric()
+                    || a.getOperator() != b.getOperator()
+                    || Double.compare(a.getValue(), b.getValue()) != 0
+                    || a.isEnabled() != b.isEnabled()) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /** Clears every persisted/transient result that depends on the task at startIndex. */
+    private static void invalidateTasksFrom(CustomProject project, int startIndex) {
+        if (project == null || project.getTasks() == null) return;
+        List<WorkflowTask> tasks = project.getTasks();
+        for (int i = Math.max(0, startIndex); i < tasks.size(); i++) {
+            WorkflowTask task = tasks.get(i);
+            if (task == null) continue;
+            if (task.getStatus() != WorkflowTask.TaskStatus.DISABLED) {
+                task.setStatus(WorkflowTask.TaskStatus.PENDING);
+            }
+            task.setOutputPasses(new ArrayList<>());
+            task.setLastExecutionLog("");
+            task.setFilterRejectionNote("");
+            task.setSensitivityRunTimestamp(0L);
+            if (task.getType() == WorkflowTask.TaskType.OPTIMIZER) {
+                task.setOptimizerParameterBasisAdopted(false);
+                task.setOptimizerParameterBasisPassNumber(-1);
+                task.setOptimizerParameterBasisDatabank("");
+                task.clearAdoptedFilterGateAudit();
+            }
+            clearDatabank(project, task.getTargetDatabank());
+            removeArchive(project, task.getTargetDatabank());
+        }
     }
 
     private static WorkflowTask findByTarget(List<WorkflowTask> tasks, String target) {
@@ -556,11 +689,11 @@ public final class ToTheMoon132GuidedWorkflowFactory {
         return Optional.empty();
     }
 
-    private static void configureMarket(WorkflowTask task, String from, String to, int executionMode) {
+    private static void configureMarket(WorkflowTask task, String symbol, String period, String from, String to, int executionMode) {
         task.setStartDate(from);
         task.setEndDate(to);
-        task.setRetestSymbol("AUDCAD");
-        task.setRetestPeriod("M5");
+        task.setRetestSymbol(symbol != null && !symbol.isBlank() ? symbol.trim() : "AUDCAD");
+        task.setRetestPeriod(period != null && !period.isBlank() ? period.trim() : "M5");
         task.setExecutionMode(executionMode);
         task.setStatus(WorkflowTask.TaskStatus.PENDING);
         task.setLastExecutionLog("");
@@ -651,7 +784,11 @@ public final class ToTheMoon132GuidedWorkflowFactory {
     }
 
     private static Stage stage(String name, String databankPrefix, Range... ranges) {
-        return new Stage(name, databankPrefix, List.of(ranges));
+        return new Stage(name, databankPrefix, 1, List.of(ranges));
+    }
+
+    private static Stage geneticStage(String name, String databankPrefix, Range... ranges) {
+        return new Stage(name, databankPrefix, 2, List.of(ranges));
     }
 
     private static Range range(String parameterName, String start, String step, String end) {
@@ -672,7 +809,7 @@ public final class ToTheMoon132GuidedWorkflowFactory {
     private record Range(String parameterName, String start, String step, String end) {
     }
 
-    private record Stage(String name, String databankPrefix, List<Range> ranges) {
+    private record Stage(String name, String databankPrefix, int optimizerMode, List<Range> ranges) {
         private List<String> targetNames() {
             return ranges.stream().map(Range::parameterName).toList();
         }

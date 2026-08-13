@@ -45,7 +45,7 @@ public class MasterStrategyLineageServiceTest {
     @Test
     public void moreProfitPerDrawdownCountsAsImprovement() {
         CustomProject project = new CustomProject("P", "EA", "AUDCAD", "M5");
-        MasterStrategyLineageService.append(project, measured(1000, 250));
+        confirm(project, MasterStrategyLineageService.append(project, measured(1000, 250)));
 
         MasterStrategyEntry second = MasterStrategyLineageService.append(project, measured(1500, 250));
 
@@ -58,7 +58,7 @@ public class MasterStrategyLineageServiceTest {
     @Test
     public void moreProfitBoughtWithMoreDrawdownIsNotAnImprovement() {
         CustomProject project = new CustomProject("P", "EA", "AUDCAD", "M5");
-        MasterStrategyLineageService.append(project, measured(1000, 250));
+        confirm(project, MasterStrategyLineageService.append(project, measured(1000, 250)));
 
         // +50% profit, but the drawdown doubled: profit/DD drops from 4.0 to 3.0.
         MasterStrategyEntry second = MasterStrategyLineageService.append(project, measured(1500, 500));
@@ -70,23 +70,23 @@ public class MasterStrategyLineageServiceTest {
     @Test
     public void changesInsideTheToleranceBandAreReportedAsUnchanged() {
         CustomProject project = new CustomProject("P", "EA", "AUDCAD", "M5");
-        MasterStrategyLineageService.append(project, measured(1000, 250));
+        confirm(project, MasterStrategyLineageService.append(project, measured(1000, 250)));
 
-        MasterStrategyEntry second = MasterStrategyLineageService.append(project, measured(1010, 250));
+        MasterStrategyEntry second = MasterStrategyLineageService.append(project, measured(1009, 250));
 
         assertEquals(MasterStrategyEntry.Verdict.NEUTRAL, second.getVerdict());
     }
 
     @Test
-    public void exactlyTwoPercentIsStillNoise() {
-        assertEquals(MasterStrategyEntry.Verdict.NEUTRAL,
-                MasterStrategyLineageService.judge(1.02, 1.0));
-        assertEquals(MasterStrategyEntry.Verdict.NEUTRAL,
-                MasterStrategyLineageService.judge(0.98, 1.0));
+    public void exactlyOnePercentAlreadyCountsAsAChange() {
         assertEquals(MasterStrategyEntry.Verdict.BESSER,
-                MasterStrategyLineageService.judge(1.021, 1.0));
+                MasterStrategyLineageService.judge(1.01, 1.0));
         assertEquals(MasterStrategyEntry.Verdict.SCHLECHTER,
-                MasterStrategyLineageService.judge(0.979, 1.0));
+                MasterStrategyLineageService.judge(0.99, 1.0));
+        assertEquals(MasterStrategyEntry.Verdict.NEUTRAL,
+                MasterStrategyLineageService.judge(1.009, 1.0));
+        assertEquals(MasterStrategyEntry.Verdict.NEUTRAL,
+                MasterStrategyLineageService.judge(0.991, 1.0));
     }
 
     @Test
@@ -116,9 +116,10 @@ public class MasterStrategyLineageServiceTest {
     }
 
     @Test
-    public void everyEntryIsRatedAgainstTheBestOneNotTheLastOne() {
+    public void everyEntryIsRatedAgainstTheConfirmedMasterNotTheLastOne() {
         CustomProject project = new CustomProject("P", "EA", "AUDCAD", "M5");
-        MasterStrategyLineageService.append(project, measured(2000, 250));   // #1, profit/DD 8.0
+        confirm(project, MasterStrategyLineageService.append(project,
+                measured(2000, 250)));                                      // #1, confirmed
         MasterStrategyLineageService.append(project, measured(1000, 250));   // #2, profit/DD 4.0
 
         // Better than the immediate predecessor, still far below the best entry.
@@ -131,7 +132,7 @@ public class MasterStrategyLineageServiceTest {
     @Test
     public void failedReferenceBacktestsAreNeitherRatedNorUsedAsBaseline() {
         CustomProject project = new CustomProject("P", "EA", "AUDCAD", "M5");
-        MasterStrategyLineageService.append(project, measured(1000, 250));
+        confirm(project, MasterStrategyLineageService.append(project, measured(1000, 250)));
 
         MasterStrategyEntry failed = new MasterStrategyEntry();
         failed.setBacktestSucceeded(false);
@@ -147,7 +148,7 @@ public class MasterStrategyLineageServiceTest {
     @Test
     public void withoutADrawdownFigureNoVerdictIsInvented() {
         CustomProject project = new CustomProject("P", "EA", "AUDCAD", "M5");
-        MasterStrategyLineageService.append(project, measured(1000, 250));
+        confirm(project, MasterStrategyLineageService.append(project, measured(1000, 250)));
 
         MasterStrategyEntry noDrawdown = measured(5000, 0);
         MasterStrategyLineageService.append(project, noDrawdown);
@@ -434,6 +435,7 @@ public class MasterStrategyLineageServiceTest {
         project.setProvenMasterParameters(List.of(parameter("GridStep", "23")));
         project.setProvenMasterContextKey("EA|AUDCAD|M5");
         project.setMasterSelectionRatio(3.0);
+        project.setConfirmedMasterSequence(1);
 
         int removed = MasterStrategyLineageService.clear(project);
 
@@ -441,6 +443,7 @@ public class MasterStrategyLineageServiceTest {
         assertTrue(project.getMasterStrategyLineage().isEmpty());
         assertFalse(project.hasProvenMaster());
         assertTrue(Double.isNaN(project.getMasterSelectionRatio()));
+        assertEquals(-1, project.getConfirmedMasterSequence());
     }
 
     @Test
@@ -492,7 +495,7 @@ public class MasterStrategyLineageServiceTest {
         // the fact that a measurement exists.
         CustomProject project = new CustomProject("P", "EA", "AUDCAD", "M5");
         BacktestConfig context = referenceConfig("AUDCAD", "M5");
-        MasterStrategyLineageService.append(project, measured(2000, 250));
+        confirm(project, MasterStrategyLineageService.append(project, measured(2000, 250)));
 
         List<EaParameter> rejected = List.of(parameter("EnvelopePeriod", "18"));
         MasterStrategyEntry worse = measured(500, 250);
@@ -511,7 +514,7 @@ public class MasterStrategyLineageServiceTest {
         // The rolled-back entry stays in the lineage as the record of what was tried, but
         // the next stage is still compared against the best proven master.
         CustomProject project = new CustomProject("P", "EA", "AUDCAD", "M5");
-        MasterStrategyLineageService.append(project, measured(2000, 250));
+        confirm(project, MasterStrategyLineageService.append(project, measured(2000, 250)));
         MasterStrategyLineageService.append(project, measured(500, 250));
 
         MasterStrategyEntry next = MasterStrategyLineageService.append(project, measured(1500, 250));
@@ -619,6 +622,72 @@ public class MasterStrategyLineageServiceTest {
         // Numbering starts over, otherwise the fresh run would look like a continuation.
         assertEquals(1, MasterStrategyLineageService.append(project, measured(900, 250)).getSequence());
         assertEquals(0, MasterStrategyLineageService.clear(null));
+    }
+
+    @Test
+    public void clearKeepsTheLineageLockUntilConfirmationMetadataIsGone() throws Exception {
+        BlockingClearProject project = new BlockingClearProject();
+        MasterStrategyLineageService.append(project, measured(1000, 250));
+        project.setProvenMasterParameters(List.of(parameter("GridStep", "23")));
+        project.setProvenMasterContextKey(MasterStrategyLineageService.currentContextKey(project));
+        project.setConfirmedMasterSequence(1);
+
+        CountDownLatch clearFinished = new CountDownLatch(1);
+        Thread clearer = new Thread(() -> {
+            try {
+                MasterStrategyLineageService.clear(project);
+            } finally {
+                clearFinished.countDown();
+            }
+        });
+        clearer.setDaemon(true);
+        clearer.start();
+        assertTrue(project.clearEntered.await(5, TimeUnit.SECONDS));
+
+        CountDownLatch appendStarted = new CountDownLatch(1);
+        CountDownLatch appendFinished = new CountDownLatch(1);
+        Thread appender = new Thread(() -> {
+            appendStarted.countDown();
+            try {
+                MasterStrategyLineageService.append(project, measured(900, 250));
+            } finally {
+                appendFinished.countDown();
+            }
+        });
+        appender.setDaemon(true);
+        appender.start();
+        assertTrue(appendStarted.await(5, TimeUnit.SECONDS));
+
+        // clearProvenMaster is deliberately paused. An append may not pass the lineage
+        // lock while the history is empty but still points at the old confirmation.
+        assertFalse(appendFinished.await(200, TimeUnit.MILLISECONDS));
+        project.allowClear.countDown();
+
+        assertTrue(clearFinished.await(5, TimeUnit.SECONDS));
+        assertTrue(appendFinished.await(5, TimeUnit.SECONDS));
+        assertFalse(project.hasProvenMaster());
+        assertEquals(-1, project.getConfirmedMasterSequence());
+        assertEquals(1, project.getMasterStrategyLineage().size());
+        assertEquals(MasterStrategyEntry.Verdict.UNBEKANNT,
+                project.getMasterStrategyLineage().get(0).getVerdict());
+    }
+
+    @Test
+    public void aWorkerFromBeforeClearCannotRecreateTheErasedLineage() {
+        CustomProject project = new CustomProject("P", "EA", "AUDCAD", "M5");
+        MasterStrategyLineageService.append(project, measured(1000, 250));
+        long workerGeneration = MasterStrategyLineageService.captureLineageGeneration(project);
+
+        MasterStrategyLineageService.clear(project);
+
+        assertNull(MasterStrategyLineageService.appendIfGeneration(
+                project, measured(1200, 250), workerGeneration));
+        assertTrue(project.getMasterStrategyLineage().isEmpty());
+
+        long freshGeneration = MasterStrategyLineageService.captureLineageGeneration(project);
+        assertNotNull(MasterStrategyLineageService.appendIfGeneration(
+                project, measured(900, 250), freshGeneration));
+        assertEquals(1, project.getMasterStrategyLineage().size());
     }
 
     @Test
@@ -749,6 +818,29 @@ public class MasterStrategyLineageServiceTest {
         return parameter;
     }
 
+    private static final class BlockingClearProject extends CustomProject {
+        private final CountDownLatch clearEntered = new CountDownLatch(1);
+        private final CountDownLatch allowClear = new CountDownLatch(1);
+
+        private BlockingClearProject() {
+            super("P", "EA", "AUDCAD", "M5");
+        }
+
+        @Override
+        public void clearProvenMaster() {
+            clearEntered.countDown();
+            try {
+                if (!allowClear.await(5, TimeUnit.SECONDS)) {
+                    throw new AssertionError("Timed out waiting to finish clear");
+                }
+            } catch (InterruptedException ex) {
+                Thread.currentThread().interrupt();
+                throw new AssertionError(ex);
+            }
+            super.clearProvenMaster();
+        }
+    }
+
     private static BacktestConfig referenceConfig(String symbol, String period) {
         BacktestConfig config = new BacktestConfig();
         config.setExpert("EA");
@@ -764,10 +856,7 @@ public class MasterStrategyLineageServiceTest {
     }
 
     @Test
-    public void anOldProjectRecoversItsMasterFromTheBestMeasurementItEverMade() {
-        // Projects written before the master was stored explicitly still have their
-        // measured history, and every successful measurement kept the preset it ran on.
-        // Without this the first rollback would land on the untouched stage template.
+    public void aProjectRecoversItsMasterOnlyFromTheConfirmedMeasurement() {
         CustomProject project = new CustomProject("Guided", "EA", "AUDCAD", "M5");
         String context = MasterStrategyLineageService.currentContextKey(project);
 
@@ -780,6 +869,7 @@ public class MasterStrategyLineageServiceTest {
         best.setContextKey(context);
         best.setSetfileContent("GridStep=23\r\nEnvelopePeriod=30\r\n");
         MasterStrategyLineageService.append(project, best);
+        project.setConfirmedMasterSequence(best.getSequence());
 
         List<EaParameter> recovered = MasterStrategyLineageService
                 .recoverProvenMasterFromLineage(project);
@@ -787,6 +877,78 @@ public class MasterStrategyLineageServiceTest {
         assertEquals(2, recovered.size());
         assertEquals("GridStep", recovered.get(0).getName());
         assertEquals("23", recovered.get(0).getValue());
+    }
+
+    @Test
+    public void anUnconfirmedHistoricalHighNeverBecomesTheComparisonAnchor() {
+        CustomProject project = new CustomProject("P", "EA", "AUDCAD", "M5");
+        MasterStrategyEntry confirmed = MasterStrategyLineageService.append(project, measured(1000, 250));
+        confirm(project, confirmed); // ratio 4.0
+        MasterStrategyEntry unconfirmedHigh = MasterStrategyLineageService.append(project, measured(2000, 250));
+        assertEquals(MasterStrategyEntry.Verdict.BESSER, unconfirmedHigh.getVerdict());
+
+        MasterStrategyEntry next = MasterStrategyLineageService.append(project, measured(1500, 250));
+
+        assertEquals(confirmed.getSequence(), next.getComparedToSequence());
+        assertEquals(MasterStrategyEntry.Verdict.BESSER, next.getVerdict());
+    }
+
+    @Test
+    public void legacyMasterSequenceMigratesFromExactMeasurementSignature() {
+        CustomProject project = new CustomProject("Legacy", "EA", "AUDCAD", "M5");
+        String context = MasterStrategyLineageService.currentContextKey(project);
+        List<EaParameter> basis = List.of(parameter("GridStep", "23"));
+        MasterStrategyEntry measured = measured(1000, 250);
+        measured.setContextKey(context);
+        measured.setMeasurementSignature(MasterStrategyLineageService.measurementSignature(
+                referenceConfig("AUDCAD", "M5"), basis));
+        MasterStrategyLineageService.append(project, measured);
+        project.setProvenMasterParameters(basis);
+        project.setProvenMasterContextKey(context);
+        project.setMasterSelectionRatio(99.0); // Signature, not a coincidental ratio, is decisive.
+
+        assertEquals(measured.getSequence(), MasterStrategyLineageService
+                .confirmedMasterEntry(project).orElseThrow().getSequence());
+        assertEquals(measured.getSequence(), project.getConfirmedMasterSequence());
+    }
+
+    @Test
+    public void legacyMasterSequenceMigratesOnlyFromAUniqueRatioAndContext() {
+        CustomProject project = new CustomProject("Legacy", "EA", "AUDCAD", "M5");
+        String context = MasterStrategyLineageService.currentContextKey(project);
+        MasterStrategyEntry measured = measured(1000, 250);
+        measured.setContextKey(context);
+        MasterStrategyLineageService.append(project, measured);
+        project.setProvenMasterParameters(List.of(parameter("GridStep", "23")));
+        project.setProvenMasterContextKey(context);
+        project.setMasterSelectionRatio(measured.getReturnToDrawdown());
+
+        assertEquals(measured.getSequence(), MasterStrategyLineageService
+                .confirmedMasterEntry(project).orElseThrow().getSequence());
+        assertEquals(measured.getSequence(), project.getConfirmedMasterSequence());
+    }
+
+    @Test
+    public void ambiguousLegacyRatioNeverFallsBackToTheBestUnconfirmedEntry() {
+        CustomProject project = new CustomProject("Legacy", "EA", "AUDCAD", "M5");
+        String context = MasterStrategyLineageService.currentContextKey(project);
+        MasterStrategyEntry first = measured(1000, 250);
+        first.setContextKey(context);
+        MasterStrategyLineageService.append(project, first);
+        MasterStrategyEntry second = measured(2000, 500); // same ratio, different basis
+        second.setContextKey(context);
+        MasterStrategyLineageService.append(project, second);
+        project.setProvenMasterParameters(List.of(parameter("GridStep", "23")));
+        project.setProvenMasterContextKey(context);
+        project.setMasterSelectionRatio(4.0);
+
+        assertTrue(MasterStrategyLineageService.confirmedMasterEntry(project).isEmpty());
+        assertEquals(-1, project.getConfirmedMasterSequence());
+        MasterStrategyEntry candidate = measured(3000, 500);
+        candidate.setContextKey(context);
+        MasterStrategyLineageService.append(project, candidate);
+        assertEquals(MasterStrategyEntry.Verdict.UNBEKANNT, candidate.getVerdict());
+        assertEquals(-1, candidate.getComparedToSequence());
     }
 
     @Test
@@ -806,6 +968,14 @@ public class MasterStrategyLineageServiceTest {
         parameter.setName(name);
         parameter.setValue(value);
         return parameter;
+    }
+
+    private static void confirm(CustomProject project, MasterStrategyEntry entry) {
+        project.setProvenMasterParameters(List.of(
+                parameter("ConfirmedMeasurement", Integer.toString(entry.getSequence()))));
+        project.setProvenMasterContextKey(entry.contextKey());
+        project.setMasterSelectionRatio(entry.getReturnToDrawdown());
+        project.setConfirmedMasterSequence(entry.getSequence());
     }
 
     private static MasterStrategyEntry measured(double profit, double drawdownAbsolute) {

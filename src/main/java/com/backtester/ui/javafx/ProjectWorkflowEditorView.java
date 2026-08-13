@@ -8,6 +8,7 @@ import com.backtester.engine.BacktestRunner;
 import com.backtester.engine.MetaTraderRunLock;
 import com.backtester.engine.OptimizationConfig;
 import com.backtester.engine.WorkflowEngine;
+import com.backtester.report.MasterStrategyLineageReportGenerator;
 import com.backtester.report.OptimizationResult.CombinedPass;
 import com.backtester.report.PassPresetResolver;
 import com.backtester.workflow.ChampionSearchSpaceAligner;
@@ -239,8 +240,12 @@ public class ProjectWorkflowEditorView {
         this.selectedTask = null;
         if (proj != null) {
             boolean projectChanged = proj.migrateLegacyTaskDefinitions();
+            projectChanged |= proj.sanitizeTasksMarketSettings();
             projectChanged |= ToTheMoon132GuidedWorkflowFactory.ensureDevelopmentTop20Selection(proj);
             projectChanged |= ToTheMoon132GuidedWorkflowFactory.repairStageOptimizerSearchSpaces(proj);
+            if (projectChanged) {
+                saveProject();
+            }
             engine.resetTransientResults();
             projectTitleLabel.setText("/ " + proj.getName());
             if (automaticModeToggle != null) {
@@ -357,6 +362,14 @@ public class ProjectWorkflowEditorView {
                         + "-fx-border-radius: 5; -fx-background-radius: 5; -fx-font-weight: bold;");
         lineageBtn.setOnAction(e -> openMasterStrategyLineageWindow());
 
+        Button lineageReportBtn = new Button("📄 Abschlussbericht");
+        lineageReportBtn.setTooltip(new Tooltip(
+                "Vollständigen Abschlussbericht mit Grafiken aller Zwischentests als HTML/PDF generieren."));
+        lineageReportBtn.setStyle(
+                "-fx-background-color: #1e2432; -fx-text-fill: #00e5ff; -fx-border-color: #00e5ff; "
+                        + "-fx-border-radius: 5; -fx-background-radius: 5; -fx-font-weight: bold; -fx-cursor: hand;");
+        lineageReportBtn.setOnAction(e -> generateLineageReport());
+
         startBtn = new Button("▶ Start");
         startBtn.getStyleClass().add("button-start");
         startBtn.setOnAction(e -> pipelineRunner.start());
@@ -389,8 +402,22 @@ public class ProjectWorkflowEditorView {
         });
 
         bar.getChildren().addAll(backBtn, titleBox, spacer, automaticModeToggle, showFlowBtn,
-                lineageBtn, startBtn, stopBtn, resetBtn, saveBtn, cloneBtn);
+                lineageBtn, lineageReportBtn, startBtn, stopBtn, resetBtn, saveBtn, cloneBtn);
         return bar;
+    }
+
+    private void generateLineageReport() {
+        if (project == null) return;
+        try {
+            Path reportPath = MasterStrategyLineageReportGenerator.generateReport(project);
+            MasterStrategyLineageReportGenerator.openInBrowser(reportPath);
+        } catch (Exception ex) {
+            Alert alert = new Alert(Alert.AlertType.ERROR);
+            alert.setTitle("Fehler");
+            alert.setHeaderText("Abschlussbericht konnte nicht generiert werden");
+            alert.setContentText(ex.getMessage());
+            alert.showAndWait();
+        }
     }
 
     private void openMasterStrategyLineageWindow() {
@@ -2538,6 +2565,9 @@ public class ProjectWorkflowEditorView {
                         + "mehr. Die nächste Messung legt die neue Basis fest.");
             }
 
+            List<EaParameter> confirmedBasisBeforeAdoption = project != null && project.hasProvenMaster()
+                    ? project.getProvenMasterParameters() : engine.getEaParameters();
+
             GuidedOptimizationService.AdoptionPreview preview = GuidedOptimizationService.previewPassAdoption(
                     project, engine.getEaParameters(), resolution.parameters(), selectedPass, dbName);
             Window owner = root.getScene() != null ? root.getScene().getWindow() : null;
@@ -2588,10 +2618,10 @@ public class ProjectWorkflowEditorView {
                     + result.getEnabledTargetCount() + " Zielparameter für den nächsten Optimizer aktiviert."
                     + (gateForce.getNote().isBlank() ? "" : " " + gateForce.getNote()));
             MasterStrategyLineageService.AdoptionSummary summary = MasterStrategyLineageService
-                    .summarize(preview, consumer, effectiveBasis);
+                    .summarize(preview, consumer, effectiveBasis, confirmedBasisBeforeAdoption);
             logAdoptedParameterChanges(summary);
             startReferenceBacktestAsync(consumer, dbName, result.getPassNumber(), effectiveBasis,
-                    summary, selectedRatio);
+                    summary);
         } catch (IllegalArgumentException ex) {
             showParameterAdoptionBanner(ex.getMessage(), false);
             Alert alert = new Alert(Alert.AlertType.ERROR, ex.getMessage(), ButtonType.OK);
@@ -2603,15 +2633,6 @@ public class ProjectWorkflowEditorView {
             logger.error("Fehler bei der Parameter-Übernahme aus Databank {}", dbName, ex);
             showParameterAdoptionBanner("Parameter-Übernahme fehlgeschlagen: " + ex.getMessage(), false);
         }
-    }
-
-    /**
-     * Stores the profit/drawdown of the new master basis. It is the floor the next stage
-     * has to beat, so a stage can no longer silently downgrade the master strategy.
-     */
-    private void rememberMasterSelectionRatio(double ratio) {
-        if (project == null || !Double.isFinite(ratio)) return;
-        project.setMasterSelectionRatio(ratio);
     }
 
     private static String formatRatio(double ratio) {
@@ -2741,10 +2762,10 @@ public class ProjectWorkflowEditorView {
         });
 
         MasterStrategyLineageService.AdoptionSummary summary = MasterStrategyLineageService
-                .summarize(preview, nextOptimizer, effectiveBasis);
+                .summarize(preview, nextOptimizer, effectiveBasis, rollback.provenBasis);
         logAdoptedParameterChanges(summary);
         runReferenceBacktestBlocking(nextOptimizer, sourceDatabank, result.getPassNumber(),
-                effectiveBasis, summary, rollback, choice.getSelectedRatio());
+                effectiveBasis, summary, rollback);
     }
 
     /**
@@ -2809,7 +2830,7 @@ public class ProjectWorkflowEditorView {
         engine.setEaParameters(nextOptimizer.getOptimizerParameterSnapshot());
         logSearchSpaceAdjustments(nextOptimizer, result.getSearchSpaceAdjustments());
         logBasisSchemaDrift(result.getSchemaDrift());
-        // No rememberMasterSelectionRatio: the basis is unchanged, so its floor still holds.
+        // The basis is unchanged, so its measured floor still holds.
         saveProject();
 
         String rejected = choice.getBestAvailable()
@@ -2830,7 +2851,7 @@ public class ProjectWorkflowEditorView {
         });
 
         MasterStrategyLineageService.AdoptionSummary summary = MasterStrategyLineageService
-                .summarize(preview, nextOptimizer, effectiveBasis);
+                .summarize(preview, nextOptimizer, effectiveBasis, provenBasis);
         logAdoptedParameterChanges(summary);
     }
 
@@ -2848,7 +2869,8 @@ public class ProjectWorkflowEditorView {
         }
         String stage = summary.getProducerStageName();
         logToConsole("PARAMETER", "Optimierte Parameter"
-                + (stage.isBlank() ? "" : " aus '" + stage + "'") + " (alt → neu):");
+                + (stage.isBlank() ? "" : " aus '" + stage + "'")
+                + " (bestätigter Master → Kandidat):");
         for (MasterStrategyEntry.ParameterChange change : optimized) {
             if (change == null) continue;
             logToConsole("PARAMETER", "  " + (change.isChanged() ? "• " : "· ")
@@ -2857,7 +2879,8 @@ public class ProjectWorkflowEditorView {
         }
         List<MasterStrategyEntry.ParameterChange> additional = summary.getAdditionalChanges();
         if (!additional.isEmpty()) {
-            logToConsole("PARAMETER", "Weitere übernommene Werte aus dem Lauf-Preset (alt → neu):");
+            logToConsole("PARAMETER", "Weitere tatsächliche Basisänderungen "
+                    + "(bestätigter Master → Kandidat):");
             for (MasterStrategyEntry.ParameterChange change : additional) {
                 if (change == null) continue;
                 logToConsole("PARAMETER", "  • " + change.getName() + ": "
@@ -2906,8 +2929,7 @@ public class ProjectWorkflowEditorView {
                                              String sourceDatabank,
                                              int passNumber,
                                              List<EaParameter> parameters,
-                                             MasterStrategyLineageService.AdoptionSummary summary,
-                                             double selectedRatio) {
+                                             MasterStrategyLineageService.AdoptionSummary summary) {
         CustomProject targetProject = project;
         if (targetProject == null) return;
         if (!targetProject.isReferenceBacktestEnabled()) {
@@ -2939,7 +2961,7 @@ public class ProjectWorkflowEditorView {
                 // but it does not become the master. Confirmation goes through the same
                 // commit as the automatic chain so basis, floor and context stay together.
                 if (confirmsImprovement(measurement.entry, targetProject.hasProvenMaster())) {
-                    commitProvenMaster(consumer, parameters, selectedRatio, measurement.entry);
+                    commitProvenMaster(consumer, parameters, measurement.entry);
                 }
             } catch (InterruptedException ex) {
                 Thread.currentThread().interrupt();
@@ -2966,8 +2988,7 @@ public class ProjectWorkflowEditorView {
                                               int passNumber,
                                               List<EaParameter> parameters,
                                               MasterStrategyLineageService.AdoptionSummary summary,
-                                              MasterRollbackPoint rollback,
-                                              double selectedRatio) {
+                                              MasterRollbackPoint rollback) {
         CustomProject targetProject = project;
         if (targetProject == null) return;
         if (!targetProject.isReferenceBacktestEnabled()) {
@@ -3014,7 +3035,7 @@ public class ProjectWorkflowEditorView {
                     + "wieder aktiv. Ein erneuter Start wiederholt Übernahme und Messung.");
         }
         if (confirmsImprovement(entry, targetProject.hasProvenMaster())) {
-            commitProvenMaster(consumer, parameters, selectedRatio, entry);
+            commitProvenMaster(consumer, parameters, entry);
             return;
         }
         restoreProvenMasterBasis(consumer, sourceDatabank, rollback,
@@ -3023,7 +3044,7 @@ public class ProjectWorkflowEditorView {
 
     /**
      * Only a measurement that is actually better makes the candidate the new master.
-     * {@code NEUTRAL} covers results up to two percent below the reference and
+     * {@code NEUTRAL} covers changes smaller than one percent and
      * {@code UNBEKANNT} means the comparison could not be computed — neither is proof of
      * an improvement, and accepting them would let the master drift downwards in steps
      * that each stay just under the warning threshold.
@@ -3042,10 +3063,10 @@ public class ProjectWorkflowEditorView {
      */
     static boolean confirmsImprovement(MasterStrategyEntry entry, boolean hasProvenMaster) {
         if (entry == null || !entry.isBacktestSucceeded()) return false;
+        if (!Double.isFinite(entry.getReturnToDrawdown())) return false;
         if (entry.getVerdict() == MasterStrategyEntry.Verdict.BESSER) return true;
         return !hasProvenMaster
-                && entry.getVerdict() == MasterStrategyEntry.Verdict.UNBEKANNT
-                && Double.isFinite(entry.getReturnToDrawdown());
+                && entry.getVerdict() == MasterStrategyEntry.Verdict.UNBEKANNT;
     }
 
     private static String describeUnconfirmedMeasurement(WorkflowTask consumer,
@@ -3076,12 +3097,9 @@ public class ProjectWorkflowEditorView {
      */
     private void commitProvenMaster(WorkflowTask consumer,
                                     List<EaParameter> parameters,
-                                    double selectedRatio,
                                     MasterStrategyEntry entry) {
         if (project == null) return;
-        project.setProvenMasterParameters(parameters);
-        project.setProvenMasterContextKey(entry.contextKey());
-        rememberMasterSelectionRatio(selectedRatio);
+        applyConfirmedMasterMetadata(project, parameters, entry);
         saveProject();
         if (!projectSaveCoordinator.flush(PROJECT_SAVE_FLUSH_TIMEOUT)) {
             logToConsole("MASTER-VERLAUF", "Warnung: Die bestätigte Master-Strategie konnte nicht "
@@ -3092,6 +3110,20 @@ public class ProjectWorkflowEditorView {
                 + " bestätigt die Basis von '" + (consumer != null ? consumer.getName() : "")
                 + "' als neue Master-Strategie (Profit/DD "
                 + formatRatio(entry.getReturnToDrawdown()) + ").");
+    }
+
+    /** Applies all confirmed-master state, including its lineage anchor, from one measurement. */
+    static void applyConfirmedMasterMetadata(CustomProject targetProject,
+                                             List<EaParameter> parameters,
+                                             MasterStrategyEntry entry) {
+        if (targetProject == null || entry == null
+                || !Double.isFinite(entry.getReturnToDrawdown())) {
+            throw new IllegalArgumentException("Eine bestätigte Master-Basis braucht ein gemessenes Profit/DD.");
+        }
+        targetProject.setProvenMasterParameters(parameters);
+        targetProject.setProvenMasterContextKey(entry.contextKey());
+        targetProject.setMasterSelectionRatio(entry.getReturnToDrawdown());
+        targetProject.setConfirmedMasterSequence(entry.getSequence());
     }
 
     /**

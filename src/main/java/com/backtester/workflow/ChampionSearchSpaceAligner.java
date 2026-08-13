@@ -180,8 +180,10 @@ public final class ChampionSearchSpaceAligner {
             return Optional.of(tooFar(parameter, champion, start, step, end, extension));
         }
 
-        int scale = Math.min(8, Math.max(Math.max(value.scale(), oldStart.scale()),
-                Math.max(stepWidth.scale(), oldEnd.scale())));
+        // Never round the shifted phase: even a tiny truncation can put the champion
+        // off-grid again and defeats the safety guarantee this class provides.
+        int scale = Math.max(Math.max(value.scale(), oldStart.scale()),
+                Math.max(stepWidth.scale(), oldEnd.scale()));
         String startText = plain(newStart, scale);
         String endText = plain(newEnd, scale);
         boolean outsideBand = value.compareTo(oldStart) < 0 || value.compareTo(oldEnd) > 0;
@@ -283,7 +285,7 @@ public final class ChampionSearchSpaceAligner {
     }
 
     private static String plain(BigDecimal value, int scale) {
-        return value.setScale(scale, RoundingMode.HALF_UP).toPlainString();
+        return value.setScale(scale, RoundingMode.UNNECESSARY).toPlainString();
     }
 
     private static String name(EaParameter parameter) {

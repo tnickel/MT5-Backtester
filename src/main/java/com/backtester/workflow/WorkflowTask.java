@@ -142,6 +142,8 @@ public class WorkflowTask {
     private Integer diversityMinDifferentParams;
     private Integer diversityMaxStrategies;
     private boolean diversityRankByScore;
+    /** Guided v132-only opt-in: collapse parameter rows that are behaviorally identical. */
+    private boolean diversityDeduplicateEffectiveV132;
     private List<EaParameter> diversityParameterSnapshot = new ArrayList<>();
     private Double robustnessSweepPct;
     private Integer robustnessSteps;
@@ -536,6 +538,14 @@ public class WorkflowTask {
         this.diversityRankByScore = diversityRankByScore;
     }
 
+    public boolean isDiversityDeduplicateEffectiveV132() {
+        return diversityDeduplicateEffectiveV132;
+    }
+
+    public void setDiversityDeduplicateEffectiveV132(boolean diversityDeduplicateEffectiveV132) {
+        this.diversityDeduplicateEffectiveV132 = diversityDeduplicateEffectiveV132;
+    }
+
     public List<EaParameter> getDiversityParameterSnapshot() {
         List<EaParameter> copy = new ArrayList<>();
         if (diversityParameterSnapshot != null) {
@@ -654,6 +664,7 @@ public class WorkflowTask {
         copy.diversityMinDifferentParams = diversityMinDifferentParams;
         copy.diversityMaxStrategies = diversityMaxStrategies;
         copy.diversityRankByScore = diversityRankByScore;
+        copy.diversityDeduplicateEffectiveV132 = diversityDeduplicateEffectiveV132;
         copy.setDiversityParameterSnapshot(getDiversityParameterSnapshot());
         copy.robustnessSweepPct = robustnessSweepPct;
         copy.robustnessSteps = robustnessSteps;

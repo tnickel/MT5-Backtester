@@ -4,6 +4,7 @@ import com.backtester.report.OptimizationResult;
 import com.backtester.report.OptimizationResult.CombinedPass;
 import com.backtester.report.OptimizationResult.Pass;
 import com.backtester.database.DatabaseManager;
+import com.backtester.config.EaParameter;
 import org.junit.Before;
 import org.junit.After;
 import org.junit.Test;
@@ -319,6 +320,50 @@ public class WorkflowDiversityTest {
     }
 
     @Test
+    public void guidedV132DedupeIgnoresInactiveChildrenStringsCommentsAndMagic() {
+        List<EaParameter> snapshot = new ArrayList<>();
+        snapshot.add(parameter("Inp_Use_Adaptive_Spacing", "false", false));
+        snapshot.add(parameter("Inp_Adaptive_ADX_Ref", "32.5", false));
+        snapshot.add(parameter("Inp_Adaptive_Max_Widen", "2.5", false));
+        snapshot.add(parameter("Inp_Max_Grid_Levels", "12", false));
+        snapshot.add(parameter("Inp_VIX_Symbol", "VIX", true));
+        snapshot.add(parameter("Inp_Order_Comment", "base", true));
+        snapshot.add(parameter("Inp_Magic_Number", "132", false));
+
+        CombinedPass lowScore = effectivePass(30, 80.0, false, "20", "1.5", "VIX-A", "A", "11");
+        CombinedPass highScoreHigherPass = effectivePass(
+                20, 90.0, false, "40", "2.75", "VIX-B", "B", "22");
+        CombinedPass tiedLowerPass = effectivePass(
+                10, 90.0, false, "27.5", "2.0", "VIX-C", "C", "33");
+        CombinedPass activeGate = effectivePass(
+                40, 85.0, true, "27.5", "2.0", "VIX-D", "D", "44");
+
+        List<CombinedPass> deduplicated = WorkflowEngine.deduplicateEffectiveV132(
+                List.of(lowScore, highScoreHigherPass, tiedLowerPass, activeGate), snapshot);
+
+        assertEquals(List.of(10, 40),
+                deduplicated.stream().map(CombinedPass::getPassNumber).toList());
+    }
+
+    @Test
+    public void ordinaryDiversityOverloadDoesNotApplyGuidedV132Dedupe() {
+        WorkflowEngine engine = new WorkflowEngine(null);
+        Pass first = effectivePass(1, 90.0, false, "20", "1.5", "A", "A", "11")
+                .getBacktestPass();
+        Pass second = effectivePass(2, 80.0, false, "40", "2.75", "B", "B", "22")
+                .getBacktestPass();
+        first.setTotalTrades(100);
+        second.setTotalTrades(200);
+
+        List<CombinedPass> selected = engine.clusterDatabankPasses(List.of(
+                        new CombinedPass(first, null, 90.0, 1.0, ""),
+                        new CombinedPass(second, null, 80.0, 1.0, "")),
+                0.10, 0.10, 1, 10, true, List.of());
+
+        assertEquals(List.of(1, 2), selected.stream().map(CombinedPass::getPassNumber).toList());
+    }
+
+    @Test
     public void dedicatedRetesterDatabankUsesRetestTradesForClustering() {
         WorkflowEngine engine = new WorkflowEngine(null);
         Pass first = createSelectionPass(1, 100, 100, 1.0);
@@ -344,6 +389,29 @@ public class WorkflowDiversityTest {
         pass.setDrawdownPercent(10.0);
         pass.setParameter("entry", String.valueOf(passNumber));
         return pass;
+    }
+
+    private static CombinedPass effectivePass(int passNumber, double score, boolean adaptiveGate,
+                                              String adxRef, String maxWiden, String symbol,
+                                              String comment, String magic) {
+        Pass pass = new Pass();
+        pass.setPassNumber(passNumber);
+        pass.setProfit(1000);
+        pass.setTotalTrades(100);
+        pass.setParameter("Inp_Use_Adaptive_Spacing", String.valueOf(adaptiveGate));
+        pass.setParameter("Inp_Adaptive_ADX_Ref", adxRef);
+        pass.setParameter("Inp_Adaptive_Max_Widen", maxWiden);
+        pass.setParameter("Inp_Max_Grid_Levels", "12.0");
+        pass.setParameter("Inp_VIX_Symbol", symbol);
+        pass.setParameter("Inp_Order_Comment", comment);
+        pass.setParameter("Inp_Magic_Number", magic);
+        return new CombinedPass(pass, null, score, 1.0, "");
+    }
+
+    private static EaParameter parameter(String name, String value, boolean stringType) {
+        EaParameter parameter = new EaParameter(name, value);
+        parameter.setStringType(stringType);
+        return parameter;
     }
 
     @Test

@@ -31,6 +31,7 @@ public class CustomProjectTest {
         CustomProject project = new CustomProject("Guided", "EA", "AUDCAD", "M5");
         EaParameter grid = new EaParameter("GridStep", "23");
         project.setProvenMasterParameters(List.of(grid));
+        project.setConfirmedMasterSequence(7);
 
         grid.setValue("999");
         project.getProvenMasterParameters().get(0).setValue("777");
@@ -47,6 +48,7 @@ public class CustomProjectTest {
         assertEquals(1, restored.getProvenMasterParameters().size());
         assertEquals("23", restored.getProvenMasterParameters().get(0).getValue());
         assertTrue(restored.hasProvenMaster());
+        assertEquals(7, restored.getConfirmedMasterSequence());
     }
 
     @Test
@@ -59,16 +61,19 @@ public class CustomProjectTest {
         project.setProvenMasterParameters(List.of(new EaParameter("GridStep", "23")));
         project.setProvenMasterContextKey("EA|AUDCAD|M5");
         project.setMasterSelectionRatio(3.5);
+        project.setConfirmedMasterSequence(7);
 
         CustomProject persisted = project.copyMetadataForPersistence();
         assertEquals(3.5, persisted.getMasterSelectionRatio(), 1e-9);
         assertEquals("EA|AUDCAD|M5", persisted.getProvenMasterContextKey());
         assertTrue(persisted.hasProvenMaster());
+        assertEquals(7, persisted.getConfirmedMasterSequence());
 
         project.clearProvenMaster();
         assertFalse(project.hasProvenMaster());
         assertTrue(Double.isNaN(project.getMasterSelectionRatio()));
         assertEquals("", project.getProvenMasterContextKey());
+        assertEquals(-1, project.getConfirmedMasterSequence());
     }
 
     @Test
@@ -78,6 +83,7 @@ public class CustomProjectTest {
 
         assertNotNull(legacy);
         assertTrue(legacy.getProvenMasterParameters().isEmpty());
+        assertEquals(-1, legacy.getConfirmedMasterSequence());
     }
 
     @Test
@@ -104,6 +110,29 @@ public class CustomProjectTest {
         CustomProject copy = project.copyMetadataForPersistence();
 
         assertEquals(7, copy.getSortOrder());
+    }
+
+    @Test
+    public void testCloningToNewSymbolUpdatesTasksAndSanitizes() {
+        CustomProject source = new CustomProject("ToTheMoon132 (AUDCAD)", "ToTheMoon_KI_v132", "AUDCAD", "M5");
+        WorkflowTask task0 = new WorkflowTask("00 Strategie-Auswahl — ToTheMoon132 AUDCAD M5", WorkflowTask.TaskType.STRATEGY_SELECTION);
+        task0.setRetestSymbol("AUDCAD");
+        task0.setRetestPeriod("M5");
+        task0.setStatus(WorkflowTask.TaskStatus.COMPLETED);
+        source.addTask(task0);
+
+        CustomProject clone = source.cloneProject("ToTheMoon132 (GBPJPY)", "GBPJPY", "M5");
+
+        assertEquals("ToTheMoon132 (GBPJPY)", clone.getName());
+        assertEquals("GBPJPY", clone.getSymbol());
+        assertEquals("M5", clone.getPeriod());
+        assertEquals(1, clone.getTasks().size());
+
+        WorkflowTask clonedTask0 = clone.getTasks().get(0);
+        assertEquals("00 Strategie-Auswahl — ToTheMoon132 GBPJPY M5", clonedTask0.getName());
+        assertEquals("GBPJPY", clonedTask0.getRetestSymbol());
+        assertEquals("M5", clonedTask0.getRetestPeriod());
+        assertEquals(WorkflowTask.TaskStatus.PENDING, clonedTask0.getStatus());
     }
 
     @Before

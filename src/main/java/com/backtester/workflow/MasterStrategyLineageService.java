@@ -16,11 +16,14 @@ import java.security.NoSuchAlgorithmException;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.LinkedHashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
+import java.util.WeakHashMap;
 import java.util.function.Consumer;
 
 /**
@@ -45,14 +48,20 @@ public final class MasterStrategyLineageService {
     public static final String REFERENCE_CURRENCY = "USD";
     public static final String REFERENCE_LEVERAGE = "1:100";
 
-    /** Relative change of this size or less counts as noise, not as progress. */
-    static final double NEUTRAL_TOLERANCE = 0.02;
+    /** A relative change smaller than this counts as noise, not as progress. */
+    static final double NEUTRAL_TOLERANCE = 0.01;
     /** Below this the baseline has no usable relative scale. */
     private static final double ZERO_BASELINE = 1e-9;
     /** Enough shape for the chart without bloating the project JSON. */
     static final int MAX_EQUITY_POINTS = 1500;
     /** Bumped whenever the signature encoding changes. */
     private static final String SIGNATURE_VERSION = "v1";
+    /**
+     * Process-local reset generation. A reference measurement may outlive the UI action
+     * that cleared the lineage; such an old worker must not recreate the erased history
+     * when it eventually finishes. Weak keys avoid retaining closed projects.
+     */
+    private static final Map<CustomProject, Long> LINEAGE_GENERATIONS = new WeakHashMap<>();
 
     private MasterStrategyLineageService() {
     }
@@ -89,27 +98,171 @@ public final class MasterStrategyLineageService {
         return Optional.ofNullable(best);
     }
 
-    /** Best entry under the reference conditions of the newest measurement. */
+    /** Best entry under the reference conditions of the newest measurement (display only). */
     public static Optional<MasterStrategyEntry> bestEntry(List<MasterStrategyEntry> entries) {
         if (entries == null || entries.isEmpty()) return Optional.empty();
         return bestEntry(entries, entries.get(entries.size() - 1).contextKey());
     }
 
     /**
-     * Appends the entry, numbers it and rates it against the best previous entry under
-     * the same reference conditions. Numbering, rating and insert happen under the
+     * Appends the entry, numbers it and rates it exclusively against the measurement that
+     * confirmed the persisted master. Numbering, rating and insert happen under the
      * project lock: two concurrent writers would otherwise hand out the same sequence
      * or drop an entry.
      */
     public static MasterStrategyEntry append(CustomProject project, MasterStrategyEntry entry) {
         if (project == null || entry == null) return entry;
+        return project.withMasterStrategyLineage(lineage -> appendLocked(project, lineage, entry));
+    }
+
+    private static MasterStrategyEntry appendLocked(CustomProject project,
+                                                     List<MasterStrategyEntry> lineage,
+                                                     MasterStrategyEntry entry) {
+        entry.setSequence(lineage.size() + 1);
+        if (entry.getCreatedAt() <= 0) entry.setCreatedAt(System.currentTimeMillis());
+        rate(entry, confirmedMasterEntry(project, lineage, entry.contextKey()).orElse(null));
+        lineage.add(entry);
+        return entry;
+    }
+
+    /** Captures the reset generation under the same lock used by clear and append. */
+    static long captureLineageGeneration(CustomProject project) {
+        if (project == null) return -1L;
+        return project.withMasterStrategyLineage(ignored -> generationLocked(project));
+    }
+
+    /**
+     * Appends only if no clear happened since the measurement started. Package visibility
+     * keeps the generation race independently testable without running MetaTrader.
+     */
+    static MasterStrategyEntry appendIfGeneration(CustomProject project,
+                                                   MasterStrategyEntry entry,
+                                                   long expectedGeneration) {
+        if (project == null || entry == null) return null;
         return project.withMasterStrategyLineage(lineage -> {
-            entry.setSequence(lineage.size() + 1);
-            if (entry.getCreatedAt() <= 0) entry.setCreatedAt(System.currentTimeMillis());
-            rate(entry, bestEntry(lineage, entry.contextKey()).orElse(null));
-            lineage.add(entry);
-            return entry;
+            if (generationLocked(project) != expectedGeneration) return null;
+            return appendLocked(project, lineage, entry);
         });
+    }
+
+    private static long generationLocked(CustomProject project) {
+        synchronized (LINEAGE_GENERATIONS) {
+            return LINEAGE_GENERATIONS.getOrDefault(project, 0L);
+        }
+    }
+
+    private static void advanceGenerationLocked(CustomProject project) {
+        synchronized (LINEAGE_GENERATIONS) {
+            long generation = LINEAGE_GENERATIONS.getOrDefault(project, 0L);
+            LINEAGE_GENERATIONS.put(project, generation + 1L);
+        }
+    }
+
+    /**
+     * The measurement that backs the persisted master, if it can be proven. New projects
+     * store its sequence explicitly. Legacy projects are migrated conservatively: an exact
+     * parameter/context signature wins; otherwise the measured ratio may identify exactly
+     * one entry under the persisted context. Merely being the best historical entry is not
+     * evidence that an entry was ever committed.
+     */
+    public static Optional<MasterStrategyEntry> confirmedMasterEntry(CustomProject project) {
+        if (project == null) return Optional.empty();
+        return project.withMasterStrategyLineage(lineage -> confirmedMasterEntry(
+                project, lineage, project.getProvenMasterContextKey()));
+    }
+
+    private static Optional<MasterStrategyEntry> confirmedMasterEntry(
+            CustomProject project,
+            List<MasterStrategyEntry> lineage,
+            String requiredContext) {
+        if (project == null || lineage == null || lineage.isEmpty()) return Optional.empty();
+
+        int confirmedSequence = project.getConfirmedMasterSequence();
+        if (confirmedSequence > 0) {
+            MasterStrategyEntry anchored = findSequence(lineage, confirmedSequence);
+            if (isUsableConfirmedEntry(anchored, requiredContext)) {
+                return Optional.of(anchored);
+            }
+            log.warn("Bestätigte Master-Sequenz #{} ist im Verlauf nicht als vergleichbare Messung vorhanden.",
+                    confirmedSequence);
+            return Optional.empty();
+        }
+
+        if (!project.hasProvenMaster()) return Optional.empty();
+        String persistedContext = project.getProvenMasterContextKey();
+        if (persistedContext.isBlank()
+                || (requiredContext != null && !requiredContext.isBlank()
+                    && !persistedContext.equals(requiredContext))) {
+            return Optional.empty();
+        }
+
+        MasterStrategyEntry signatureMatch = legacySignatureMatch(project, lineage, persistedContext);
+        if (signatureMatch != null) {
+            project.setConfirmedMasterSequence(signatureMatch.getSequence());
+            return Optional.of(signatureMatch);
+        }
+
+        double persistedRatio = project.getMasterSelectionRatio();
+        if (!Double.isFinite(persistedRatio)) return Optional.empty();
+        MasterStrategyEntry ratioMatch = null;
+        for (MasterStrategyEntry candidate : lineage) {
+            if (!isUsableConfirmedEntry(candidate, persistedContext)
+                    || !sameMetric(candidate.getReturnToDrawdown(), persistedRatio)) {
+                continue;
+            }
+            if (ratioMatch != null) {
+                log.warn("Legacy-Master kann nicht eindeutig migriert werden: Mehrere Messpunkte "
+                        + "passen zu Kontext und Profit/DD {}.", persistedRatio);
+                return Optional.empty();
+            }
+            ratioMatch = candidate;
+        }
+        if (ratioMatch != null) {
+            project.setConfirmedMasterSequence(ratioMatch.getSequence());
+            return Optional.of(ratioMatch);
+        }
+        log.warn("Legacy-Master kann keinem gemessenen Verlaufspunkt sicher zugeordnet werden.");
+        return Optional.empty();
+    }
+
+    private static MasterStrategyEntry legacySignatureMatch(CustomProject project,
+                                                            List<MasterStrategyEntry> lineage,
+                                                            String persistedContext) {
+        if (!persistedContext.equals(currentContextKey(project))) return null;
+        List<EaParameter> parameters = project.getProvenMasterParameters();
+        if (parameters.isEmpty()) return null;
+        String expected = measurementSignature(buildReferenceConfig(project, ""), parameters);
+        MasterStrategyEntry newest = null;
+        for (MasterStrategyEntry candidate : lineage) {
+            if (isUsableConfirmedEntry(candidate, persistedContext)
+                    && expected.equals(candidate.getMeasurementSignature())
+                    && (newest == null || candidate.getSequence() > newest.getSequence())) {
+                newest = candidate;
+            }
+        }
+        return newest;
+    }
+
+    private static MasterStrategyEntry findSequence(List<MasterStrategyEntry> lineage, int sequence) {
+        for (MasterStrategyEntry entry : lineage) {
+            if (entry != null && entry.getSequence() == sequence) return entry;
+        }
+        return null;
+    }
+
+    private static boolean isUsableConfirmedEntry(MasterStrategyEntry entry, String requiredContext) {
+        if (entry == null || !entry.isBacktestSucceeded()
+                || !Double.isFinite(comparisonMetric(entry))) {
+            return false;
+        }
+        return requiredContext == null || requiredContext.isBlank()
+                || requiredContext.equals(entry.contextKey());
+    }
+
+    private static boolean sameMetric(double first, double second) {
+        if (!Double.isFinite(first) || !Double.isFinite(second)) return false;
+        double scale = Math.max(1.0, Math.max(Math.abs(first), Math.abs(second)));
+        return Math.abs(first - second) <= 1e-9 * scale;
     }
 
     /**
@@ -123,21 +276,22 @@ public final class MasterStrategyLineageService {
      */
     public static int clear(CustomProject project) {
         if (project == null) return 0;
-        int removed = project.withMasterStrategyLineage(lineage -> {
+        return project.withMasterStrategyLineage(lineage -> {
             int size = lineage.size();
+            advanceGenerationLocked(project);
             lineage.clear();
+            // Keep the lineage and its confirmation anchor as one atomic state transition.
+            // Service appends cannot observe an empty history with stale master metadata.
+            project.clearProvenMaster();
             return size;
         });
-        project.clearProvenMaster();
-        return removed;
     }
 
     /**
-     * Recovers the confirmed master of a project written before it was stored explicitly.
-     * Every successful measurement keeps the preset it ran on, so the best entry under the
-     * current reference conditions *is* the proven basis — it is the best parameter set
-     * this project has ever measured. Without this a project with a long history would
-     * fall back to the untouched stage template on the first rollback.
+     * Recovers the preset of the measurement that is provably tied to the confirmed master.
+     * Legacy projects without an explicit sequence use the conservative signature or unique
+     * ratio/context migration in {@link #confirmedMasterEntry(CustomProject)}. The historically
+     * best unconfirmed measurement is never treated as proof of adoption.
      *
      * <p>Only names and values are read from it, which is all the carry uses; the search
      * bands always come from the stage itself.
@@ -146,14 +300,13 @@ public final class MasterStrategyLineageService {
      */
     public static List<EaParameter> recoverProvenMasterFromLineage(CustomProject project) {
         if (project == null) return List.of();
-        MasterStrategyEntry best = bestEntry(project.getMasterStrategyLineage(),
-                currentContextKey(project)).orElse(null);
-        if (best == null || best.getSetfileContent().isBlank()) return List.of();
+        MasterStrategyEntry confirmed = confirmedMasterEntry(project).orElse(null);
+        if (confirmed == null || confirmed.getSetfileContent().isBlank()) return List.of();
 
         Path temporary = null;
         try {
             temporary = Files.createTempFile("master-basis-", ".set");
-            Files.writeString(temporary, best.getSetfileContent(), StandardCharsets.UTF_8);
+            Files.writeString(temporary, confirmed.getSetfileContent(), StandardCharsets.UTF_8);
             return new EaParameterManager().readSetFile(temporary);
         } catch (IOException | RuntimeException ex) {
             log.warn("Bewiesene Master-Basis konnte nicht aus dem Verlauf rekonstruiert werden", ex);
@@ -220,7 +373,7 @@ public final class MasterStrategyLineageService {
     }
 
     /**
-     * Changes of {@value #NEUTRAL_TOLERANCE} (2 %) or less count as noise. A baseline of
+     * Changes smaller than {@value #NEUTRAL_TOLERANCE} (1 %) count as noise. A baseline of
      * effectively zero has no meaningful relative scale, so there any real difference
      * decides — otherwise a swing from +1e-12 to −1e-12 would be reported as unchanged.
      */
@@ -234,10 +387,11 @@ public final class MasterStrategyLineageService {
             return difference > 0
                     ? MasterStrategyEntry.Verdict.BESSER : MasterStrategyEntry.Verdict.SCHLECHTER;
         }
-        // Slack so a value that is exactly on the 2 % line does not flip on rounding.
-        double threshold = NEUTRAL_TOLERANCE * Math.abs(baseline) * (1 + 1e-12);
-        if (difference > threshold) return MasterStrategyEntry.Verdict.BESSER;
-        if (difference < -threshold) return MasterStrategyEntry.Verdict.SCHLECHTER;
+        // Include the exact 1 % boundary. The tiny slack absorbs binary floating-point
+        // representation error without turning a materially smaller change into progress.
+        double threshold = NEUTRAL_TOLERANCE * Math.abs(baseline) * (1 - 1e-12);
+        if (difference >= threshold) return MasterStrategyEntry.Verdict.BESSER;
+        if (difference <= -threshold) return MasterStrategyEntry.Verdict.SCHLECHTER;
         return MasterStrategyEntry.Verdict.NEUTRAL;
     }
 
@@ -472,27 +626,74 @@ public final class MasterStrategyLineageService {
     public static AdoptionSummary summarize(GuidedOptimizationService.AdoptionPreview preview,
                                             WorkflowTask nextOptimizer,
                                             List<EaParameter> adoptedParameters) {
+        return summarize(preview, nextOptimizer, adoptedParameters, null);
+    }
+
+    /**
+     * Builds an incremental audit against the confirmed basis that was active before
+     * adoption. This prevents every later stage from repeating differences against its
+     * factory template as if they had just happened again.
+     */
+    public static AdoptionSummary summarize(GuidedOptimizationService.AdoptionPreview preview,
+                                            WorkflowTask nextOptimizer,
+                                            List<EaParameter> adoptedParameters,
+                                            List<EaParameter> confirmedBasisBeforeAdoption) {
         if (preview == null) {
             return new AdoptionSummary("", List.of(), List.of(), List.of());
         }
         Map<String, EaParameter> effective = indexByName(adoptedParameters);
+        Map<String, EaParameter> confirmed = indexByName(confirmedBasisBeforeAdoption);
+        List<MasterStrategyEntry.ParameterChange> optimized = toParameterChanges(
+                preview.getPassParameters(), effective, confirmed);
+        List<MasterStrategyEntry.ParameterChange> additional = confirmed.isEmpty()
+                ? toParameterChanges(preview.getOtherBasisValueChanges(), effective, confirmed)
+                : actualBasisChanges(confirmed, effective, optimized);
         return new AdoptionSummary(
                 preview.getProducerStageName(),
-                toParameterChanges(preview.getPassParameters(), effective),
-                toParameterChanges(preview.getOtherBasisValueChanges(), effective),
+                optimized,
+                additional,
                 describeNextStageTargets(nextOptimizer, adoptedParameters));
     }
 
     private static List<MasterStrategyEntry.ParameterChange> toParameterChanges(
             List<GuidedOptimizationService.ParameterValueChange> changes,
-            Map<String, EaParameter> effective) {
+            Map<String, EaParameter> effective,
+            Map<String, EaParameter> confirmed) {
         List<MasterStrategyEntry.ParameterChange> result = new ArrayList<>();
         if (changes == null) return result;
         for (GuidedOptimizationService.ParameterValueChange change : changes) {
             if (change == null) continue;
+            EaParameter oldParameter = confirmed.get(normalizeName(change.getName()));
             result.add(new MasterStrategyEntry.ParameterChange(
-                    change.getName(), change.getOldValue(),
+                    change.getName(), oldParameter != null ? oldParameter.getValue() : change.getOldValue(),
                     effectiveValue(effective, change.getName(), change.getNewValue())));
+        }
+        return result;
+    }
+
+    private static List<MasterStrategyEntry.ParameterChange> actualBasisChanges(
+            Map<String, EaParameter> confirmed,
+            Map<String, EaParameter> effective,
+            List<MasterStrategyEntry.ParameterChange> optimized) {
+        Set<String> optimizedNames = new LinkedHashSet<>();
+        for (MasterStrategyEntry.ParameterChange change : optimized) {
+            if (change != null) optimizedNames.add(normalizeName(change.getName()));
+        }
+        List<MasterStrategyEntry.ParameterChange> result = new ArrayList<>();
+        for (Map.Entry<String, EaParameter> entry : effective.entrySet()) {
+            String name = entry.getKey();
+            EaParameter actual = entry.getValue();
+            EaParameter old = confirmed.get(name);
+            if (old == null || actual == null || optimizedNames.contains(name)
+                    || actual.isSectionHeader() || actual.isStringType()) {
+                continue;
+            }
+            String oldValue = old.getValue() != null ? old.getValue() : "";
+            String newValue = actual.getValue() != null ? actual.getValue() : "";
+            if (!oldValue.equals(newValue)) {
+                result.add(new MasterStrategyEntry.ParameterChange(
+                        actual.getName(), oldValue, newValue));
+            }
         }
         return result;
     }
@@ -513,6 +714,10 @@ public final class MasterStrategyLineageService {
             byName.putIfAbsent(parameter.getName().trim().toLowerCase(Locale.ROOT), parameter);
         }
         return byName;
+    }
+
+    private static String normalizeName(String name) {
+        return name != null ? name.trim().toLowerCase(Locale.ROOT) : "";
     }
 
     /** Target parameters of the consuming stage with the grid it will walk. */
@@ -626,6 +831,7 @@ public final class MasterStrategyLineageService {
                                                    AdoptionSummary summary,
                                                    Consumer<String> logSink,
                                                    BacktestRunner runner) {
+        long lineageGeneration = captureLineageGeneration(project);
         BacktestConfig btConfig = buildReferenceConfig(project, "");
         String expert = btConfig.getExpert();
         // Project-scoped file name: two projects must not overwrite each other's preset.
@@ -679,7 +885,11 @@ public final class MasterStrategyLineageService {
         }
         entry.setMeasurementSignature(measurementSignature(btConfig, parameters));
 
-        append(project, entry);
+        if (appendIfGeneration(project, entry, lineageGeneration) == null) {
+            log.info("Verwerfe abgeschlossene Referenzmessung, weil der Master-Verlauf zwischenzeitlich gelöscht wurde.");
+            emit(logSink, "Referenz-Backtest beendet, aber verworfen: Der Master-Verlauf wurde während der Messung gelöscht.");
+            return null;
+        }
         emit(logSink, describeOutcome(entry));
         return entry;
     }

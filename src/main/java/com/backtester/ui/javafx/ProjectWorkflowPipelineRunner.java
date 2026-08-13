@@ -1,12 +1,15 @@
 package com.backtester.ui.javafx;
 
 import com.backtester.config.AppConfig;
+import com.backtester.config.EaParameter;
 import com.backtester.engine.WorkflowEngine;
 import com.backtester.report.OptimizationResult.CombinedPass;
 import com.backtester.engine.MetaTraderRunLock;
 import com.backtester.workflow.CustomProject;
 import com.backtester.workflow.DatabankManager;
 import com.backtester.workflow.GuidedOptimizationService;
+import com.backtester.workflow.MasterSearchSpaceValidator;
+import com.backtester.workflow.MasterStrategyLineageService;
 import com.backtester.workflow.WorkflowConfigurationValidator;
 import com.backtester.workflow.WorkflowConfigurationValidator.RetesterOverwriteRisk;
 import com.backtester.workflow.WorkflowPauseException;
@@ -373,6 +376,12 @@ public class ProjectWorkflowPipelineRunner {
 
         CustomProject project = host.getProject();
         host.commitCurrentTaskDataSettings();
+        try {
+            requireMasterSearchSpace(task, masterBasisForPreflight(project));
+        } catch (IllegalStateException ex) {
+            showConfigurationError(ex.getMessage(), "Einzelstep kann nicht sicher gestartet werden");
+            return;
+        }
         if (!confirmRetesterConfigurationWarnings(task)) return;
         host.saveProject();
 
@@ -416,12 +425,6 @@ public class ProjectWorkflowPipelineRunner {
                     return null;
                 }
 
-                task.setStatus(WorkflowTask.TaskStatus.RUNNING);
-                Platform.runLater(() -> {
-                    host.refreshTaskChain();
-                    updateProgressUI(0.5, "Führe Einzelstep aus: " + task.getName());
-                });
-
                 List<CombinedPass> inputPasses = databankManager.getDatabank(task.getSourceDatabank());
                 List<CombinedPass> outputPasses = new ArrayList<>();
                 requireTaskInputStrategies(task, inputPasses);
@@ -449,6 +452,13 @@ public class ProjectWorkflowPipelineRunner {
                         return null;
                     }
                 }
+
+                requireRuntimeMasterSearchSpace(task, runtimeBasis(task, project));
+                task.setStatus(WorkflowTask.TaskStatus.RUNNING);
+                Platform.runLater(() -> {
+                    host.refreshTaskChain();
+                    updateProgressUI(0.5, "Führe Einzelstep aus: " + task.getName());
+                });
 
                 applyTaskExecutionConfig(task);
 
@@ -512,7 +522,8 @@ public class ProjectWorkflowPipelineRunner {
                                 task.getDiversityMinDifferentParams(),
                                 task.getDiversityMaxStrategies(),
                                 task.isDiversityRankByScore(),
-                                task.getDiversityParameterSnapshot());
+                                task.getDiversityParameterSnapshot(),
+                                task.isDiversityDeduplicateEffectiveV132());
                         break;
                     case ROBUSTNESS_CV:
                         engine.setSelectedDiversePasses(inputPasses);
@@ -603,13 +614,10 @@ public class ProjectWorkflowPipelineRunner {
         host.commitCurrentTaskDataSettings();
         try {
             validateProjectExecutionOrder();
+            MasterSearchSpaceValidator.requireProject(
+                    project.getTasks(), masterBasisForPreflight(project), project.getPeriod());
         } catch (IllegalStateException ex) {
-            Alert alert = new Alert(Alert.AlertType.ERROR, ex.getMessage(), ButtonType.OK);
-            alert.setTitle("Workflow-Konfiguration ungültig");
-            alert.setHeaderText("Projekt kann nicht sicher gestartet werden");
-            Window owner = host.getOwnerWindow();
-            if (owner != null) alert.initOwner(owner);
-            alert.showAndWait();
+            showConfigurationError(ex.getMessage(), "Projekt kann nicht sicher gestartet werden");
             return;
         }
         if (!confirmRetesterConfigurationWarnings(null)) return;
@@ -697,6 +705,7 @@ public class ProjectWorkflowPipelineRunner {
                         }
                     }
 
+                    requireRuntimeMasterSearchSpace(task, runtimeBasis(task, project));
                     task.setStatus(WorkflowTask.TaskStatus.RUNNING);
                     final int currentIdx = i;
                     Platform.runLater(() -> {
@@ -755,7 +764,8 @@ public class ProjectWorkflowPipelineRunner {
                                         task.getDiversityMinDifferentParams(),
                                         task.getDiversityMaxStrategies(),
                                         task.isDiversityRankByScore(),
-                                        task.getDiversityParameterSnapshot());
+                                        task.getDiversityParameterSnapshot(),
+                                        task.isDiversityDeduplicateEffectiveV132());
                                 break;
                             case ROBUSTNESS_CV:
                                 engine.setSelectedDiversePasses(inputPasses);
@@ -861,6 +871,83 @@ public class ProjectWorkflowPipelineRunner {
         Thread t = new Thread(activeProjectTask);
         t.setDaemon(true);
         t.start();
+    }
+
+    /**
+     * Uses the confirmed master only when it belongs to the active reference context.
+     * A project without one uses its own first enabled optimizer snapshot. The global
+     * engine state is deliberately excluded because it may still belong to another project.
+     */
+    static List<EaParameter> masterBasisForPreflight(CustomProject project) {
+        if (hasContextValidProvenMaster(project)) {
+            return project.getProvenMasterParameters();
+        }
+        if (project != null && project.getTasks() != null) {
+            for (WorkflowTask task : project.getTasks()) {
+                if (task == null || !task.isEnabled()
+                        || task.getType() != WorkflowTask.TaskType.OPTIMIZER) continue;
+                List<EaParameter> snapshot = task.getOptimizerParameterSnapshot();
+                if (!snapshot.isEmpty()) return snapshot;
+            }
+        }
+        return List.of();
+    }
+
+    private List<EaParameter> runtimeBasis(WorkflowTask task, CustomProject project) {
+        return runtimeBasis(task, project, engine.getEaParameters());
+    }
+
+    static List<EaParameter> runtimeBasis(WorkflowTask task,
+                                          CustomProject project,
+                                          List<EaParameter> activeEngineBasis) {
+        // Adoption and carry-over synchronously update both task snapshot and engine. The
+        // engine copy is therefore the independent active basis against which runtime drift
+        // in the persisted snapshot can be detected.
+        if (task != null && task.isOptimizerParameterBasisAdopted()
+                && activeEngineBasis != null && !activeEngineBasis.isEmpty()) {
+            return activeEngineBasis;
+        }
+        if (hasContextValidProvenMaster(project)) {
+            return project.getProvenMasterParameters();
+        }
+        return masterBasisForPreflight(project);
+    }
+
+    private static boolean hasContextValidProvenMaster(CustomProject project) {
+        return project != null && project.hasProvenMaster()
+                && project.getProvenMasterContextKey().equals(
+                        MasterStrategyLineageService.currentContextKey(project));
+    }
+
+    private void requireMasterSearchSpace(WorkflowTask task, List<EaParameter> basis) {
+        if (task == null || task.getType() != WorkflowTask.TaskType.OPTIMIZER
+                || task.getOptimizerTargetParameters().isEmpty()) {
+            return;
+        }
+        CustomProject project = host.getProject();
+        String period = task.getRetestPeriod();
+        if ((period == null || period.isBlank()) && project != null) period = project.getPeriod();
+        MasterSearchSpaceValidator.requireTask(task, basis, period);
+    }
+
+    private void requireRuntimeMasterSearchSpace(WorkflowTask task, List<EaParameter> basis) {
+        if (task == null || task.getType() != WorkflowTask.TaskType.OPTIMIZER
+                || task.getOptimizerTargetParameters().isEmpty()) {
+            return;
+        }
+        CustomProject project = host.getProject();
+        String period = task.getRetestPeriod();
+        if ((period == null || period.isBlank()) && project != null) period = project.getPeriod();
+        MasterSearchSpaceValidator.requireRuntimeTask(task, basis, period);
+    }
+
+    private void showConfigurationError(String message, String header) {
+        Alert alert = new Alert(Alert.AlertType.ERROR, message, ButtonType.OK);
+        alert.setTitle("Workflow-Konfiguration ungültig");
+        alert.setHeaderText(header);
+        Window owner = host.getOwnerWindow();
+        if (owner != null) alert.initOwner(owner);
+        alert.showAndWait();
     }
 
     private void validateProjectExecutionOrder() {

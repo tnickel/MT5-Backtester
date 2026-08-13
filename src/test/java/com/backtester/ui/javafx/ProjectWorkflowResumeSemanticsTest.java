@@ -1,10 +1,13 @@
 package com.backtester.ui.javafx;
 
+import com.backtester.config.EaParameter;
 import com.backtester.workflow.CustomProject;
+import com.backtester.workflow.MasterStrategyLineageService;
 import com.backtester.workflow.MasterStrategyEntry;
 import com.backtester.workflow.WorkflowTask;
 import org.junit.Test;
 
+import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -13,6 +16,47 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
 public class ProjectWorkflowResumeSemanticsTest {
+
+    @Test
+    public void preflightUsesProjectSnapshotInsteadOfUnrelatedGlobalEngineState() {
+        CustomProject project = new CustomProject("P", "EA", "AUDCAD", "M5");
+        WorkflowTask first = new WorkflowTask("First", WorkflowTask.TaskType.OPTIMIZER);
+        first.setOptimizerParameterSnapshot(List.of(parameter("Grid", "11")));
+        project.addTask(first);
+
+        List<EaParameter> basis = ProjectWorkflowPipelineRunner.masterBasisForPreflight(project);
+
+        assertEquals("11", basis.get(0).getValue());
+    }
+
+    @Test
+    public void adoptedRuntimeBasisUsesTheEngineCopySynchronizedByAdoptionOrCarry() {
+        CustomProject project = new CustomProject("P", "EA", "AUDCAD", "M5");
+        WorkflowTask adopted = new WorkflowTask("Adopted", WorkflowTask.TaskType.OPTIMIZER);
+        adopted.setOptimizerParameterBasisAdopted(true);
+        adopted.setOptimizerParameterSnapshot(List.of(parameter("Grid", "20")));
+        project.addTask(adopted);
+
+        List<EaParameter> basis = ProjectWorkflowPipelineRunner.runtimeBasis(
+                adopted, project, List.of(parameter("Grid", "21")));
+
+        assertEquals("21", basis.get(0).getValue());
+    }
+
+    @Test
+    public void nonAdoptedRuntimeBasisPrefersAContextValidConfirmedMaster() {
+        CustomProject project = new CustomProject("P", "EA", "AUDCAD", "M5");
+        WorkflowTask first = new WorkflowTask("First", WorkflowTask.TaskType.OPTIMIZER);
+        first.setOptimizerParameterSnapshot(List.of(parameter("Grid", "11")));
+        project.addTask(first);
+        project.setProvenMasterParameters(List.of(parameter("Grid", "15")));
+        project.setProvenMasterContextKey(MasterStrategyLineageService.currentContextKey(project));
+
+        List<EaParameter> basis = ProjectWorkflowPipelineRunner.runtimeBasis(
+                first, project, List.of(parameter("Grid", "99")));
+
+        assertEquals("15", basis.get(0).getValue());
+    }
 
     @Test
     public void completedOutputTaskIsSkippedOnlyWhenItsTargetContainsStrategies() {
@@ -107,7 +151,7 @@ public class ProjectWorkflowResumeSemanticsTest {
     @Test
     public void onlyAMeasuredImprovementIsAllowedToBecomeTheNewMaster() {
         // The chain keeps whatever it does not roll back, so anything short of a proven
-        // improvement has to be rejected — a neutral result is up to two percent worse,
+        // improvement has to be rejected — a neutral result differs by less than one percent,
         // and repeating that across stages walks the master downwards unnoticed.
         assertTrue(ProjectWorkflowEditorView.confirmsImprovement(
                 rated(MasterStrategyEntry.Verdict.BESSER, 4), true));
@@ -151,6 +195,27 @@ public class ProjectWorkflowResumeSemanticsTest {
     }
 
     @Test
+    public void aNonFiniteBetterVerdictCannotBecomeTheMaster() {
+        MasterStrategyEntry inconsistent = rated(MasterStrategyEntry.Verdict.BESSER, 4);
+        inconsistent.setReturnToDrawdown(Double.NaN);
+
+        assertFalse(ProjectWorkflowEditorView.confirmsImprovement(inconsistent, true));
+    }
+
+    @Test
+    public void confirmedMasterStoresTheMeasuredRatioAsItsFloor() {
+        CustomProject project = new CustomProject("P", "EA", "AUDCAD", "M5");
+        MasterStrategyEntry measured = rated(MasterStrategyEntry.Verdict.BESSER, 4);
+        measured.setSequence(5);
+        measured.setReturnToDrawdown(5.0);
+
+        ProjectWorkflowEditorView.applyConfirmedMasterMetadata(project, List.of(), measured);
+
+        assertEquals(5.0, project.getMasterSelectionRatio(), 1e-9);
+        assertEquals(5, project.getConfirmedMasterSequence());
+    }
+
+    @Test
     public void aFailedMeasurementNeverCountsAsConfirmation() {
         MasterStrategyEntry failed = rated(MasterStrategyEntry.Verdict.UNBEKANNT, -1);
         failed.setBacktestSucceeded(false);
@@ -190,5 +255,9 @@ public class ProjectWorkflowResumeSemanticsTest {
         WorkflowTask task = new WorkflowTask("Completed task", type);
         task.setStatus(WorkflowTask.TaskStatus.COMPLETED);
         return task;
+    }
+
+    private static EaParameter parameter(String name, String value) {
+        return new EaParameter(name, value);
     }
 }

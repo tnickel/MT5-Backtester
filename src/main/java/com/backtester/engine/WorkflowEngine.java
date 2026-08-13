@@ -27,6 +27,39 @@ public class WorkflowEngine {
     private static final Logger log = LoggerFactory.getLogger(WorkflowEngine.class);
     private static final int SELECTION_PROFILE_VERSION = 1;
     private static final double MIN_POSITIVE_PROFIT = 0.01;
+    /**
+     * Explicit behavior switches of ToTheMoon_KI_v132. A child value has no effect
+     * while its gate is off and must therefore not manufacture diversity.
+     */
+    private static final Map<String, List<String>> V132_GATE_CHILDREN = Map.ofEntries(
+            Map.entry("inp_use_trend_filter", List.of("inp_trend_ema_period")),
+            Map.entry("inp_use_rsi_filter", List.of(
+                    "inp_rsi_period", "inp_rsi_oversold", "inp_rsi_overbought")),
+            Map.entry("inp_use_adx_filter", List.of(
+                    "inp_adx_period", "inp_adx_timeframe", "inp_adx_max_level")),
+            Map.entry("inp_use_er_filter", List.of(
+                    "inp_er_period", "inp_er_timeframe", "inp_er_max_level")),
+            Map.entry("inp_use_atr_step", List.of(
+                    "inp_atr_period", "inp_atr_timeframe", "inp_atr_multiplier")),
+            Map.entry("inp_use_breakeven", List.of("inp_be_trigger_points", "inp_be_points")),
+            Map.entry("inp_halt_after_dd_stop", List.of("inp_dd_stop_cooldown_minutes")),
+            Map.entry("inp_use_emergency_sl", List.of("inp_emergency_sl_buffer_percent")),
+            Map.entry("inp_use_vol_filter", List.of(
+                    "inp_vol_atr_period", "inp_vol_atr_timeframe", "inp_vol_atr_max_multiplier")),
+            Map.entry("inp_use_correlation_filter", List.of("inp_allow_opposite_direction")),
+            Map.entry("inp_entry_confirmation", List.of("inp_entry_confirm_lookback")),
+            Map.entry("inp_use_risk_budget_lot", List.of("inp_risk_budget_percent")),
+            Map.entry("inp_use_adaptive_spacing", List.of(
+                    "inp_adaptive_adx_ref", "inp_adaptive_max_widen")),
+            Map.entry("inp_use_session_filter", List.of(
+                    "inp_session_start_hour", "inp_session_end_hour")),
+            Map.entry("inp_use_vix_filter", List.of("inp_vix_symbol", "inp_vix_max_level")),
+            Map.entry("inp_use_d1_trend_filter", List.of("inp_d1_trend_ema_period")),
+            Map.entry("inp_use_escalation_block", List.of(
+                    "inp_esc_lookback_bars", "inp_esc_adx_rise")),
+            Map.entry("inp_use_trailing_tp", List.of(
+                    "inp_trail_start_points", "inp_trail_step_points")),
+            Map.entry("inp_use_atr_tp", List.of("inp_atr_tp_multiplier")));
 
     private final AppConfig config;
     private final EaParameterManager eaParamManager = new EaParameterManager();
@@ -983,6 +1016,23 @@ public class WorkflowEngine {
                                                      int maximumStrategies,
                                                      boolean rankByScore,
                                                      List<EaParameter> comparisonParameters) {
+        return clusterDatabankPasses(sourcePasses, parameterDifferencePct, tradeDifferencePct,
+                minimumDifferentParameters, maximumStrategies, rankByScore,
+                comparisonParameters, false);
+    }
+
+    /**
+     * Guided-v132 overload. The final flag is deliberately opt-in so classic and
+     * user-configured diversity tasks keep their established behavior.
+     */
+    public List<CombinedPass> clusterDatabankPasses(List<CombinedPass> sourcePasses,
+                                                     double parameterDifferencePct,
+                                                     double tradeDifferencePct,
+                                                     int minimumDifferentParameters,
+                                                     int maximumStrategies,
+                                                     boolean rankByScore,
+                                                     List<EaParameter> comparisonParameters,
+                                                     boolean deduplicateEffectiveV132) {
         if (!Double.isFinite(parameterDifferencePct) || parameterDifferencePct < 0.0 || parameterDifferencePct > 1.0) {
             throw new IllegalArgumentException("Parameter-Differenz muss zwischen 0 und 100 Prozent liegen.");
         }
@@ -1005,6 +1055,9 @@ public class WorkflowEngine {
             candidates.sort(java.util.Comparator
                     .comparingDouble(CombinedPass::getScore).reversed()
                     .thenComparingInt(CombinedPass::getPassNumber));
+        }
+        if (deduplicateEffectiveV132) {
+            candidates = deduplicateEffectiveV132(candidates, comparisonParameters);
         }
 
         // A dedicated Retester databank contains a retest result for every row.
@@ -1031,6 +1084,111 @@ public class WorkflowEngine {
 
         finishDiversitySelection();
         return new ArrayList<>(selectedDiversePasses);
+    }
+
+    /** Visible for focused regression tests in this package. */
+    static List<CombinedPass> deduplicateEffectiveV132(List<CombinedPass> candidates,
+                                                        List<EaParameter> comparisonParameters) {
+        Map<String, String> baseValues = new LinkedHashMap<>();
+        Set<String> stringParameters = new HashSet<>();
+        if (comparisonParameters != null) {
+            for (EaParameter parameter : comparisonParameters) {
+                if (parameter == null || parameter.isSectionHeader()
+                        || parameter.getName() == null || parameter.getName().isBlank()) {
+                    continue;
+                }
+                String name = parameter.getName().trim().toLowerCase(Locale.ROOT);
+                if (parameter.isStringType()) {
+                    stringParameters.add(name);
+                } else {
+                    baseValues.put(name, parameter.getValue());
+                }
+            }
+        }
+
+        Map<String, CombinedPass> bestByKey = new LinkedHashMap<>();
+        if (candidates != null) {
+            for (CombinedPass candidate : candidates) {
+                if (candidate == null) continue;
+                String key = effectiveV132ParameterKey(candidate, baseValues, stringParameters);
+                CombinedPass current = bestByKey.get(key);
+                if (current == null || betterScoreThenPass(candidate, current)) {
+                    bestByKey.put(key, candidate);
+                }
+            }
+        }
+        return new ArrayList<>(bestByKey.values());
+    }
+
+    private static String effectiveV132ParameterKey(CombinedPass pass,
+                                                     Map<String, String> baseValues,
+                                                     Set<String> stringParameters) {
+        if (pass.getBacktestPass() == null) {
+            return "missing-backtest-pass:" + pass.getPassNumber();
+        }
+        Map<String, String> effective = new TreeMap<>();
+        if (baseValues != null) effective.putAll(baseValues);
+        for (Map.Entry<String, String> entry : pass.getBacktestPass().getParameterValues().entrySet()) {
+            if (entry.getKey() != null && !entry.getKey().isBlank()) {
+                effective.put(entry.getKey().trim().toLowerCase(Locale.ROOT), entry.getValue());
+            }
+        }
+
+        Set<String> inactiveChildren = new HashSet<>();
+        for (Map.Entry<String, List<String>> gate : V132_GATE_CHILDREN.entrySet()) {
+            if (isFalseToken(effective.get(gate.getKey()))) {
+                inactiveChildren.addAll(gate.getValue());
+            }
+        }
+
+        StringBuilder key = new StringBuilder();
+        for (Map.Entry<String, String> entry : effective.entrySet()) {
+            String name = entry.getKey();
+            if (isIgnoredV132KeyParameter(name, stringParameters)) continue;
+            String value = inactiveChildren.contains(name)
+                    ? "INACTIVE" : canonicalParameterValue(entry.getValue());
+            key.append(name.length()).append(':').append(name)
+                    .append('=').append(value.length()).append(':').append(value).append(';');
+        }
+        return key.toString();
+    }
+
+    private static boolean isIgnoredV132KeyParameter(String name, Set<String> stringParameters) {
+        String normalized = name != null ? name.toLowerCase(Locale.ROOT) : "";
+        return normalized.isBlank()
+                || (stringParameters != null && stringParameters.contains(normalized))
+                || normalized.contains("comment")
+                || normalized.contains("magic");
+    }
+
+    private static String canonicalParameterValue(String raw) {
+        String value = EaParameter.normalizeMql5Value(raw != null ? raw : "").trim();
+        if (value.equalsIgnoreCase("false") || value.equalsIgnoreCase("no")) return "false";
+        if (value.equalsIgnoreCase("true") || value.equalsIgnoreCase("yes")) return "true";
+        try {
+            return new java.math.BigDecimal(value).stripTrailingZeros().toPlainString();
+        } catch (NumberFormatException ignored) {
+            return value;
+        }
+    }
+
+    private static boolean isFalseToken(String raw) {
+        String value = raw != null ? raw.trim().toLowerCase(Locale.ROOT) : "";
+        return value.equals("false") || value.equals("no") || value.equals("0");
+    }
+
+    private static boolean isTrueToken(String raw) {
+        String value = raw != null ? raw.trim().toLowerCase(Locale.ROOT) : "";
+        return value.equals("true") || value.equals("yes") || value.equals("1");
+    }
+
+    private static boolean betterScoreThenPass(CombinedPass candidate, CombinedPass current) {
+        boolean candidateFinite = Double.isFinite(candidate.getScore());
+        boolean currentFinite = Double.isFinite(current.getScore());
+        if (candidateFinite != currentFinite) return candidateFinite;
+        int scoreOrder = candidateFinite ? Double.compare(candidate.getScore(), current.getScore()) : 0;
+        if (scoreOrder != 0) return scoreOrder > 0;
+        return candidate.getPassNumber() < current.getPassNumber();
     }
 
     private void finishDiversitySelection() {

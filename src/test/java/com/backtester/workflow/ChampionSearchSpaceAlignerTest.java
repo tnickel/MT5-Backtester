@@ -28,6 +28,18 @@ public class ChampionSearchSpaceAlignerTest {
     }
 
     @Test
+    public void highPrecisionChampionRemainsExactlyReachableAfterPhaseShift() {
+        EaParameter deviation = optimized("Precise", "0.123456789", "0.1", "0.01", "0.2");
+
+        ChampionSearchSpaceAligner.Adjustment adjustment =
+                ChampionSearchSpaceAligner.align(deviation).orElseThrow();
+
+        assertEquals(ChampionSearchSpaceAligner.Outcome.GRID_SHIFTED, adjustment.getOutcome());
+        assertTrue(onGrid(deviation));
+        assertTrue(ChampionSearchSpaceAligner.align(deviation).isEmpty());
+    }
+
+    @Test
     public void championBelowTheBandExtendsTheStart() {
         EaParameter level = optimized("Inp_ADX_Max_Level", "20", "30", "2.5", "50");
 

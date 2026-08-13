@@ -1,5 +1,6 @@
 package com.backtester.ui.javafx;
 
+import com.backtester.report.MasterStrategyLineageReportGenerator;
 import com.backtester.workflow.CustomProject;
 import com.backtester.workflow.MasterStrategyEntry;
 import com.backtester.workflow.MasterStrategyLineageService;
@@ -13,6 +14,8 @@ import javafx.scene.Scene;
 import javafx.scene.chart.LineChart;
 import javafx.scene.chart.NumberAxis;
 import javafx.scene.chart.XYChart;
+import javafx.scene.control.Alert;
+import javafx.scene.control.Button;
 import javafx.scene.control.CheckBox;
 import javafx.scene.control.Label;
 import javafx.scene.control.ScrollPane;
@@ -68,6 +71,7 @@ public final class MasterStrategyLineageWindow {
 
     private CustomProject project;
     private Consumer<Boolean> autoBacktestListener;
+    private int confirmedMasterSequence = -1;
 
     private MasterStrategyLineageWindow(Window owner) {
         stage = new Stage();
@@ -99,7 +103,12 @@ public final class MasterStrategyLineageWindow {
             if (autoBacktestListener != null) autoBacktestListener.accept(newValue);
         });
 
-        HBox headerRow = new HBox(16, title, autoBacktestToggle);
+        Button reportBtn = new Button("📄 Abschlussbericht");
+        reportBtn.setStyle("-fx-background-color: #00e5ff; -fx-text-fill: #0b0d13; "
+                + "-fx-font-weight: bold; -fx-background-radius: 5; -fx-cursor: hand;");
+        reportBtn.setOnAction(e -> generateAndOpenReport());
+
+        HBox headerRow = new HBox(16, title, autoBacktestToggle, reportBtn);
         headerRow.setAlignment(Pos.CENTER_LEFT);
         root.setTop(new VBox(8, headerRow, subtitleLabel, verdictBanner));
 
@@ -167,6 +176,10 @@ public final class MasterStrategyLineageWindow {
         this.project = project;
         List<MasterStrategyEntry> lineage = project != null
                 ? project.getMasterStrategyLineage() : List.of();
+        confirmedMasterSequence = project != null
+                ? MasterStrategyLineageService.confirmedMasterEntry(project)
+                        .map(MasterStrategyEntry::getSequence).orElse(-1)
+                : -1;
 
         MasterStrategyEntry previouslySelected = table.getSelectionModel().getSelectedItem();
         items.setAll(lineage);
@@ -184,6 +197,7 @@ public final class MasterStrategyLineageWindow {
 
         updateVerdictBanner(lineage);
         updateTrendChart(lineage);
+        table.refresh();
 
         if (!items.isEmpty()) {
             int index = previouslySelected != null ? indexOfSequence(previouslySelected.getSequence()) : -1;
@@ -206,8 +220,12 @@ public final class MasterStrategyLineageWindow {
 
     private void buildColumns() {
         TableColumn<MasterStrategyEntry, String> seqCol = new TableColumn<>("#");
-        seqCol.setCellValueFactory(c -> new SimpleStringProperty(String.valueOf(c.getValue().getSequence())));
-        seqCol.setMaxWidth(50);
+        seqCol.setCellValueFactory(c -> new SimpleStringProperty(
+                c.getValue().getSequence() == confirmedMasterSequence
+                        ? "#" + c.getValue().getSequence() + " · MASTER"
+                        : "#" + c.getValue().getSequence()));
+        seqCol.setMinWidth(105);
+        seqCol.setMaxWidth(125);
 
         TableColumn<MasterStrategyEntry, String> stageCol = new TableColumn<>("Pick / Stage");
         stageCol.setCellValueFactory(c -> new SimpleStringProperty(
@@ -234,12 +252,16 @@ public final class MasterStrategyLineageWindow {
                     setStyle("");
                     return;
                 }
-                setStyle(switch (entry.getVerdict()) {
+                String verdictStyle = switch (entry.getVerdict()) {
                     case BESSER -> "-fx-background-color: rgba(0, 230, 118, 0.18);";
                     case SCHLECHTER -> "-fx-background-color: rgba(255, 82, 82, 0.18);";
                     case NEUTRAL -> "-fx-background-color: rgba(255, 215, 64, 0.14);";
                     case UNBEKANNT -> "";
-                });
+                };
+                if (entry.getSequence() == confirmedMasterSequence) {
+                    verdictStyle += "-fx-border-color: #00e5ff; -fx-border-width: 2 0 2 4;";
+                }
+                setStyle(verdictStyle);
             }
         });
     }
@@ -293,20 +315,29 @@ public final class MasterStrategyLineageWindow {
             verdictBanner.setText("");
             return;
         }
+        verdictBanner.setText(masterStatusText(lineage, confirmedMasterSequence));
+        verdictBanner.setStyle("-fx-font-size: 12px; -fx-font-weight: bold; -fx-text-fill: "
+                + (confirmedMasterSequence > 0 ? "#00e5ff;" : "#9aa4b5;"));
+    }
+
+    static String masterStatusText(List<MasterStrategyEntry> lineage, int confirmedSequence) {
+        if (lineage == null || lineage.isEmpty()) return "";
         MasterStrategyEntry latest = lineage.get(lineage.size() - 1);
-        MasterStrategyEntry best = MasterStrategyLineageService
-                .bestEntry(lineage, latest.contextKey()).orElse(null);
-        String bestText = best != null
-                ? "Bester Messpunkt: #" + best.getSequence() + " (" + best.getStageTaskName()
-                        + ", Profit/DD " + num(best.getReturnToDrawdown()) + ")"
-                : "Noch kein auswertbarer Messpunkt";
-        verdictBanner.setText(bestText + "  ·  Letzter Pick: " + verdictLabel(latest));
-        verdictBanner.setStyle("-fx-font-size: 12px; -fx-text-fill: " + switch (latest.getVerdict()) {
-            case BESSER -> "#00e676;";
-            case SCHLECHTER -> "#ff5252;";
-            case NEUTRAL -> "#ffd740;";
-            case UNBEKANNT -> "#9aa4b5;";
-        });
+        MasterStrategyEntry confirmed = lineage.stream()
+                .filter(entry -> entry != null && entry.getSequence() == confirmedSequence)
+                .findFirst().orElse(null);
+        String masterText = confirmed != null
+                ? "BESTÄTIGTER MASTER: #" + confirmed.getSequence() + " ("
+                        + confirmed.getStageTaskName() + ", Profit/DD "
+                        + num(confirmed.getReturnToDrawdown()) + ")"
+                : "NOCH KEIN MASTER BESTÄTIGT";
+        String latestText = "Letzte Messung: #" + latest.getSequence() + " · " + verdictLabel(latest);
+        if (confirmed != null && latest.getSequence() != confirmed.getSequence()) {
+            latestText += " · nicht übernommen";
+        } else if (confirmed != null) {
+            latestText += " · bestätigt";
+        }
+        return masterText + "  ·  " + latestText;
     }
 
     private void showEntry(MasterStrategyEntry entry) {
@@ -317,6 +348,7 @@ public final class MasterStrategyLineageWindow {
             return;
         }
 
+        detailBox.getChildren().add(sectionTitle(entryStatusText(entry, confirmedMasterSequence)));
         equityBox.getChildren().add(sectionTitle("Equitykurve — " + entry.getShortLabel()));
         if (!entry.getEquityCurve().isEmpty()) {
             equityBox.getChildren().add(createEquityChart(entry));
@@ -340,6 +372,16 @@ public final class MasterStrategyLineageWindow {
         addOptimizedParameters(entry);
         addAdditionalChanges(entry);
         addNextStageTargets(entry);
+    }
+
+    static String entryStatusText(MasterStrategyEntry entry, int confirmedSequence) {
+        if (entry == null) return "";
+        if (entry.getSequence() == confirmedSequence) return "BESTÄTIGTER MASTER #" + entry.getSequence();
+        if (confirmedSequence > 0) {
+            return "Messpunkt #" + entry.getSequence() + " · nicht übernommen (Master #"
+                    + confirmedSequence + ")";
+        }
+        return "Messpunkt #" + entry.getSequence() + " · kein Master bestätigt";
     }
 
     /**
@@ -506,15 +548,16 @@ public final class MasterStrategyLineageWindow {
         addText(grid, row++, "Zeitpunkt", TIMESTAMP.format(Instant.ofEpochMilli(entry.getCreatedAt())));
         addText(grid, row++, "Stage", entry.getStageTaskName());
         addText(grid, row++, "Databank", entry.getSourceDatabank());
-        addText(grid, row++, "Pass", entry.getSourcePassNumber() >= 0
-                ? "#" + entry.getSourcePassNumber() : "—");
+        addText(grid, row++, "Pass", entry.getSourcePassNumber() > 0
+                ? "#" + entry.getSourcePassNumber() : "Master weitergetragen");
         addText(grid, row++, "Markt", entry.getSymbol() + " " + entry.getPeriod());
         addText(grid, row++, "Zeitraum", entry.getFromDate() + " bis " + entry.getToDate());
         addText(grid, row++, "Modell", entry.getTickModel());
         addText(grid, row++, "Startkapital", entry.getDeposit() + " " + entry.getCurrency()
                 + " · Hebel " + entry.getLeverage());
         addText(grid, row++, "Vergleich", entry.getComparedToSequence() > 0
-                ? "gegen bestes #" + entry.getComparedToSequence() : "erster Messpunkt");
+                ? "gegen bestätigten Master #" + entry.getComparedToSequence()
+                : "ohne bestätigten Vergleichsanker");
         addText(grid, row, "Report", entry.getReportDirectory().isBlank() ? "—" : entry.getReportDirectory());
         return grid;
     }
@@ -573,5 +616,19 @@ public final class MasterStrategyLineageWindow {
     private static String num(double value) {
         if (!Double.isFinite(value)) return "—";
         return String.format(Locale.US, "%.2f", value);
+    }
+
+    private void generateAndOpenReport() {
+        if (project == null) return;
+        try {
+            Path reportPath = MasterStrategyLineageReportGenerator.generateReport(project);
+            MasterStrategyLineageReportGenerator.openInBrowser(reportPath);
+        } catch (Exception ex) {
+            Alert alert = new Alert(Alert.AlertType.ERROR);
+            alert.setTitle("Fehler");
+            alert.setHeaderText("Abschlussbericht konnte nicht generiert werden");
+            alert.setContentText(ex.getMessage());
+            alert.showAndWait();
+        }
     }
 }

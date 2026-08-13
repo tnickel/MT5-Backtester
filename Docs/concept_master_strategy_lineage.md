@@ -149,7 +149,8 @@ class MasterStrategyEntry {
 
 **Bewertungsmaß:** Profit allein belohnt mehr Risiko — 50 % mehr Gewinn bei doppeltem
 Drawdown ist keine bessere Strategie. Deshalb entscheidet **Profit/Drawdown**; Änderungen
-von 2 % oder weniger gelten als Rauschen (`NEUTRAL`). Fehlt der Drawdown (0) oder ist eine
+von weniger als 1 % gelten als Rauschen (`NEUTRAL`). Ab 1 % gilt die Änderung bereits als
+relevant. Fehlt der Drawdown (0) oder ist eine
 Zahl nicht endlich, wird kein Urteil erfunden, sondern `UNBEKANNT` gesetzt; solche Einträge
 können auch nicht Bestwert werden. Bei einer Baseline von praktisch null gibt es keine
 relative Skala — dort entscheidet die Richtung der Differenz. Verglichen wird gegen den
@@ -207,8 +208,8 @@ schlechter. Das wird an zwei Stellen durchgesetzt:
    wird die Stufe sofort verworfen und die bisherige Basis unverändert weitergereicht
    (Teil 8, Punkt 3). Gemessen wird dann nichts, weil sich nichts geändert hat.
 2. *Nach* der Messung entscheidet der Referenz-Backtest, ob die Übernahme bestehen bleibt.
-   Bestätigt ist nur das Verdikt `BESSER`. `NEUTRAL` bedeutet bis zu zwei Prozent
-   schlechter, `UNBEKANNT` heißt, dass sich Profit/DD nicht vergleichen ließ — beides ist
+   Bestätigt ist nur das Verdikt `BESSER`. `NEUTRAL` bedeutet eine Abweichung von weniger
+   als einem Prozent, `UNBEKANNT` heißt, dass sich Profit/DD nicht vergleichen ließ — beides ist
    kein Beleg für eine Verbesserung. Nur die allererste Messung ist eine Ausnahme: Sie hat
    nichts, womit sie sich vergleichen könnte, meldet deshalb ebenfalls `UNBEKANNT` und
    begründet den Master, statt gegen einen noch nicht existierenden Master verworfen zu
@@ -234,9 +235,10 @@ persistiertes Feld den Absturz während des minutenlangen Referenzlaufs — der 
 Kandidat steht zu diesem Zeitpunkt bereits im Task-Snapshot.
 
 Aus demselben Grund wird auch die Profit/DD-Untergrenze erst nach einer bestätigten Messung
-angehoben. Vorher angehoben würde sie einen Absturz überleben und die Kette auf ein Niveau
-festnageln, das nie gemessen wurde. Weil sie nur bei Bestätigung steigt, muss sie beim
-Rückfall auch nicht zurückgesetzt werden.
+angehoben. Gespeichert wird dabei das Profit/DD des Referenzlaufs, nicht die vorherige
+Optimizer-Schätzung. Andernfalls könnte eine zu optimistische Schätzung spätere, tatsächlich
+bessere Kandidaten bereits vor ihrer Messung blockieren. Weil die Untergrenze nur bei
+Bestätigung steigt, muss sie beim Rückfall auch nicht zurückgesetzt werden.
 
 Beim Weiterreichen gilt: Werte kommen aus dem bewiesenen Master, Suchbänder aus der Vorlage
 der Zielstufe. `carryBasisToNextOptimizer(...)` übergibt die bewiesene Basis deshalb als
