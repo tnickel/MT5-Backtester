@@ -216,9 +216,26 @@ public final class OptimizationFilterDialogs {
         });
 
         boolean[] applied = {false};
+        double[] recoveryRange = new double[2];
         Button applyBtn = new Button("\u2714 \u00dcbernehmen & Schlie\u00dfen");
         applyBtn.setStyle("-fx-background-color: #00e5ff; -fx-text-fill: #0d0f17; -fx-font-weight: bold;");
         applyBtn.setOnAction(e -> {
+            Double rMin = parseRecoveryThreshold(tfMin, "Min", dialog);
+            if (rMin == null) return;
+
+            Double rMax = parseRecoveryThreshold(tfMax, "Max", dialog);
+            if (rMax == null) return;
+
+            if (rMax <= rMin) {
+                showRecoveryValidationError(dialog,
+                        "Der Max-Wert muss gr\u00f6\u00dfer als der Min-Wert sein.");
+                tfMax.requestFocus();
+                tfMax.selectAll();
+                return;
+            }
+
+            recoveryRange[0] = rMin;
+            recoveryRange[1] = rMax;
             applied[0] = true;
             dialog.close();
         });
@@ -283,16 +300,8 @@ public final class OptimizationFilterDialogs {
         dialog.showAndWait();
 
         if (applied[0]) {
-            double rMin = 1.0;
-            double rMax = 5.0;
-            try {
-                rMin = Double.parseDouble(tfMin.getText().trim().replace(',', '.'));
-            } catch (Exception ex) {}
-            try {
-                rMax = Double.parseDouble(tfMax.getText().trim().replace(',', '.'));
-            } catch (Exception ex) {}
-            db.saveSetting("opt.weight.recovery.min", String.valueOf(rMin));
-            db.saveSetting("opt.weight.recovery.max", String.valueOf(rMax));
+            db.saveSetting("opt.weight.recovery.min", String.valueOf(recoveryRange[0]));
+            db.saveSetting("opt.weight.recovery.max", String.valueOf(recoveryRange[1]));
 
             db.saveSetting("opt.weight.btProfit", String.valueOf(spinners[0].getValue()));
             db.saveSetting("opt.weight.fwProfit", String.valueOf(spinners[1].getValue()));
@@ -304,6 +313,32 @@ public final class OptimizationFilterDialogs {
             db.saveSetting("opt.weight.recovery", String.valueOf(spinners[7].getValue()));
             applyCombinedFilter.run();
         }
+    }
+
+    private static Double parseRecoveryThreshold(TextField field, String name,
+                                                   javafx.stage.Window owner) {
+        try {
+            double value = Double.parseDouble(field.getText().trim().replace(',', '.'));
+            if (!Double.isFinite(value)) {
+                throw new NumberFormatException("non-finite value");
+            }
+            return value;
+        } catch (NumberFormatException ex) {
+            showRecoveryValidationError(owner,
+                    name + " muss eine endliche Zahl sein (z. B. 1,0 oder 5,0).");
+            field.requestFocus();
+            field.selectAll();
+            return null;
+        }
+    }
+
+    private static void showRecoveryValidationError(javafx.stage.Window owner, String message) {
+        Alert alert = new Alert(Alert.AlertType.ERROR);
+        alert.setTitle("Ung\u00fcltige Erholungsfaktor-Skalierung");
+        alert.setHeaderText("Die Einstellungen wurden nicht gespeichert.");
+        alert.setContentText(message);
+        alert.initOwner(owner);
+        alert.showAndWait();
     }
 
     public static void showFilterDialog(javafx.scene.Node owner,

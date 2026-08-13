@@ -9,6 +9,8 @@ import com.backtester.engine.OptimizationRunner;
 import com.backtester.report.OptimizationResult;
 import com.github.lgooddatepicker.components.DatePicker;
 import com.github.lgooddatepicker.components.DatePickerSettings;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import javax.swing.*;
 import javax.swing.table.DefaultTableModel;
@@ -28,8 +30,11 @@ import java.time.LocalDate;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.Vector;
+import java.util.concurrent.ExecutionException;
 
 public class OptimizationPanel extends JPanel {
+
+    private static final Logger log = LoggerFactory.getLogger(OptimizationPanel.class);
 
     private final LogPanel logPanel;
     private final AppConfig config;
@@ -868,10 +873,26 @@ public class OptimizationPanel extends JPanel {
                             res
                         ).setVisible(true);
                     } else {
-                        JOptionPane.showMessageDialog(OptimizationPanel.this, "Backtest failed.", "Error", JOptionPane.ERROR_MESSAGE);
+                        String detail = res != null && res.getMessage() != null && !res.getMessage().isBlank()
+                                ? res.getMessage() : "No successful result was returned.";
+                        log.error("Single backtest for optimization pass {} failed: {}", passNumber, detail);
+                        logPanel.log("ERROR", "Single backtest failed: " + detail);
+                        JOptionPane.showMessageDialog(OptimizationPanel.this,
+                                "Backtest failed: " + detail, "Error", JOptionPane.ERROR_MESSAGE);
                     }
-                } catch (Exception ex) {
-                    ex.printStackTrace();
+                } catch (InterruptedException ex) {
+                    Thread.currentThread().interrupt();
+                    log.error("Interrupted while completing single backtest for optimization pass {}", passNumber, ex);
+                    logPanel.log("ERROR", "Single backtest completion was interrupted.");
+                    JOptionPane.showMessageDialog(OptimizationPanel.this,
+                            "Backtest completion was interrupted.", "Error", JOptionPane.ERROR_MESSAGE);
+                } catch (ExecutionException ex) {
+                    Throwable cause = ex.getCause() != null ? ex.getCause() : ex;
+                    log.error("Single backtest for optimization pass {} failed", passNumber, cause);
+                    logPanel.log("ERROR", "Single backtest failed: " + cause.getMessage());
+                    JOptionPane.showMessageDialog(OptimizationPanel.this,
+                            "Backtest failed. See the application log for details.",
+                            "Error", JOptionPane.ERROR_MESSAGE);
                 }
             }
         }.execute();

@@ -229,14 +229,20 @@ public final class WorkflowScoreWeightsConfigDialog {
         Button applyBtn = new Button("✔ Übernehmen & Schließen");
         applyBtn.setStyle("-fx-background-color: #00e5ff; -fx-text-fill: #0d0f17; -fx-font-weight: bold;");
         applyBtn.setOnAction(e -> {
-            double rMin = 1.0;
-            double rMax = 5.0;
-            try {
-                rMin = Double.parseDouble(tfMin.getText().trim().replace(',', '.'));
-            } catch (Exception ex) {}
-            try {
-                rMax = Double.parseDouble(tfMax.getText().trim().replace(',', '.'));
-            } catch (Exception ex) {}
+            Double rMin = parseRecoveryThreshold(tfMin, "Min", dialog);
+            if (rMin == null) return;
+
+            Double rMax = parseRecoveryThreshold(tfMax, "Max", dialog);
+            if (rMax == null) return;
+
+            if (rMax <= rMin) {
+                showRecoveryValidationError(dialog,
+                        "Der Max-Wert muss gr\u00f6\u00dfer als der Min-Wert sein.");
+                tfMax.requestFocus();
+                tfMax.selectAll();
+                return;
+            }
+
             db.saveSetting("opt.weight.recovery.min", String.valueOf(rMin));
             db.saveSetting("opt.weight.recovery.max", String.valueOf(rMax));
 
@@ -304,6 +310,31 @@ public final class WorkflowScoreWeightsConfigDialog {
         dialog.setScene(scene);
         WorkflowConfigDialogSupport.applyTheme(dialog, owner);
         dialog.showAndWait();
+    }
+
+    private static Double parseRecoveryThreshold(TextField field, String name, Window owner) {
+        try {
+            double value = Double.parseDouble(field.getText().trim().replace(',', '.'));
+            if (!Double.isFinite(value)) {
+                throw new NumberFormatException("non-finite value");
+            }
+            return value;
+        } catch (NumberFormatException ex) {
+            showRecoveryValidationError(owner,
+                    name + " muss eine endliche Zahl sein (z. B. 1,0 oder 5,0).");
+            field.requestFocus();
+            field.selectAll();
+            return null;
+        }
+    }
+
+    private static void showRecoveryValidationError(Window owner, String message) {
+        Alert alert = new Alert(Alert.AlertType.ERROR);
+        alert.setTitle("Ung\u00fcltige Erholungsfaktor-Skalierung");
+        alert.setHeaderText("Die Einstellungen wurden nicht gespeichert.");
+        alert.setContentText(message);
+        alert.initOwner(owner);
+        alert.showAndWait();
     }
 
 }

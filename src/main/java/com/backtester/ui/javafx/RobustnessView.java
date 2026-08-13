@@ -15,12 +15,16 @@ import javafx.geometry.Pos;
 import javafx.scene.control.*;
 import javafx.scene.layout.*;
 import javafx.stage.FileChooser;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.File;
 import java.time.LocalDate;
 import java.util.Optional;
 
 public class RobustnessView {
+
+    private static final Logger log = LoggerFactory.getLogger(RobustnessView.class);
 
     private final BorderPane root;
     private final LogView logView;
@@ -979,7 +983,7 @@ public class RobustnessView {
                 paramTable.refresh();
                 Throwable ex = currentTask.getException();
                 logView.log("ERROR", "Robustness Scan failed: " + (ex != null ? ex.getMessage() : "Unknown Error"));
-                if (ex != null) ex.printStackTrace();
+                if (ex != null) log.error("Robustness scan task failed", ex);
                 setUIState(false);
                 progress.setProgress(0);
                 progressLabel.setText("Scan failed.");
@@ -990,7 +994,7 @@ public class RobustnessView {
             t.start();
         } catch (Exception ex) {
             logView.log("ERROR", "Error in startScan: " + ex.getMessage());
-            ex.printStackTrace();
+            log.error("Failed to start robustness scan", ex);
         }
     }
 

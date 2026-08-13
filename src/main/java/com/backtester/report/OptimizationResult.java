@@ -3,11 +3,16 @@ package com.backtester.report;
 import java.util.*;
 import java.util.stream.Collectors;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 /**
  * Holds the results of an MT5 optimization run.
  * Contains a list of optimization passes, each with parameter values and performance metrics.
  */
 public class OptimizationResult {
+
+    private static final Logger log = LoggerFactory.getLogger(OptimizationResult.class);
 
     /** A single optimization pass (one parameter combination tested) */
     public static class Pass {
@@ -511,10 +516,16 @@ public class OptimizationResult {
         }
 
         private static double readSetting(com.backtester.database.DatabaseManager db, String key, double def) {
+            String value = db.getSetting(key, String.valueOf(def));
             try {
-                String v = db.getSetting(key, String.valueOf(def));
-                return Double.parseDouble(v);
-            } catch (Exception e) {
+                double parsed = Double.parseDouble(value);
+                if (!Double.isFinite(parsed)) {
+                    throw new NumberFormatException("non-finite value");
+                }
+                return parsed;
+            } catch (NumberFormatException ex) {
+                log.warn("Ung\u00fcltiger numerischer Konfigurationswert f\u00fcr {}: '{}'; verwende Default {}",
+                        key, value, def, ex);
                 return def;
             }
         }

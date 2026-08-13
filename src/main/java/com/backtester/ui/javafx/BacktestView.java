@@ -669,7 +669,6 @@ public class BacktestView {
         valCol.setCellValueFactory(new PropertyValueFactory<>("value"));
         valCol.setCellFactory(EnumAwareParamCell.forTableColumn());
         valCol.setOnEditCommit(e -> {
-            System.out.println("[DEBUG] valCol.onEditCommit: param=" + e.getRowValue().getName() + ", old=" + e.getOldValue() + ", new=" + e.getNewValue());
             e.getRowValue().setValue(e.getNewValue());
         });
         valCol.setPrefWidth(100);
@@ -678,7 +677,6 @@ public class BacktestView {
         startCol.setCellValueFactory(new PropertyValueFactory<>("optimizeStart"));
         startCol.setCellFactory(EnumAwareParamCell.forTableColumn());
         startCol.setOnEditCommit(e -> {
-            System.out.println("[DEBUG] startCol.onEditCommit: param=" + e.getRowValue().getName() + ", old=" + e.getOldValue() + ", new=" + e.getNewValue());
             e.getRowValue().setOptimizeStart(e.getNewValue());
         });
 
@@ -686,7 +684,6 @@ public class BacktestView {
         stepCol.setCellValueFactory(new PropertyValueFactory<>("optimizeStep"));
         stepCol.setCellFactory(EnumAwareParamCell.forTableColumn());
         stepCol.setOnEditCommit(e -> {
-            System.out.println("[DEBUG] stepCol.onEditCommit: param=" + e.getRowValue().getName() + ", old=" + e.getOldValue() + ", new=" + e.getNewValue());
             e.getRowValue().setOptimizeStep(e.getNewValue());
         });
 
@@ -694,7 +691,6 @@ public class BacktestView {
         stopCol.setCellValueFactory(new PropertyValueFactory<>("optimizeEnd"));
         stopCol.setCellFactory(EnumAwareParamCell.forTableColumn());
         stopCol.setOnEditCommit(e -> {
-            System.out.println("[DEBUG] stopCol.onEditCommit: param=" + e.getRowValue().getName() + ", old=" + e.getOldValue() + ", new=" + e.getNewValue());
             e.getRowValue().setOptimizeEnd(e.getNewValue());
         });
 

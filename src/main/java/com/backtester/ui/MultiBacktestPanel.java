@@ -8,6 +8,8 @@ import com.backtester.engine.MultiBacktestRunner;
 import com.backtester.report.BacktestResult;
 import com.github.lgooddatepicker.components.DatePicker;
 import com.github.lgooddatepicker.components.DatePickerSettings;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import javax.swing.*;
 import javax.swing.table.DefaultTableModel;
@@ -22,12 +24,16 @@ import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CancellationException;
+import java.util.concurrent.ExecutionException;
 
 /**
  * Multi-Backtester configuration and execution panel.
  * Master-Detail View implementation for accumulated batch runs.
  */
 public class MultiBacktestPanel extends JPanel {
+
+    private static final Logger log = LoggerFactory.getLogger(MultiBacktestPanel.class);
 
     private final LogPanel logPanel;
     private final AppConfig config;
@@ -533,8 +539,15 @@ public class MultiBacktestPanel extends JPanel {
     private void openSelectedMultiReport() {
         BatchRunModel selected = batchList.getSelectedValue();
         if (selected != null && selected.reportPath != null && Files.exists(selected.reportPath)) {
-            try { Desktop.getDesktop().browse(selected.reportPath.toUri()); } 
-            catch (Exception ex) { ex.printStackTrace(); }
+            try {
+                Desktop.getDesktop().browse(selected.reportPath.toUri());
+            } catch (Exception ex) {
+                log.error("Failed to open multi-backtest report: {}", selected.reportPath, ex);
+                logPanel.log("ERROR", "Failed to open Multi-Report: " + ex.getMessage());
+                JOptionPane.showMessageDialog(this,
+                        "Failed to open the Multi-Report: " + ex.getMessage(),
+                        "Error", JOptionPane.ERROR_MESSAGE);
+            }
         } else {
             JOptionPane.showMessageDialog(this, "No valid Multi-Report generated for this node yet.", "Info", JOptionPane.INFORMATION_MESSAGE);
         }
@@ -662,14 +675,37 @@ public class MultiBacktestPanel extends JPanel {
         ) {
             @Override
             protected void done() {
-                try { get(); } catch (Exception ex) { ex.printStackTrace(); }
-                finally {
+                boolean completedSuccessfully = false;
+                boolean cancelled = false;
+                try {
+                    get();
+                    completedSuccessfully = true;
+                } catch (CancellationException ex) {
+                    cancelled = true;
+                    log.info("Multi-backtest batch was cancelled");
+                    logPanel.log("WARN", "Multi-backtest batch was cancelled.");
+                } catch (InterruptedException ex) {
+                    Thread.currentThread().interrupt();
+                    log.error("Interrupted while completing multi-backtest batch", ex);
+                    logPanel.log("ERROR", "Multi-backtest batch completion was interrupted.");
+                } catch (ExecutionException ex) {
+                    Throwable cause = ex.getCause() != null ? ex.getCause() : ex;
+                    log.error("Multi-backtest batch failed", cause);
+                    logPanel.log("ERROR", "Multi-backtest batch failed: " + cause.getMessage());
+                } finally {
                     startButton.setEnabled(true);
                     cancelButton.setEnabled(false);
-                    progressBar.setString("Batch finished");
-                    newBatch.reportPath = currentRunner.getGeneratedReportPath();
+                    progressBar.setString(completedSuccessfully ? "Batch finished"
+                            : cancelled ? "Batch cancelled" : "Batch failed");
+                    newBatch.reportPath = completedSuccessfully ? currentRunner.getGeneratedReportPath() : null;
                     batchList.revalidate();
                     batchList.repaint();
+
+                    if (!completedSuccessfully && !cancelled) {
+                        JOptionPane.showMessageDialog(MultiBacktestPanel.this,
+                                "The multi-backtest batch failed. See the application log for details.",
+                                "Batch failed", JOptionPane.ERROR_MESSAGE);
+                    }
                     
                     if (newBatch.reportPath != null) {
                         try {
@@ -696,8 +732,15 @@ public class MultiBacktestPanel extends JPanel {
                             logPanel.log("ERROR", "Failed to save Multi-Report to DB: " + ex.getMessage());
                         }
 
-                        try { Desktop.getDesktop().browse(newBatch.reportPath.toUri()); } 
-                        catch (Exception ex) { ex.printStackTrace(); }
+                        try {
+                            Desktop.getDesktop().browse(newBatch.reportPath.toUri());
+                        } catch (Exception ex) {
+                            log.error("Failed to open generated multi-backtest report: {}", newBatch.reportPath, ex);
+                            logPanel.log("ERROR", "Multi-Report was generated but could not be opened: " + ex.getMessage());
+                            JOptionPane.showMessageDialog(MultiBacktestPanel.this,
+                                    "The Multi-Report was generated but could not be opened: " + ex.getMessage(),
+                                    "Error", JOptionPane.ERROR_MESSAGE);
+                        }
                     }
                 }
             }

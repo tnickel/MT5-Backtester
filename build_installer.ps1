@@ -1,19 +1,56 @@
 param(
     [string]$AppVersion = "1.2.6",
-    [string]$AppName = "MT5 Backtester"
+    [string]$AppName = "MT5 Backtester",
+    [string]$JdkPath = (Join-Path $env:USERPROFILE ".jdk\jdk-25")
 )
 
 $ErrorActionPreference = "Stop"
+
+if (-Not (Test-Path -LiteralPath $JdkPath -PathType Container)) {
+    throw "JDK 25 directory not found: $JdkPath"
+}
+
+$resolvedJdkPath = (Resolve-Path -LiteralPath $JdkPath).Path
+$jdkBinPath = Join-Path $resolvedJdkPath "bin"
+$javaPath = Join-Path $jdkBinPath "java.exe"
+$javacPath = Join-Path $jdkBinPath "javac.exe"
+$jpackagePath = Join-Path $jdkBinPath "jpackage.exe"
+
+foreach ($requiredTool in @($javaPath, $javacPath, $jpackagePath)) {
+    if (-Not (Test-Path -LiteralPath $requiredTool -PathType Leaf)) {
+        throw "Required JDK 25 tool not found: $requiredTool"
+    }
+}
+
+$javaVersionOutput = (& $javaPath -version 2>&1 | Out-String).Trim()
+if ($LASTEXITCODE -ne 0) {
+    throw "Could not determine the Java version from '$javaPath'. Output: $javaVersionOutput"
+}
+
+$javaVersionMatch = [regex]::Match($javaVersionOutput, 'version\s+"(?<major>\d+)')
+if (-Not $javaVersionMatch.Success) {
+    throw "Could not parse the Java version from '$javaPath'. Output: $javaVersionOutput"
+}
+
+$javaMajorVersion = [int]$javaVersionMatch.Groups["major"].Value
+if ($javaMajorVersion -lt 25) {
+    throw "JDK 25 or newer is required, but '$resolvedJdkPath' provides Java $javaMajorVersion."
+}
+
+# Ensure Maven and every Java subprocess use the same JDK as jpackage.
+$env:JAVA_HOME = $resolvedJdkPath
+$env:Path = "$jdkBinPath;$env:Path"
+Write-Host "Using JDK $javaMajorVersion from $resolvedJdkPath"
 
 Write-Host "Creating install directory..."
 New-Item -ItemType Directory -Force -Path "install" | Out-Null
 
 Write-Host "Building project via Maven (clean package)..."
-$mavenOutput = mvn clean package 
+& mvn clean package
 if ($LASTEXITCODE -ne 0) {
-    Write-Host "Maven build failed!" -ForegroundColor Red
-    Write-Host $mavenOutput
-    exit $LASTEXITCODE
+    $mavenExitCode = $LASTEXITCODE
+    Write-Host "Maven build failed with code $mavenExitCode." -ForegroundColor Red
+    exit $mavenExitCode
 }
 
 $jarPath = "target\mt5-backtester-${AppVersion}.jar"
@@ -25,8 +62,6 @@ if (-Not (Test-Path $jarPath)) {
 Write-Host "Isolating JAR for packaging..."
 New-Item -ItemType Directory -Force -Path "target\jpackage-input" | Out-Null
 Copy-Item -Path $jarPath -Destination "target\jpackage-input\$($AppName).jar" -Force
-
-$jpackagePath = "C:\Users\tnickel\.jdk\jdk-25\bin\jpackage.exe"
 
 Write-Host "Step 1: Generating App Image..."
 if (Test-Path "target\app-image") { Remove-Item -Recurse -Force "target\app-image" }

@@ -1720,15 +1720,35 @@ public class OptimizationView {
         if (!forwardModeCombo.getItems().contains(savedFwd)) forwardModeCombo.getSelectionModel().select(0);
         else forwardModeCombo.setValue(savedFwd);
 
-        try {
-            String from = config.get("optimization.fromDate", "");
-            if (!from.isEmpty()) fromDatePicker.setValue(java.time.LocalDate.parse(from));
-            else fromDatePicker.setValue(java.time.LocalDate.now().minusYears(1));
+        java.time.LocalDate today = java.time.LocalDate.now();
+        String fromKey = "optimization.fromDate";
+        String from = config.get(fromKey, "");
+        java.time.LocalDate defaultFrom = today.minusYears(1);
+        if (from.isEmpty()) {
+            fromDatePicker.setValue(defaultFrom);
+        } else {
+            try {
+                fromDatePicker.setValue(java.time.LocalDate.parse(from));
+            } catch (java.time.format.DateTimeParseException ex) {
+                log.warn("Invalid configuration value '{}' for key '{}'; using default {}.",
+                        from, fromKey, defaultFrom, ex);
+                fromDatePicker.setValue(defaultFrom);
+            }
+        }
 
-            String to = config.get("optimization.toDate", "");
-            if (!to.isEmpty()) toDatePicker.setValue(java.time.LocalDate.parse(to));
-            else toDatePicker.setValue(java.time.LocalDate.now());
-        } catch (Exception e) {}
+        String toKey = "optimization.toDate";
+        String to = config.get(toKey, "");
+        if (to.isEmpty()) {
+            toDatePicker.setValue(today);
+        } else {
+            try {
+                toDatePicker.setValue(java.time.LocalDate.parse(to));
+            } catch (java.time.format.DateTimeParseException ex) {
+                log.warn("Invalid configuration value '{}' for key '{}'; using default {}.",
+                        to, toKey, today, ex);
+                toDatePicker.setValue(today);
+            }
+        }
 
         // Load weights and filters from database
         if (combinedPanel != null) {
@@ -1896,7 +1916,7 @@ public class OptimizationView {
         currentTask.setOnFailed(e -> {
             Throwable ex = currentTask.getException();
             logView.log("ERROR", "Task failed: " + (ex != null ? ex.getMessage() : "Unknown Error"));
-            if (ex != null) ex.printStackTrace();
+            if (ex != null) log.error("Optimization task failed", ex);
             setUIState(false);
             progressBar.setProgress(0);
             progressLabel.setText("Error");
@@ -2008,7 +2028,7 @@ public class OptimizationView {
                 logView.log("ERROR", "Optimization failed: " + result.getMessage());
             }
         } catch (Exception t) {
-            t.printStackTrace();
+            log.error("Failed to update optimization result in the UI", t);
             logView.log("ERROR", "UI Update crashed: " + t.getMessage());
         }
     }

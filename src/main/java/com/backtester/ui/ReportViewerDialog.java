@@ -1,6 +1,8 @@
 package com.backtester.ui;
 
 import com.backtester.report.BacktestResult;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
@@ -19,6 +21,8 @@ import java.nio.file.StandardCopyOption;
  *   - Buttons to open report files
  */
 public class ReportViewerDialog extends JDialog {
+
+    private static final Logger log = LoggerFactory.getLogger(ReportViewerDialog.class);
 
     private static final Color BG_DARK = new Color(22, 25, 33);
     private static final Color BG_CARD = new Color(32, 36, 48);
@@ -467,7 +471,7 @@ public class ReportViewerDialog extends JDialog {
                     }
                 }
             } catch (Exception ex) {
-                ex.printStackTrace();
+                log.error("Failed to export backtest report to CSV", ex);
                 JOptionPane.showMessageDialog(this, "Failed to export CSV: " + ex.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
             }
         }
