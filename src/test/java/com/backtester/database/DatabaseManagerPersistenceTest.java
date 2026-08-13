@@ -5,7 +5,6 @@ import org.junit.Before;
 import org.junit.Test;
 
 import java.io.File;
-import java.lang.reflect.Field;
 import java.util.List;
 
 import static org.junit.Assert.*;
@@ -25,43 +24,19 @@ public class DatabaseManagerPersistenceTest {
 
     @Before
     public void setUp() throws Exception {
-        // Reset the singleton instance using reflection so we start with a clean DatabaseManager
-        try {
-            Field instanceField = DatabaseManager.class.getDeclaredField("instance");
-            instanceField.setAccessible(true);
-            instanceField.set(null, null);
-        } catch (Exception e) {
-            // Ignore
-        }
-
         // Create a temporary SQLite DB for isolated testing
         tempDbFile = File.createTempFile("backtester_test_", ".db");
         tempDbFile.deleteOnExit();
 
-        // Use reflection to create a fresh DatabaseManager pointing to our temp DB
-        db = DatabaseManager.getInstance();
-        Field dbUrlField = DatabaseManager.class.getDeclaredField("dbUrl");
-        dbUrlField.setAccessible(true);
-        dbUrlField.set(db, "jdbc:sqlite:" + tempDbFile.getAbsolutePath());
-
-        // Re-initialize the database tables
-        java.lang.reflect.Method initMethod = DatabaseManager.class.getDeclaredMethod("initializeDatabase");
-        initMethod.setAccessible(true);
-        initMethod.invoke(db);
+        // Construct directly with the temporary URL. Calling getInstance() here would
+        // initialize and potentially migrate the real database under user.home first.
+        db = new DatabaseManager("jdbc:sqlite:" + tempDbFile.getAbsolutePath());
     }
 
     @After
     public void tearDown() {
         if (tempDbFile != null && tempDbFile.exists()) {
             tempDbFile.delete();
-        }
-        // Reset the singleton instance so it doesn't leak the temporary dbUrl to other tests
-        try {
-            Field instanceField = DatabaseManager.class.getDeclaredField("instance");
-            instanceField.setAccessible(true);
-            instanceField.set(null, null);
-        } catch (Exception e) {
-            // Ignore
         }
     }
 
@@ -309,6 +284,47 @@ public class DatabaseManagerPersistenceTest {
     }
 
     @Test
+    public void testSettings_failedSaveIsNotPublishedThroughCache() {
+        DatabaseManager unavailable = new DatabaseManager("jdbc:unsupported:settings-write");
+
+        unavailable.saveSetting("failed.key", "not-persisted");
+
+        assertNull(unavailable.getSetting("failed.key"));
+    }
+
+    @Test
+    public void testSettings_failedReadIsNotCachedAsMissing() throws Exception {
+        DatabaseManager unavailable = new DatabaseManager("jdbc:unsupported:settings-read");
+
+        assertNull(unavailable.getSetting("temporarily.unavailable"));
+
+        java.lang.reflect.Field cacheField = DatabaseManager.class.getDeclaredField("settingsCache");
+        cacheField.setAccessible(true);
+        java.util.Map<?, ?> cache = (java.util.Map<?, ?>) cacheField.get(unavailable);
+        assertFalse(cache.containsKey("temporarily.unavailable"));
+    }
+
+    @Test
+    public void testWorkflowStrategyConfigSaveReportsDatabaseFailure() {
+        DatabaseManager unavailable = new DatabaseManager("jdbc:unsupported:strategy-config");
+
+        assertFalse(unavailable.saveWorkflowStrategyConfig("TestEA", "{}"));
+    }
+
+    @Test(expected = DatabaseManager.DatabaseAccessException.class)
+    public void testCustomProjectReadDistinguishesDatabaseFailureFromEmptyResult() {
+        DatabaseManager unavailable = new DatabaseManager("jdbc:unsupported:custom-projects");
+
+        unavailable.getAllCustomProjects();
+    }
+
+    @Test
+    public void testCustomProjectReadReturnsEmptyListForSuccessfulEmptyDatabase() {
+        assertNotNull(db.getAllCustomProjects());
+        assertTrue(db.getAllCustomProjects().isEmpty());
+    }
+
+    @Test
     public void testTradeFirstProfileIsInitialized() {
         assertEquals("1", db.getSetting("workflow.selection.profile.version"));
         assertEquals("30", db.getSetting("opt.weight.fwTrades"));
@@ -446,8 +462,28 @@ public class DatabaseManagerPersistenceTest {
             stmt.execute("CREATE TABLE SENSITIVITY_DETAIL (" +
                     "id INTEGER PRIMARY KEY AUTOINCREMENT," +
                     "run_timestamp INTEGER," +
-                    "expert_name TEXT" +
+                    "pass_number INTEGER," +
+                    "pass_name TEXT," +
+                    "expert_name TEXT," +
+                    "symbol TEXT," +
+                    "parameter_name TEXT," +
+                    "base_value TEXT," +
+                    "period TEXT," +
+                    "base_profit REAL," +
+                    "mean_profit REAL," +
+                    "stddev REAL," +
+                    "cv REAL," +
+                    "min_profit REAL," +
+                    "max_profit REAL," +
+                    "num_variants INTEGER," +
+                    "sweep_start TEXT," +
+                    "sweep_step TEXT," +
+                    "sweep_end TEXT," +
+                    "curve_json TEXT" +
                     ")");
+            stmt.execute("INSERT INTO SENSITIVITY_DETAIL " +
+                    "(run_timestamp, pass_number, pass_name, expert_name, parameter_name) " +
+                    "VALUES (1234, 7, 'pass7', 'LegacyEA', 'LegacyParam')");
         }
 
         // Call initializeDatabase via reflection to trigger migration
@@ -455,27 +491,65 @@ public class DatabaseManagerPersistenceTest {
         initMethod.setAccessible(true);
         initMethod.invoke(db);
 
-        // Verify 'verdict' column now exists
+        // Verify the new column exists and the legacy row was retained.
         try (java.sql.Connection conn = db.getConnection();
-             java.sql.Statement stmt = conn.createStatement();
-             java.sql.ResultSet rs = stmt.executeQuery("PRAGMA table_info(SENSITIVITY_DETAIL)")) {
+             java.sql.Statement stmt = conn.createStatement()) {
             boolean hasVerdict = false;
-            while (rs.next()) {
-                if ("verdict".equals(rs.getString("name"))) {
-                    hasVerdict = true;
-                    break;
+            try (java.sql.ResultSet rs = stmt.executeQuery("PRAGMA table_info(SENSITIVITY_DETAIL)")) {
+                while (rs.next()) {
+                    if ("verdict".equals(rs.getString("name"))) {
+                        hasVerdict = true;
+                        break;
+                    }
                 }
             }
             assertTrue("verdict column should be added by schema migration", hasVerdict);
+            try (java.sql.ResultSet rs = stmt.executeQuery(
+                    "SELECT expert_name, parameter_name, verdict FROM SENSITIVITY_DETAIL WHERE run_timestamp = 1234")) {
+                assertTrue("legacy sensitivity row should be retained", rs.next());
+                assertEquals("LegacyEA", rs.getString("expert_name"));
+                assertEquals("LegacyParam", rs.getString("parameter_name"));
+                assertNull(rs.getString("verdict"));
+                assertFalse(rs.next());
+            }
         }
     }
 
     @Test
-    public void testEaConfigsTableMigration() throws Exception {
-        // Drop EA_SAVED_CONFIGS and recreate old EA_CONFIGS table
+    public void testOptimizationStateSchemaMigrationPreservesExistingState() throws Exception {
         try (java.sql.Connection conn = db.getConnection();
              java.sql.Statement stmt = conn.createStatement()) {
-            stmt.execute("DROP TABLE IF EXISTS EA_SAVED_CONFIGS");
+            stmt.execute("DROP TABLE IF EXISTS OPTIMIZATION_STATE");
+            stmt.execute("CREATE TABLE OPTIMIZATION_STATE (" +
+                    "id INTEGER PRIMARY KEY," +
+                    "opt_result_json TEXT," +
+                    "selected_passes_json TEXT" +
+                    ")");
+            stmt.execute("INSERT INTO OPTIMIZATION_STATE " +
+                    "(id, opt_result_json, selected_passes_json) VALUES (1, 'legacy-opt', 'legacy-selected')");
+        }
+
+        java.lang.reflect.Method initMethod = DatabaseManager.class.getDeclaredMethod("initializeDatabase");
+        initMethod.setAccessible(true);
+        initMethod.invoke(db);
+
+        String[] state = db.getOptimizationState();
+        assertNotNull(state);
+        assertEquals("legacy-opt", state[0]);
+        assertEquals("legacy-selected", state[1]);
+        assertNull(state[2]);
+    }
+
+    @Test
+    public void testEaConfigsTableMigration() throws Exception {
+        // Simulate a prior partial migration: the target row already exists while the
+        // legacy table was not dropped. A retry must not duplicate the row.
+        try (java.sql.Connection conn = db.getConnection();
+             java.sql.Statement stmt = conn.createStatement()) {
+            stmt.execute("DELETE FROM EA_SAVED_CONFIGS");
+            stmt.execute("INSERT INTO EA_SAVED_CONFIGS " +
+                    "(expert_name, config_name, parameters_json, updated_at) VALUES (" +
+                    "'OldEA', 'Default Config', '{\"some\":\"config\"}', 111111)");
             stmt.execute("DROP TABLE IF EXISTS EA_CONFIGS");
             stmt.execute("CREATE TABLE EA_CONFIGS (" +
                     "expert_name TEXT," +

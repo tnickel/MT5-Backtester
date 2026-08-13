@@ -159,9 +159,11 @@
                 <artifactId>maven-jar-plugin</artifactId>
                 <version>3.3.0</version>
                 <configuration>
-                    <includes>
-                        <include>**/*</include>
-                    </includes>
+                    <archive>
+                        <manifest>
+                            <addDefaultImplementationEntries>true</addDefaultImplementationEntries>
+                        </manifest>
+                    </archive>
                 </configuration>
             </plugin>
 

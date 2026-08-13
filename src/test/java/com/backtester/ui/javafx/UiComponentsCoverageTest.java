@@ -81,7 +81,11 @@ public class UiComponentsCoverageTest {
     public void testSettingsView() {
         runAndWait(() -> {
             SettingsView view = new SettingsView();
-            assertNotNull(view.getView());
+            try {
+                assertNotNull(view.getView());
+            } finally {
+                view.shutdown();
+            }
         });
     }
 

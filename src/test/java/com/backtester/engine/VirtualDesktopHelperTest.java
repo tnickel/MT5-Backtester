@@ -5,9 +5,59 @@ import org.junit.Assume;
 import org.junit.Test;
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
+import java.nio.file.Path;
 import java.util.Collections;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 
 public class VirtualDesktopHelperTest {
+
+    @Test
+    public void processOutputIsDrainedBeforeSuccessfulCompletion() throws Exception {
+        Process process = childProcess("quick");
+        AtomicReference<String> output = new AtomicReference<>();
+
+        boolean completed = VirtualDesktopHelper.awaitProcess(
+                process, output::set, 5, TimeUnit.SECONDS);
+
+        Assert.assertTrue(completed);
+        Assert.assertEquals("READY", output.get());
+        Assert.assertFalse(process.isAlive());
+    }
+
+    @Test
+    public void timedOutProcessIsTerminatedWithoutWaitingForEndOfOutput() throws Exception {
+        Process process = childProcess("blocking");
+        long startedAt = System.nanoTime();
+
+        boolean completed = VirtualDesktopHelper.awaitProcess(
+                process, ignored -> { }, 100, TimeUnit.MILLISECONDS);
+
+        long elapsedMillis = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt);
+        Assert.assertFalse(completed);
+        Assert.assertFalse(process.isAlive());
+        Assert.assertTrue("Timeout handling took " + elapsedMillis + " ms", elapsedMillis < 5_000);
+    }
+
+    private static Process childProcess(String mode) throws Exception {
+        String executable = Path.of(System.getProperty("java.home"), "bin",
+                System.getProperty("os.name", "").toLowerCase().contains("win")
+                        ? "java.exe" : "java").toString();
+        String testClasses = Path.of(VirtualDesktopHelperTest.class.getProtectionDomain()
+                .getCodeSource().getLocation().toURI()).toString();
+        return new ProcessBuilder(executable, "-cp", testClasses,
+                TestChild.class.getName(), mode).redirectErrorStream(true).start();
+    }
+
+    public static final class TestChild {
+        public static void main(String[] args) throws Exception {
+            System.out.println("READY");
+            System.out.flush();
+            if (args.length > 0 && "blocking".equals(args[0])) {
+                Thread.sleep(TimeUnit.MINUTES.toMillis(1));
+            }
+        }
+    }
 
     /**
      * Opens a real Remote Desktop window to check that the helper moves it to virtual

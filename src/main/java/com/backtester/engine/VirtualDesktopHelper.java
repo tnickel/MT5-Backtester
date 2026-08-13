@@ -4,6 +4,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.BufferedReader;
+import java.io.Closeable;
+import java.io.IOException;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
@@ -11,6 +13,7 @@ import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
 
 /**
@@ -99,7 +102,12 @@ public class VirtualDesktopHelper {
                 pb.redirectOutput(ProcessBuilder.Redirect.DISCARD);
                 pb.redirectError(ProcessBuilder.Redirect.DISCARD);
                 Process p = pb.start();
-                p.waitFor(20, TimeUnit.SECONDS);
+                if (!awaitProcess(p, null, 20, TimeUnit.SECONDS)) {
+                    log.warn("PowerShell window-hider timed out after 20 seconds");
+                }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                log.warn("PowerShell window-hider interrupted");
             } catch (Exception e) {
                 log.error("Error in background window hider process", e);
             }
@@ -138,25 +146,25 @@ public class VirtualDesktopHelper {
             log.info("Starting process hidden: {} {}", executable, argString);
             Process psProcess = pb.start();
 
-            long targetPid = -1;
-            try (BufferedReader reader = new BufferedReader(new InputStreamReader(psProcess.getInputStream()))) {
-                String line;
-                while ((line = reader.readLine()) != null) {
-                    line = line.trim();
-                    log.debug("[VD-PS-Hide] {}", line);
-                    if (line.startsWith("STARTED_PID:")) {
-                        try {
-                            targetPid = Long.parseLong(line.substring("STARTED_PID:".length()).trim());
-                        } catch (NumberFormatException ignored) {}
-                    }
+            AtomicLong targetPid = new AtomicLong(-1L);
+            boolean completed = awaitProcess(psProcess, line -> {
+                log.debug("[VD-PS-Hide] {}", line);
+                if (line.startsWith("STARTED_PID:")) {
+                    try {
+                        targetPid.set(Long.parseLong(line.substring("STARTED_PID:".length()).trim()));
+                    } catch (NumberFormatException ignored) {}
                 }
+            }, 30, TimeUnit.SECONDS);
+
+            if (!completed) {
+                destroyStartedTarget(targetPid.get());
+                log.warn("PowerShell hidden launch timed out, falling back to normal start");
+                return startNormally(executable, args, workingDir);
             }
 
-            psProcess.waitFor(30, TimeUnit.SECONDS);
-
-            if (targetPid > 0) {
-                log.info("Process started hidden with PID: {}", targetPid);
-                final long finalPid = targetPid;
+            if (targetPid.get() > 0) {
+                log.info("Process started hidden with PID: {}", targetPid.get());
+                final long finalPid = targetPid.get();
                 return ProcessHandle.of(finalPid)
                     .map(ph -> (Process) new PidProcess(ph))
                     .orElse(null);
@@ -165,6 +173,10 @@ public class VirtualDesktopHelper {
                 return startNormally(executable, args, workingDir);
             }
 
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            log.warn("PowerShell hidden launch interrupted");
+            return null;
         } catch (Exception e) {
             log.error("Failed to start process hidden, falling back to normal start", e);
             return startNormally(executable, args, workingDir);
@@ -276,6 +288,7 @@ public class VirtualDesktopHelper {
     }
 
     private static void executePowerShellScript(String psScript, Consumer<String> lineConsumer, Path workingDir) {
+        Process ps = null;
         try {
             byte[] bytes = psScript.getBytes(StandardCharsets.UTF_16LE);
             String encoded = Base64.getEncoder().encodeToString(bytes);
@@ -287,20 +300,89 @@ public class VirtualDesktopHelper {
             if (workingDir != null) {
                 pb.directory(workingDir.toFile());
             }
-            Process ps = pb.start();
+            ps = pb.start();
+            if (!awaitProcess(ps, lineConsumer, 30, TimeUnit.SECONDS)) {
+                log.warn("PowerShell virtual-desktop command timed out after 30 seconds");
+            }
+        } catch (InterruptedException e) {
+            if (ps != null) terminateProcess(ps);
+            Thread.currentThread().interrupt();
+            log.warn("PowerShell virtual-desktop command interrupted");
+        } catch (Exception e) {
+            log.error("Failed to execute PowerShell script", e);
+        }
+    }
 
-            try (BufferedReader reader = new BufferedReader(new InputStreamReader(ps.getInputStream(), StandardCharsets.UTF_8))) {
+    /**
+     * Drains output concurrently so a silent or stuck child cannot block before the timeout.
+     * Package visibility permits a platform-independent lifecycle regression test.
+     */
+    static boolean awaitProcess(Process process,
+                                Consumer<String> lineConsumer,
+                                long timeout,
+                                TimeUnit unit) throws InterruptedException {
+        if (process == null) return false;
+        Consumer<String> sink = lineConsumer != null ? lineConsumer : ignored -> { };
+        Thread outputReader = new Thread(() -> {
+            try (BufferedReader reader = new BufferedReader(
+                    new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8))) {
                 String line;
                 while ((line = reader.readLine()) != null) {
                     line = line.trim();
-                    if (!line.isEmpty()) {
-                        lineConsumer.accept(line);
-                    }
+                    if (!line.isEmpty()) sink.accept(line);
                 }
+            } catch (IOException e) {
+                if (process.isAlive()) log.debug("PowerShell output stream ended unexpectedly", e);
+            } catch (RuntimeException e) {
+                log.warn("PowerShell output consumer failed", e);
             }
-            ps.waitFor(30, TimeUnit.SECONDS);
-        } catch (Exception e) {
-            log.error("Failed to execute PowerShell script", e);
+        }, "VirtualDesktop-PowerShell-Output");
+        outputReader.setDaemon(true);
+        outputReader.start();
+
+        boolean completed = false;
+        try {
+            completed = process.waitFor(timeout, unit);
+            if (!completed) terminateProcess(process);
+            return completed;
+        } finally {
+            if (!completed && process.isAlive()) terminateProcess(process);
+            closeQuietly(process.getOutputStream());
+            if (completed) outputReader.join(TimeUnit.SECONDS.toMillis(1));
+            closeQuietly(process.getInputStream());
+            closeQuietly(process.getErrorStream());
+            outputReader.join(TimeUnit.SECONDS.toMillis(1));
+        }
+    }
+
+    private static void terminateProcess(Process process) {
+        if (process == null || !process.isAlive()) return;
+        process.destroy();
+        try {
+            if (!process.waitFor(1, TimeUnit.SECONDS)) {
+                process.destroyForcibly();
+                process.waitFor(1, TimeUnit.SECONDS);
+            }
+        } catch (InterruptedException e) {
+            process.destroyForcibly();
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    private static void destroyStartedTarget(long pid) {
+        if (pid <= 0) return;
+        ProcessHandle.of(pid).ifPresent(handle -> {
+            handle.destroy();
+            if (handle.isAlive()) handle.destroyForcibly();
+        });
+    }
+
+    private static void closeQuietly(Closeable closeable) {
+        if (closeable == null) return;
+        try {
+            closeable.close();
+        } catch (IOException ignored) {
+            // Best effort during process cleanup.
         }
     }
 

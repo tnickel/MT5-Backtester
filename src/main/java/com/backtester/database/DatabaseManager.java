@@ -31,6 +31,12 @@ public class DatabaseManager {
         initializeDatabase();
     }
 
+    /** Package-private constructor for isolated persistence tests. */
+    DatabaseManager(String dbUrl) {
+        this.dbUrl = java.util.Objects.requireNonNull(dbUrl, "dbUrl");
+        initializeDatabase();
+    }
+
     public static synchronized DatabaseManager getInstance() {
         if (instance == null) {
             instance = new DatabaseManager();
@@ -209,22 +215,25 @@ public class DatabaseManager {
             stmt.execute(sqlCustomProjects);
             stmt.execute(sqlParamTranslations);
 
-            // Check if OPTIMIZATION_STATE has the sensitivity_results_json column, otherwise recreate it
+            // Migration: OPTIMIZATION_STATE gained sensitivity_results_json.
             try {
-                ResultSet rs = stmt.executeQuery("PRAGMA table_info(OPTIMIZATION_STATE)");
                 boolean hasSensitivity = false;
-                while (rs.next()) {
-                    if ("sensitivity_results_json".equals(rs.getString("name"))) {
-                        hasSensitivity = true;
-                        break;
+                boolean tableExists = false;
+                try (ResultSet rs = stmt.executeQuery("PRAGMA table_info(OPTIMIZATION_STATE)")) {
+                    while (rs.next()) {
+                        tableExists = true;
+                        if ("sensitivity_results_json".equals(rs.getString("name"))) {
+                            hasSensitivity = true;
+                            break;
+                        }
                     }
                 }
-                if (!hasSensitivity) {
-                    log.info("Old OPTIMIZATION_STATE schema detected (missing sensitivity_results_json). Recreating table...");
-                    stmt.execute("DROP TABLE IF EXISTS OPTIMIZATION_STATE");
+                if (tableExists && !hasSensitivity) {
+                    log.info("Migrating OPTIMIZATION_STATE: adding sensitivity_results_json column...");
+                    stmt.execute("ALTER TABLE OPTIMIZATION_STATE ADD COLUMN sensitivity_results_json TEXT");
                 }
             } catch (Exception e) {
-                // Ignore
+                log.warn("Could not migrate OPTIMIZATION_STATE for sensitivity results", e);
             }
             stmt.execute(sqlOptState);
             stmt.execute(sqlSettings);
@@ -272,37 +281,62 @@ public class DatabaseManager {
                 log.warn("Could not migrate CUSTOM_PROJECTS for sort_order column", e);
             }
 
-            // Check if SENSITIVITY_DETAIL has the new 'verdict' column, otherwise recreate it
+            // Migration: SENSITIVITY_DETAIL gained verdict.
             try {
-                ResultSet rs = stmt.executeQuery("PRAGMA table_info(SENSITIVITY_DETAIL)");
                 boolean hasVerdict = false;
-                while (rs.next()) {
-                    if ("verdict".equals(rs.getString("name"))) {
-                        hasVerdict = true;
-                        break;
+                boolean tableExists = false;
+                try (ResultSet rs = stmt.executeQuery("PRAGMA table_info(SENSITIVITY_DETAIL)")) {
+                    while (rs.next()) {
+                        tableExists = true;
+                        if ("verdict".equals(rs.getString("name"))) {
+                            hasVerdict = true;
+                            break;
+                        }
                     }
                 }
-                if (!hasVerdict) {
-                    log.info("Old SENSITIVITY_DETAIL schema detected. Recreating table...");
-                    stmt.execute("DROP TABLE IF EXISTS SENSITIVITY_DETAIL");
+                if (tableExists && !hasVerdict) {
+                    log.info("Migrating SENSITIVITY_DETAIL: adding verdict column...");
+                    stmt.execute("ALTER TABLE SENSITIVITY_DETAIL ADD COLUMN verdict TEXT");
                 }
             } catch (Exception e) {
-                // Ignore
+                log.warn("Could not migrate SENSITIVITY_DETAIL for verdict", e);
             }
             stmt.execute(sqlSensitivityDetail);
 
             // Migrate old EA_CONFIGS to EA_SAVED_CONFIGS
             try {
-                ResultSet rs = stmt.executeQuery("SELECT count(*) FROM sqlite_master WHERE type='table' AND name='EA_CONFIGS'");
-                if (rs.next() && rs.getInt(1) > 0) {
+                boolean legacyTableExists;
+                try (ResultSet rs = stmt.executeQuery(
+                        "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='EA_CONFIGS'")) {
+                    legacyTableExists = rs.next() && rs.getInt(1) > 0;
+                }
+                if (legacyTableExists) {
                     log.info("Migrating old EA_CONFIGS to new EA_SAVED_CONFIGS...");
-                    stmt.execute("INSERT INTO EA_SAVED_CONFIGS (expert_name, config_name, parameters_json, updated_at) " +
-                                 "SELECT expert_name, 'Default Config', parameters_json, updated_at FROM EA_CONFIGS");
-                    stmt.execute("DROP TABLE EA_CONFIGS");
-                    log.info("Migration successful.");
+                    conn.setAutoCommit(false);
+                    try {
+                        // A prior version could commit the INSERT and fail before DROP. Avoid
+                        // duplicating those exact rows when the migration is retried.
+                        stmt.execute("INSERT INTO EA_SAVED_CONFIGS " +
+                                "(expert_name, config_name, parameters_json, updated_at) " +
+                                "SELECT legacy.expert_name, 'Default Config', legacy.parameters_json, legacy.updated_at " +
+                                "FROM EA_CONFIGS legacy WHERE NOT EXISTS (" +
+                                "SELECT 1 FROM EA_SAVED_CONFIGS saved " +
+                                "WHERE saved.expert_name IS legacy.expert_name " +
+                                "AND saved.config_name = 'Default Config' " +
+                                "AND saved.parameters_json IS legacy.parameters_json " +
+                                "AND saved.updated_at IS legacy.updated_at)");
+                        stmt.execute("DROP TABLE EA_CONFIGS");
+                        conn.commit();
+                        log.info("Migration successful.");
+                    } catch (Exception migrationError) {
+                        conn.rollback();
+                        throw migrationError;
+                    } finally {
+                        conn.setAutoCommit(true);
+                    }
                 }
             } catch (Exception e) {
-                log.warn("Could not migrate EA_CONFIGS (might not exist or already migrated)", e);
+                log.warn("Could not migrate EA_CONFIGS; legacy data was left intact", e);
             }
 
             // Apply legacy defaults and the trade-first profile exactly once.
@@ -643,16 +677,12 @@ public class DatabaseManager {
     // ====================================================================
 
     public void saveSetting(String key, String value) {
-        if (value == null) {
-            settingsCache.put(key, "__NULL__");
-        } else {
-            settingsCache.put(key, value);
-        }
         String sql = "INSERT OR REPLACE INTO APP_SETTINGS (key, value) VALUES (?, ?)";
         try (Connection conn = connect(); PreparedStatement p = conn.prepareStatement(sql)) {
             p.setString(1, key);
             p.setString(2, value);
             p.executeUpdate();
+            settingsCache.put(key, value == null ? "__NULL__" : value);
         } catch (SQLException e) {
             log.error("Failed to save setting '{}'", key, e);
         }
@@ -677,10 +707,11 @@ public class DatabaseManager {
                     return val;
                 }
             }
+            settingsCache.put(key, "__NULL__");
         } catch (SQLException e) {
             log.error("Failed to get setting '{}'", key, e);
+            return null;
         }
-        settingsCache.put(key, "__NULL__");
         return null;
     }
 
@@ -970,7 +1001,7 @@ public class DatabaseManager {
         }
     }
 
-    public void saveWorkflowStrategyConfig(String expertName, String configJson) {
+    public boolean saveWorkflowStrategyConfig(String expertName, String configJson) {
         String sql = "INSERT OR REPLACE INTO WORKFLOW_STRATEGY_CONFIGS (expert_name, config_json, updated_at) VALUES (?, ?, ?)";
         try (Connection conn = connect(); PreparedStatement pstmt = conn.prepareStatement(sql)) {
             pstmt.setString(1, expertName);
@@ -978,8 +1009,10 @@ public class DatabaseManager {
             pstmt.setLong(3, System.currentTimeMillis());
             pstmt.executeUpdate();
             log.info("Saved strategy config to DB for: {}", expertName);
+            return true;
         } catch (SQLException e) {
             log.error("Failed to save strategy config to database for: " + expertName, e);
+            return false;
         }
     }
 
@@ -1526,8 +1559,15 @@ public class DatabaseManager {
             }
         } catch (SQLException e) {
             log.error("Failed to load custom projects", e);
+            throw new DatabaseAccessException("Failed to load custom projects", e);
         }
         return list;
+    }
+
+    public static final class DatabaseAccessException extends RuntimeException {
+        public DatabaseAccessException(String message, Throwable cause) {
+            super(message, cause);
+        }
     }
 
     public static com.google.gson.Gson createCustomProjectGson() {

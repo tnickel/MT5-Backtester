@@ -1,4 +1,5 @@
 target/
+target-clean-verify/
 *.class
 *.jar
 *.war
@@ -16,6 +17,7 @@ target/
 
 # Backtester specific
 backtest_reports/
+reports/
 artifacts/
 .gemini/
 logs/
@@ -31,4 +33,5 @@ stdout.txt
 stderr.txt
 .vscode/
 doc/tests/*.pdf
-
+DbReader.java
+_tmp_*

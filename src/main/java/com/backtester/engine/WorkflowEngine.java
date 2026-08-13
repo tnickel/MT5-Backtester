@@ -366,8 +366,11 @@ public class WorkflowEngine {
 
             com.google.gson.Gson gson = buildGson();
             String json = gson.toJson(sc);
-            DatabaseManager.getInstance().saveWorkflowStrategyConfig(expertName, json);
-            log.info("Successfully saved strategy configuration for: {}", expertName);
+            if (DatabaseManager.getInstance().saveWorkflowStrategyConfig(expertName, json)) {
+                log.info("Successfully saved strategy configuration for: {}", expertName);
+            } else {
+                log.error("Failed to save strategy configuration for {}", expertName);
+            }
         } catch (Exception e) {
             log.error("Failed to save strategy configuration for " + expertName, e);
         }

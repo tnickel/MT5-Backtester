@@ -1,5 +1,6 @@
 package com.backtester.ui.javafx;
 
+import com.backtester.ApplicationVersion;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.control.Label;
@@ -15,6 +16,7 @@ public class MainView {
     private BorderPane root;
     private TabPane tabPane;
     private WorkflowView workflowView;
+    private SettingsView settingsView;
 
     public MainView() {
         root = new BorderPane();
@@ -33,7 +35,7 @@ public class MainView {
         title.setFont(Font.font("Segoe UI", FontWeight.BOLD, 24));
         title.setTextFill(Color.web("#00e5ff"));
 
-        Label subtitle = new Label("— Antigravity Protocol Suite v1.2.6");
+        Label subtitle = new Label("— Antigravity Protocol Suite " + ApplicationVersion.display());
         subtitle.setFont(Font.font("Segoe UI", FontWeight.BOLD, 16));
         subtitle.setTextFill(Color.web("#7e889a"));
 
@@ -99,11 +101,11 @@ public class MainView {
         DukascopyView dukascopyView = new DukascopyView(logView);
         tabPane.getTabs().add(new Tab("Dukascopy Data", dukascopyView.getView()));
         
-        SettingsView settingsView = new SettingsView();
+        settingsView = new SettingsView();
         tabPane.getTabs().add(new Tab("Settings", settingsView.getView()));
         
         tabPane.getTabs().add(new Tab("Log", logView.getView()));
-        logView.log("INFO", "MT5 Backtester v1.2.6 started (JavaFX Engine)");
+        logView.log("INFO", "MT5 Backtester " + ApplicationVersion.display() + " started (JavaFX Engine)");
         logView.log("INFO", "Antigravity Protocol Suite initialized.");
         logView.log("INFO", "Ready.");
         
@@ -129,5 +131,6 @@ public class MainView {
 
     public void shutdown() {
         if (workflowView != null) workflowView.shutdown();
+        if (settingsView != null) settingsView.shutdown();
     }
 }

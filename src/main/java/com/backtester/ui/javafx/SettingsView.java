@@ -13,11 +13,20 @@ import java.io.File;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 
 public class SettingsView {
 
     private final VBox root;
     private final AppConfig config;
+    private final ScheduledExecutorService backgroundExecutor =
+            Executors.newSingleThreadScheduledExecutor(runnable -> {
+                Thread thread = new Thread(runnable, "settings-background-worker");
+                thread.setDaemon(true);
+                return thread;
+            });
 
     // MetaTrader settings
     private TextField mt5PathField;
@@ -345,14 +354,32 @@ public class SettingsView {
         confirm.setHeaderText("Delete Log Files");
         confirm.showAndWait().ifPresent(response -> {
             if (response == ButtonType.YES) {
-                long deletedBytes = performLogDeletion();
-                double deletedMb = deletedBytes / (1024.0 * 1024.0);
-                Alert info = new Alert(Alert.AlertType.INFORMATION, 
-                    String.format("Successfully deleted %.2f MB of log files.", deletedMb));
-                info.showAndWait();
-                new Thread(this::updateDeleteButtonText).start();
+                deleteLogsBtn.setDisable(true);
+                backgroundExecutor.execute(() -> {
+                    try {
+                        long deletedBytes = performLogDeletion();
+                        double deletedMb = deletedBytes / (1024.0 * 1024.0);
+                        updateDeleteButtonText();
+                        javafx.application.Platform.runLater(() -> showLogDeletionResult(
+                                Alert.AlertType.INFORMATION,
+                                String.format("Successfully deleted %.2f MB of log files.", deletedMb)));
+                    } catch (RuntimeException ex) {
+                        javafx.application.Platform.runLater(() -> showLogDeletionResult(
+                                Alert.AlertType.ERROR,
+                                "Log files could not be deleted: " + ex.getMessage()));
+                    }
+                });
             }
         });
+    }
+
+    private void showLogDeletionResult(Alert.AlertType type, String message) {
+        try {
+            Alert alert = new Alert(type, message);
+            alert.showAndWait();
+        } finally {
+            deleteLogsBtn.setDisable(false);
+        }
     }
 
     private long performLogDeletion() {
@@ -455,20 +482,17 @@ public class SettingsView {
     }
 
     private void startLogSizeUpdater() {
-        Thread thread = new Thread(() -> {
-            while (true) {
-                try {
-                    updateDeleteButtonText();
-                    Thread.sleep(60 * 60 * 1000L); // 1 hour
-                } catch (InterruptedException e) {
-                    break;
-                } catch (Exception e) {
-                    try { Thread.sleep(60000); } catch (InterruptedException ie) { break; }
-                }
+        backgroundExecutor.scheduleWithFixedDelay(() -> {
+            try {
+                updateDeleteButtonText();
+            } catch (RuntimeException ignored) {
+                // Retry on the next interval; log paths may be temporarily unavailable.
             }
-        }, "LogSizeUpdater-Thread");
-        thread.setDaemon(true);
-        thread.start();
+        }, 0, 1, TimeUnit.HOURS);
+    }
+
+    public void shutdown() {
+        backgroundExecutor.shutdownNow();
     }
 
     private void updateDeleteButtonText() {

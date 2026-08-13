@@ -1,5 +1,6 @@
 package com.backtester.ui;
 
+import com.backtester.ApplicationVersion;
 import javax.swing.*;
 import java.awt.*;
 import java.awt.event.WindowAdapter;
@@ -113,7 +114,7 @@ public class MainFrame extends JFrame {
         pack();
 
         // Log startup
-        logPanel.log("INFO", "MT5 Backtester v1.2.6 started");
+        logPanel.log("INFO", "MT5 Backtester " + ApplicationVersion.display() + " started");
         logPanel.log("INFO", "Ready.");
 
         // Run startup checks for directories and MT5 terminal
@@ -221,7 +222,7 @@ public class MainFrame extends JFrame {
         titlePanel.add(subtitle);
 
         // Version label
-        JLabel version = new JLabel("v1.2.6");
+        JLabel version = new JLabel(ApplicationVersion.display());
         version.setFont(new Font("Segoe UI", Font.PLAIN, 11));
         version.setForeground(new Color(100, 105, 120));
 

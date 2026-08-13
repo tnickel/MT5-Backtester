@@ -1,5 +1,6 @@
 package com.backtester.ui.javafx;
 
+import com.backtester.ApplicationVersion;
 import javafx.application.Application;
 import javafx.scene.Scene;
 import javafx.scene.image.Image;
@@ -21,7 +22,8 @@ public class JavaFXMain extends Application {
             scene.getStylesheets().add(cssUrl.toExternalForm());
         }
 
-        primaryStage.setTitle("MT5 Backtester — Antigravity Protocol Suite v1.3.0");
+        primaryStage.setTitle("MT5 Backtester — Antigravity Protocol Suite "
+                + ApplicationVersion.display());
         
         // Try to set app icon
         try {

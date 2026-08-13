@@ -87,8 +87,19 @@ public class CustomProjectsOverviewView {
     }
 
     public void reloadProjects() {
+        List<CustomProject> loaded;
+        try {
+            loaded = DatabaseManager.getInstance().getAllCustomProjects();
+        } catch (DatabaseManager.DatabaseAccessException e) {
+            Alert alert = new Alert(Alert.AlertType.ERROR);
+            alert.setTitle("Database error");
+            alert.setHeaderText("Custom projects could not be loaded");
+            alert.setContentText("The project database is currently unavailable. No default project was created.");
+            alert.show();
+            return;
+        }
+
         projectsListBox.getChildren().clear();
-        List<CustomProject> loaded = DatabaseManager.getInstance().getAllCustomProjects();
 
         if (loaded.isEmpty()) {
             // Seed a default project template if DB is empty

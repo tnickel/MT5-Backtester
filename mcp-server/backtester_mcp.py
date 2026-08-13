@@ -11,6 +11,7 @@ Database location: %USERPROFILE%\\.mt5_backtester\\history.db
 import json
 import os
 import sqlite3
+import time
 from pathlib import Path
 from typing import Any
 
@@ -21,6 +22,29 @@ from mcp.server.fastmcp import FastMCP
 # ---------------------------------------------------------------------------
 
 DB_PATH = Path.home() / ".mt5_backtester" / "history.db"
+
+# query_database is deliberately narrower than the fixed tools above. These are the
+# only tables documented for arbitrary MCP SQL and therefore the only ones its
+# SQLite authorizer permits.
+QUERY_ALLOWED_TABLES = frozenset({
+    "SENSITIVITY_DETAIL",
+    "HISTORY_RUNS",
+    "OPTIMIZATION_STATE",
+    "EA_SAVED_CONFIGS",
+})
+QUERY_BLOCKED_FUNCTIONS = frozenset({
+    "eval",
+    "fts3_tokenizer",
+    "load_extension",
+    "readfile",
+    "writefile",
+})
+QUERY_MAX_ROWS = 1000
+QUERY_MAX_RESPONSE_BYTES = 1_000_000
+QUERY_MAX_SQL_BYTES = 100_000
+QUERY_PROGRESS_INTERVAL = 1000
+QUERY_MAX_VM_STEPS = 500_000
+QUERY_MAX_SECONDS = 2.0
 
 mcp = FastMCP(
     "MT5 Backtester",
@@ -43,6 +67,40 @@ def get_db() -> sqlite3.Connection:
 def rows_to_dicts(rows: list[sqlite3.Row]) -> list[dict]:
     """Convert sqlite3.Row objects to plain dicts for JSON serialization."""
     return [dict(row) for row in rows]
+
+
+def _query_authorizer(action: int, arg1: str | None, arg2: str | None,
+                      database: str | None, source: str | None) -> int:
+    """SQLite-level policy for arbitrary MCP SQL, applied after SQL parsing."""
+    if action == sqlite3.SQLITE_READ:
+        table = (arg1 or "").upper()
+        return sqlite3.SQLITE_OK if table in QUERY_ALLOWED_TABLES else sqlite3.SQLITE_DENY
+    if action == sqlite3.SQLITE_FUNCTION:
+        function = (arg2 or arg1 or "").lower()
+        return sqlite3.SQLITE_DENY if function in QUERY_BLOCKED_FUNCTIONS else sqlite3.SQLITE_OK
+    if action in (sqlite3.SQLITE_SELECT, sqlite3.SQLITE_RECURSIVE):
+        return sqlite3.SQLITE_OK
+    # Deny writes, transactions, schema changes, ATTACH/DETACH, PRAGMA and every
+    # future action that was not explicitly required for a SELECT.
+    return sqlite3.SQLITE_DENY
+
+
+def _guard_query_connection(conn: sqlite3.Connection) -> None:
+    """Install parser-level authorization and bounded execution resources."""
+    conn.set_authorizer(_query_authorizer)
+    started = time.monotonic()
+    executed_steps = 0
+
+    def stop_expensive_query() -> int:
+        nonlocal executed_steps
+        executed_steps += QUERY_PROGRESS_INTERVAL
+        return int(executed_steps > QUERY_MAX_VM_STEPS
+                   or time.monotonic() - started > QUERY_MAX_SECONDS)
+
+    conn.set_progress_handler(stop_expensive_query, QUERY_PROGRESS_INTERVAL)
+    if hasattr(conn, "setlimit"):
+        conn.setlimit(sqlite3.SQLITE_LIMIT_LENGTH, QUERY_MAX_RESPONSE_BYTES)
+        conn.setlimit(sqlite3.SQLITE_LIMIT_SQL_LENGTH, QUERY_MAX_SQL_BYTES)
 
 
 # ---------------------------------------------------------------------------
@@ -257,7 +315,12 @@ def query_database(sql_query: str) -> str:
     Args:
         sql_query: SQL SELECT-Abfrage. Nur lesende Zugriffe erlaubt.
     """
-    # Security: only allow SELECT statements
+    if not isinstance(sql_query, str) or len(sql_query.encode("utf-8")) > QUERY_MAX_SQL_BYTES:
+        return f"Fehler: SQL-Abfrage ist zu groß (maximal {QUERY_MAX_SQL_BYTES} Bytes)."
+
+    # Fast rejection for non-queries and an explicit, user-friendly secret error.
+    # The SQLite authorizer below is the actual security boundary and also catches
+    # aliases/views or future syntax that a text filter cannot understand.
     normalized = sql_query.strip().upper()
     if not normalized.startswith("SELECT"):
         return "Fehler: Nur SELECT-Abfragen sind erlaubt. Keine Schreibzugriffe möglich."
@@ -277,12 +340,30 @@ def query_database(sql_query: str) -> str:
     
     conn = get_db()
     try:
-        rows = conn.execute(sql_query).fetchall()
+        _guard_query_connection(conn)
+        cursor = conn.execute(sql_query)
+        rows = cursor.fetchmany(QUERY_MAX_ROWS + 1)
+        if len(rows) > QUERY_MAX_ROWS:
+            return (
+                f"Fehler: Abfrage liefert mehr als {QUERY_MAX_ROWS} Zeilen. "
+                "Bitte WHERE/LIMIT verwenden."
+            )
         if not rows:
             return "Abfrage lieferte keine Ergebnisse."
-        
-        return json.dumps(rows_to_dicts(rows), indent=2, ensure_ascii=False)
+
+        response = json.dumps(rows_to_dicts(rows), indent=2, ensure_ascii=False)
+        if len(response.encode("utf-8")) > QUERY_MAX_RESPONSE_BYTES:
+            return (
+                f"Fehler: Abfrageergebnis ist größer als {QUERY_MAX_RESPONSE_BYTES} Bytes. "
+                "Bitte weniger Zeilen oder Spalten auswählen."
+            )
+        return response
     except sqlite3.Error as e:
+        error = str(e).lower()
+        if "interrupted" in error:
+            return "SQL-Fehler: Abfrage wegen Zeit-/Rechenlimit abgebrochen."
+        if "not authorized" in error or "prohibited" in error:
+            return "SQL-Fehler: Abfrage greift auf nicht freigegebene Daten oder Funktionen zu."
         return f"SQL-Fehler: {e}"
     finally:
         conn.close()
@@ -299,6 +380,7 @@ def get_database_schema() -> str:
         tables = conn.execute("""
             SELECT name, sql FROM sqlite_master 
             WHERE type='table' AND name NOT LIKE 'sqlite_%'
+              AND UPPER(name) <> 'APP_SETTINGS'
             ORDER BY name
         """).fetchall()
         
