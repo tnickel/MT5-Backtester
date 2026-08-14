@@ -287,6 +287,29 @@ public class OptimizationResultTest {
         assertEquals("1 minute OHLC", copied.getTickModel());
     }
 
+    @Test
+    public void stampMarketIfBlankFillsBlankSymbolPeriodAndTickModel() {
+        OptimizationResult.Pass backtest = new OptimizationResult.Pass();
+        backtest.setPassNumber(0);
+        OptimizationResult.Pass forward = new OptimizationResult.Pass();
+        forward.setPassNumber(0);
+        OptimizationResult.CombinedPass pass = new OptimizationResult.CombinedPass(
+                backtest, forward, 1.0, 1.0, "");
+
+        pass.stampMarketIfBlank("GBPJPY", "M5", "Every tick");
+
+        assertEquals("GBPJPY", pass.getSymbol());
+        assertEquals("M5", pass.getPeriod());
+        assertEquals("Every tick", pass.getTickModel());
+        assertEquals("Every tick", backtest.getTickModel());
+        assertEquals("Every tick", forward.getTickModel());
+
+        pass.stampMarketIfBlank("EURUSD", "H1", "1 minute OHLC");
+        assertEquals("GBPJPY", pass.getSymbol());
+        assertEquals("M5", pass.getPeriod());
+        assertEquals("1 minute OHLC", backtest.getTickModel());
+    }
+
     private static OptimizationResult.Pass createRankingPass(int passNumber, double profit,
                                                                int trades, double recovery) {
         OptimizationResult.Pass pass = new OptimizationResult.Pass();

@@ -281,4 +281,71 @@ public class EaParameterTest {
         assertFalse(EaParameter.normalizeTimeframeOptimizeBand(nonTf));
         assertEquals("0", nonTf.getOptimizeStep());
     }
+
+    @Test
+    public void testSearchSpaceValidationDetectsOutOfRangeTimeframeAndNumericErrors() {
+        // 1. Timeframe out of range (user screenshot: Inp_ATR_Timeframe = 16408 (D1) with search space 1..16385 (M1..H1))
+        EaParameter tfOutOfRange = new EaParameter("Inp_ATR_Timeframe", "16408");
+        tfOutOfRange.setOptimizeStart("1");
+        tfOutOfRange.setOptimizeStep("1");
+        tfOutOfRange.setOptimizeEnd("16385");
+        tfOutOfRange.setOptimizeEnabled(true);
+        assertTrue(tfOutOfRange.hasInvalidSearchSpace());
+        assertNotNull(tfOutOfRange.getSearchSpaceValidationError(null));
+        assertTrue(tfOutOfRange.getSearchSpaceValidationError(null).contains("außerhalb des Suchraums"));
+
+        // Valid timeframe
+        EaParameter tfValid = new EaParameter("Inp_ATR_Timeframe", "16385");
+        tfValid.setOptimizeStart("1");
+        tfValid.setOptimizeStep("1");
+        tfValid.setOptimizeEnd("16385");
+        tfValid.setOptimizeEnabled(true);
+        assertFalse(tfValid.hasInvalidSearchSpace());
+        assertNull(tfValid.getSearchSpaceValidationError(null));
+
+        // 2. Numeric stop < start
+        EaParameter numBadStop = new EaParameter("Inp_Lot_Multiplier", "1.5");
+        numBadStop.setOptimizeStart("2.0");
+        numBadStop.setOptimizeStep("0.1");
+        numBadStop.setOptimizeEnd("1.0");
+        numBadStop.setOptimizeEnabled(true);
+        assertTrue(numBadStop.hasInvalidSearchSpace());
+        assertTrue(numBadStop.getSearchSpaceValidationError(null).contains("kleiner als Start"));
+
+        // 3. Numeric value outside range
+        EaParameter numOutOfRange = new EaParameter("Inp_Lot_Multiplier", "0.5");
+        numOutOfRange.setOptimizeStart("1.0");
+        numOutOfRange.setOptimizeStep("0.1");
+        numOutOfRange.setOptimizeEnd("2.0");
+        numOutOfRange.setOptimizeEnabled(true);
+        assertTrue(numOutOfRange.hasInvalidSearchSpace());
+        assertTrue(numOutOfRange.getSearchSpaceValidationError(null).contains("außerhalb des Suchraums"));
+
+        // 4. Invalid step (step = 0)
+        EaParameter badStep = new EaParameter("Inp_Lot_Multiplier", "1.5");
+        badStep.setOptimizeStart("1.0");
+        badStep.setOptimizeStep("0");
+        badStep.setOptimizeEnd("2.0");
+        badStep.setOptimizeEnabled(true);
+        assertTrue(badStep.hasInvalidSearchSpace());
+        assertTrue(badStep.getSearchSpaceValidationError(null).contains("Schritt"));
+    }
+
+    @Test
+    public void applyOptimizeFlagsEnablesOnlyNamedTargets() {
+        EaParameter grid = new EaParameter("Inp_Grid_Step", "550");
+        grid.setOptimizeEnabled(false);
+        EaParameter risk = new EaParameter("Inp_Max_Grid_Levels", "8");
+        risk.setOptimizeEnabled(true);
+        EaParameter header = new EaParameter("; Section", "");
+        header.setSectionHeader(true);
+
+        List<EaParameter> synced = EaParameter.applyOptimizeFlags(
+                List.of(grid, risk, header), List.of("Inp_Grid_Step"));
+
+        assertTrue(synced.get(0).isOptimizeEnabled());
+        assertFalse(synced.get(1).isOptimizeEnabled());
+        assertFalse(synced.get(2).isOptimizeEnabled());
+        assertFalse(grid.isOptimizeEnabled());
+    }
 }

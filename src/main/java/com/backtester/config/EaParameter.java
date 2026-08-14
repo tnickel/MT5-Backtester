@@ -2,10 +2,12 @@ package com.backtester.config;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * POJO representing a single EA input parameter from a .set file.
@@ -414,6 +416,64 @@ public class EaParameter {
         return changed;
     }
 
+    /**
+     * Ensures any parameter with Opt=Y has a valid step (> 0) and valid range (end >= start).
+     * Fixes MT5 .set files exported with step 0 or invalid bands on enum/numeric inputs.
+     */
+    public static boolean normalizeGenericOptimizeBand(EaParameter parameter) {
+        if (parameter == null || parameter.isSectionHeader() || parameter.isStringType()) {
+            return false;
+        }
+        if (!parameter.isOptimizeEnabled()) {
+            return false;
+        }
+        String oldStart = parameter.getOptimizeStart() != null ? parameter.getOptimizeStart().trim() : "";
+        String oldStep = parameter.getOptimizeStep() != null ? parameter.getOptimizeStep().trim() : "";
+        String oldEnd = parameter.getOptimizeEnd() != null ? parameter.getOptimizeEnd().trim() : "";
+
+        double startVal = 0, stepVal = 0, endVal = 0;
+        try { startVal = Double.parseDouble(normalizeMql5Value(oldStart)); } catch (Exception ignored) {}
+        try { stepVal = Double.parseDouble(normalizeMql5Value(oldStep)); } catch (Exception ignored) {}
+        try { endVal = Double.parseDouble(normalizeMql5Value(oldEnd)); } catch (Exception ignored) {}
+
+        boolean changed = false;
+        if (endVal < startVal) {
+            endVal = startVal;
+            parameter.setOptimizeEnd(formatNumericToken(endVal, oldEnd));
+            changed = true;
+        }
+        if (stepVal <= 0) {
+            double range = Math.abs(endVal - startVal);
+            if (range == 0) {
+                stepVal = 1;
+            } else if (isIntegerString(oldStart) && isIntegerString(oldEnd)) {
+                stepVal = Math.max(1, Math.round(range / 10.0));
+            } else {
+                stepVal = range / 10.0;
+            }
+            parameter.setOptimizeStep(formatNumericToken(stepVal, oldStep));
+            changed = true;
+        }
+        return changed;
+    }
+
+    private static boolean isIntegerString(String s) {
+        if (s == null || s.isBlank()) return false;
+        return s.trim().matches("-?\\d+");
+    }
+
+    private static String formatNumericToken(double d, String template) {
+        if (template != null && template.contains(".")) {
+            int decimals = template.length() - template.indexOf('.') - 1;
+            decimals = Math.min(Math.max(decimals, 1), 6);
+            return String.format(Locale.ROOT, "%." + decimals + "f", d);
+        }
+        if (d == Math.rint(d)) {
+            return String.valueOf((long) d);
+        }
+        return String.format(Locale.ROOT, "%.4f", d).replaceAll("0+$", "").replaceAll("\\.$", "");
+    }
+
     private static boolean isBooleanToken(String raw) {
         if (raw == null || raw.isBlank()) return false;
         String v = raw.trim().toLowerCase(Locale.ROOT);
@@ -460,6 +520,12 @@ public class EaParameter {
         String newEnd = fromTimeframeDisplay(oldEnd);
         if (newEnd.isBlank() || isOversizedTimeframeStop(newEnd)) {
             newEnd = "16385"; // PERIOD_H1
+        }
+        String valCode = fromTimeframeDisplay(parameter.getValue());
+        int valIdx = timeframeEnumIndex(valCode);
+        int stopIdx = timeframeEnumIndex(newEnd);
+        if (valIdx > stopIdx) {
+            newEnd = valCode;
         }
 
         boolean changed = !newStart.equals(oldStart) || !newStep.equals(oldStep) || !newEnd.equals(oldEnd);
@@ -511,6 +577,109 @@ public class EaParameter {
         } catch (NumberFormatException ex) {
             return true;
         }
+    }
+
+    /**
+     * Returns a human-readable validation error when this parameter has an invalid
+     * search space configuration (e.g. invalid step, stop < start, value outside search space,
+     * or timeframe value outside the configured timeframe range). Returns null if valid.
+     */
+    public String getSearchSpaceValidationError(String chartPeriod) {
+        if (sectionHeader || stringType) {
+            return null;
+        }
+        if (hasInvalidOptimizeStep()) {
+            return "Schrittweite ist 0 oder leer.";
+        }
+
+        String valStr = normalizeMql5Value(value);
+        String startStr = normalizeMql5Value(optimizeStart);
+        String stepStr = normalizeMql5Value(optimizeStep);
+        String stopStr = normalizeMql5Value(optimizeEnd);
+
+        if (isTimeframeParameterName(name)) {
+            String effVal = fromTimeframeDisplay(valStr);
+            if ("0".equals(effVal) && chartPeriod != null && !chartPeriod.isBlank()) {
+                effVal = fromTimeframeDisplay(chartPeriod);
+            }
+            int valIdx = timeframeEnumIndex(effVal);
+            int startIdx = timeframeEnumIndex(startStr);
+            int stopIdx = timeframeEnumIndex(stopStr);
+            int stepVal = 1;
+            try {
+                if (stepStr != null && !stepStr.isBlank()) {
+                    stepVal = (int) Double.parseDouble(stepStr);
+                }
+            } catch (Exception ignored) {}
+
+            if (startIdx <= 0 || stopIdx <= 0 || stopIdx < startIdx) {
+                if (optimizeEnabled) {
+                    return "Ungültiger Timeframe-Suchraum (Stopp < Start oder ungültiger Timeframe).";
+                }
+            } else {
+                if (valIdx > 0 && (valIdx < startIdx || valIdx > stopIdx)) {
+                    String valDisp = toTimeframeDisplay(valStr, chartPeriod);
+                    String startDisp = toTimeframeDisplay(startStr, chartPeriod);
+                    String stopDisp = toTimeframeDisplay(stopStr, chartPeriod);
+                    return "Wert " + (valDisp.isBlank() ? valStr : valDisp) + " liegt außerhalb des Suchraums ["
+                            + (startDisp.isBlank() ? startStr : startDisp) + " .. "
+                            + (stopDisp.isBlank() ? stopStr : stopDisp) + "].";
+                }
+                if (valIdx > 0 && stepVal > 0 && (valIdx - startIdx) % stepVal != 0) {
+                    return "Wert liegt zwischen zwei Timeframe-Rasterschritten.";
+                }
+            }
+            return null;
+        }
+
+        if (isStrictBooleanToken(startStr) || isStrictBooleanToken(stopStr) || isStrictBooleanToken(valStr)) {
+            Boolean bVal = isBooleanToken(valStr) ? ("true".equalsIgnoreCase(valStr) || "1".equals(valStr) || "yes".equalsIgnoreCase(valStr)) : null;
+            Boolean bStart = isBooleanToken(startStr) ? ("true".equalsIgnoreCase(startStr) || "1".equals(startStr) || "yes".equalsIgnoreCase(startStr)) : null;
+            Boolean bStop = isBooleanToken(stopStr) ? ("true".equalsIgnoreCase(stopStr) || "1".equals(stopStr) || "yes".equalsIgnoreCase(stopStr)) : null;
+            if (bStart != null && bStop != null) {
+                int sIdx = bStart ? 1 : 0;
+                int eIdx = bStop ? 1 : 0;
+                if (eIdx < sIdx) {
+                    return "Ungültiger Boolean-Suchraum (Stopp < Start).";
+                }
+                if (bVal != null) {
+                    int vIdx = bVal ? 1 : 0;
+                    if (optimizeEnabled && (vIdx < sIdx || vIdx > eIdx)) {
+                        return "Wert (" + valStr + ") liegt außerhalb des Suchraums [" + startStr + " .. " + stopStr + "].";
+                    }
+                }
+            }
+            return null;
+        }
+
+        // Numeric range validation
+        try {
+            if (startStr != null && !startStr.isBlank() && stopStr != null && !stopStr.isBlank()) {
+                double startNum = Double.parseDouble(startStr);
+                double stopNum = Double.parseDouble(stopStr);
+                if (stopNum < startNum) {
+                    return "Stopp (" + stopStr + ") ist kleiner als Start (" + startStr + ").";
+                }
+                if (stepStr != null && !stepStr.isBlank()) {
+                    double stepNum = Double.parseDouble(stepStr);
+                    if (optimizeEnabled && stepNum <= 0) {
+                        return "Schrittweite (" + stepStr + ") muss größer als 0 sein.";
+                    }
+                }
+                if (valStr != null && !valStr.isBlank()) {
+                    double valNum = Double.parseDouble(valStr);
+                    if (valNum < startNum || valNum > stopNum) {
+                        return "Wert (" + valStr + ") liegt außerhalb des Suchraums [" + startStr + " .. " + stopStr + "].";
+                    }
+                }
+            }
+        } catch (NumberFormatException ignored) {
+        }
+        return null;
+    }
+
+    public boolean hasInvalidSearchSpace() {
+        return getSearchSpaceValidationError(null) != null;
     }
 
     /**
@@ -640,6 +809,39 @@ public class EaParameter {
             parameter.setOptimizeEnd(newEnd);
         }
         return changed;
+    }
+
+    /**
+     * Copies the list and sets Opt=Y only on the named targets. Used by the engine
+     * and the settings UI — not by JavaFX itself.
+     */
+    public static List<EaParameter> applyOptimizeFlags(List<EaParameter> parameters,
+                                                       List<String> targetNames) {
+        Set<String> targets = new HashSet<>();
+        if (targetNames != null) {
+            for (String name : targetNames) {
+                if (name != null && !name.isBlank()) {
+                    targets.add(name.trim().toLowerCase(Locale.ROOT));
+                }
+            }
+        }
+        List<EaParameter> result = new ArrayList<>();
+        if (parameters == null) {
+            return result;
+        }
+        for (EaParameter source : parameters) {
+            if (source == null) {
+                continue;
+            }
+            EaParameter copy = source.copy();
+            if (!copy.isSectionHeader() && !copy.isStringType()
+                    && copy.getName() != null && !copy.getName().isBlank()) {
+                copy.setOptimizeEnabled(targets.contains(
+                        copy.getName().trim().toLowerCase(Locale.ROOT)));
+            }
+            result.add(copy);
+        }
+        return result;
     }
 
     @Override

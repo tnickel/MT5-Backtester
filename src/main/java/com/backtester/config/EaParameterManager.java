@@ -784,6 +784,7 @@ public class EaParameterManager {
             EaParameter.sanitizeTimeframeFieldsForSetFile(param);
             EaParameter.normalizeTimeframeOptimizeBand(param);
             EaParameter.normalizeBooleanOptimizeBand(param);
+            EaParameter.normalizeGenericOptimizeBand(param);
         }
     }
 

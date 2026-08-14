@@ -1551,7 +1551,9 @@ public class DatabaseManager {
                 if (json != null && !json.isEmpty()) {
                     try {
                         com.backtester.workflow.CustomProject proj = gson.fromJson(json, com.backtester.workflow.CustomProject.class);
-                        if (proj != null) list.add(proj);
+                        if (proj != null) {
+                            list.add(proj);
+                        }
                     } catch (Exception ex) {
                         log.warn("Failed to parse CustomProject JSON: " + ex.getMessage());
                     }

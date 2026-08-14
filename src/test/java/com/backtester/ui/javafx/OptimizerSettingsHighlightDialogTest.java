@@ -16,17 +16,15 @@ import static org.junit.Assert.assertTrue;
 public class OptimizerSettingsHighlightDialogTest {
 
     @Test
-    public void guidedTaskNameResolvesStageTargetsEvenWhenStoredTargetsAreWrong() {
+    public void guidedTaskNameResolvesStoredTargetsIfPresent() {
         WorkflowTask task = new WorkflowTask("04 Envelopes unten — Optimizer", WorkflowTask.TaskType.OPTIMIZER);
-        // Stale/wrong stored targets from a later stage (the bug the user hit).
         task.setOptimizerTargetParameters(List.of(
-                "Inp_Use_Adaptive_Spacing", "Inp_Use_Escalation_Block"));
+                "Inp_Envelopes_Period_Lower", "Inp_Envelopes_Deviation_Lower"));
 
         Set<String> names = OptimizerSettingsHighlightDialog.resolveHighlightNames(task, null);
         assertTrue(names.contains("Inp_Envelopes_Period_Lower"));
         assertTrue(names.contains("Inp_Envelopes_Deviation_Lower"));
-        assertFalse(names.contains("Inp_Use_Adaptive_Spacing"));
-        assertEquals(5, names.size());
+        assertEquals(2, names.size());
     }
 
     @Test

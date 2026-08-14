@@ -136,8 +136,8 @@ public class CustomProject {
         clone.setAutomaticModeEnabled(isAutomaticModeEnabled());
         clone.setReferenceBacktestEnabled(isReferenceBacktestEnabled());
 
-        // Retain baseline parameters if present, but clear confirmed floor context
-        clone.setProvenMasterParameters(getProvenMasterParameters());
+        // Task snapshots keep the source values as a starting point. The confirmed
+        // floor does not: it was measured under the source symbol/period.
         clone.clearProvenMaster();
 
         List<WorkflowTask> clonedTasks = new ArrayList<>();
@@ -166,10 +166,6 @@ public class CustomProject {
         }
         clone.setTasks(clonedTasks);
         clone.retargetTasksForClone();
-
-        if ("ToTheMoon_KI_v132".equalsIgnoreCase(clone.getExpert())) {
-            ToTheMoon132GuidedWorkflowFactory.repairStageOptimizerSearchSpaces(clone);
-        }
 
         return clone;
     }
@@ -556,8 +552,8 @@ public class CustomProject {
     }
 
     /**
-     * Upgrades old projects where Retest, OOS validation and Custom Task were
-     * modelled as separate types and task names redundantly stored positions.
+     * Optional one-off upgrade for old JSON. Load, save, backup and restore never
+     * call this.
      */
     public boolean migrateLegacyTaskDefinitions() {
         List<WorkflowTask> projectTasks = getTasks();
@@ -606,7 +602,6 @@ public class CustomProject {
      * contents are intentionally attached later by the asynchronous writer.
      */
     public CustomProject copyMetadataForPersistence() {
-        migrateLegacyTaskDefinitions();
         CustomProject copy = new CustomProject();
         copy.setId(id);
         copy.setName(name);

@@ -1,8 +1,6 @@
 package com.backtester.workflow;
 
 import com.backtester.config.EaParameter;
-import com.backtester.report.OptimizationResult.CombinedPass;
-import com.backtester.report.OptimizationResult.Pass;
 import org.junit.Test;
 
 import java.nio.file.Path;
@@ -40,8 +38,8 @@ public class ToTheMoon132GuidedWorkflowFactoryTest {
                 assertEquals("M5", task.getRetestPeriod());
                 assertEquals(ToTheMoon132GuidedWorkflowFactory.DEVELOPMENT_FROM, task.getStartDate());
                 assertEquals(ToTheMoon132GuidedWorkflowFactory.DEVELOPMENT_TO, task.getEndDate());
-                assertEquals(4, task.getOptimizerForwardMode());
-                assertEquals(ToTheMoon132GuidedWorkflowFactory.FORWARD_FROM, task.getOptimizerForwardDate());
+                assertEquals(1, task.getOptimizerForwardMode());
+                assertEquals("2024-02-01", task.getOptimizerForwardDate());
                 assertFalse(task.getOptimizerTargetParameters().isEmpty());
                 assertFalse(task.getOptimizerParameterSnapshot().isEmpty());
                 assertFalse(task.isOptimizerParameterBasisAdopted());
@@ -212,225 +210,6 @@ public class ToTheMoon132GuidedWorkflowFactoryTest {
         assertEquals("true", session.getOptimizeEnd());
     }
 
-    @Test
-    public void upgradesLegacyGuidedProjectWithoutDiscardingG11Results() {
-        CustomProject project = ToTheMoon132GuidedWorkflowFactory.create(
-                "Guided", completeSyntheticPreset(), null);
-        WorkflowTask top20 = project.getTasks().stream()
-                .filter(task -> ToTheMoon132GuidedWorkflowFactory.DEVELOPMENT_TOP20_DATABANK
-                        .equals(task.getTargetDatabank()))
-                .findFirst().orElseThrow();
-        project.getTasks().remove(top20);
-        WorkflowTask developmentRetest = project.getTasks().stream()
-                .filter(task -> "g12_dev_tick".equals(task.getTargetDatabank()))
-                .findFirst().orElseThrow();
-        developmentRetest.setName("12 Development-Retest — Every Tick (3 Jahre)");
-        developmentRetest.setSourceDatabank("g11_safety_pick");
-        developmentRetest.setStatus(WorkflowTask.TaskStatus.FAILED);
-        project.getDatabanks().put("g11_safety_pick", new ArrayList<>());
-        project.getDatabanks().put("g12_dev_tick", new ArrayList<>());
-        StrategyBacktestArchive archive = new StrategyBacktestArchive("1|Strat 1", "Strat 1", 1);
-        StrategyBacktestRun obsoleteDevelopmentRun = new StrategyBacktestRun();
-        obsoleteDevelopmentRun.setTabName("g12_dev_tick");
-        archive.upsert(obsoleteDevelopmentRun);
-        StrategyBacktestRun retainedUpstreamRun = new StrategyBacktestRun();
-        retainedUpstreamRun.setTabName("g11_safety_pick");
-        archive.upsert(retainedUpstreamRun);
-        project.getStrategyArchives().put(archive.getStrategyKey(), archive);
-
-        assertTrue(ToTheMoon132GuidedWorkflowFactory.ensureDevelopmentTop20Selection(project));
-        assertFalse(ToTheMoon132GuidedWorkflowFactory.ensureDevelopmentTop20Selection(project));
-
-        assertEquals(28, project.getTasks().size());
-        assertEquals("g11_safety_pick", project.getTasks().get(23).getSourceDatabank());
-        assertEquals(ToTheMoon132GuidedWorkflowFactory.DEVELOPMENT_TOP20_DATABANK,
-                developmentRetest.getSourceDatabank());
-        assertEquals(WorkflowTask.TaskStatus.PENDING, developmentRetest.getStatus());
-        assertTrue(project.getDatabanks().containsKey("g11_safety_pick"));
-        assertNull(project.getStrategyArchives().get(archive.getStrategyKey()).getRun("g12_dev_tick"));
-        assertNotNull(project.getStrategyArchives().get(archive.getStrategyKey()).getRun("g11_safety_pick"));
-    }
-
-    @Test
-    public void migratesExistingTop20AndFinalTailThenInvalidatesOnlyAffectedBranch() {
-        CustomProject project = ToTheMoon132GuidedWorkflowFactory.create(
-                "Guided", completeSyntheticPreset(), null);
-        WorkflowTask top20 = findByTarget(project, "g11_dev_top20");
-        WorkflowTask oos = findByTarget(project, "g13_oos_tick");
-        WorkflowTask fourYears = findByTarget(project, "g14_final_4y");
-        WorkflowTask publication = findByTarget(project, DatabankManager.FINAL);
-
-        top20.setDiversityDeduplicateEffectiveV132(false);
-        oos.setName("14 OOS-Retest — Every Tick (unberührtes Jahr)");
-        fourYears.setName("15 Finaler Every-Tick-Retest — volle 4 Jahre");
-        publication.setName("16 Finale Auswahl — viele Trades, PF und niedriger DD");
-        publication.setFilterConditions(List.of(new FilterCondition(
-                FilterCondition.Metric.LT_MAX_DD_PERCENT,
-                FilterCondition.Operator.LESS_EQUAL, 8)));
-
-        CombinedPass sentinel = pass(42);
-        project.getDatabanks().put("g11_safety_pick", new ArrayList<>(List.of(sentinel)));
-        for (WorkflowTask task : project.getTasks()) {
-            task.setStatus(WorkflowTask.TaskStatus.COMPLETED);
-            if (project.getTasks().indexOf(task) >= project.getTasks().indexOf(top20)) {
-                project.getDatabanks().put(task.getTargetDatabank(),
-                        new ArrayList<>(List.of(sentinel)));
-            }
-        }
-        StrategyBacktestArchive archive = archiveWithTabs(
-                "g11_safety_pick", "g11_dev_top20", "g12_dev_tick",
-                "g13_oos_tick", "g14_final_4y", DatabankManager.FINAL);
-        project.getStrategyArchives().put(archive.getStrategyKey(), archive);
-
-        assertTrue(ToTheMoon132GuidedWorkflowFactory.ensureDevelopmentTop20Selection(project));
-        assertFalse(ToTheMoon132GuidedWorkflowFactory.ensureDevelopmentTop20Selection(project));
-
-        assertTrue(top20.isDiversityDeduplicateEffectiveV132());
-        assertTrue(oos.getName().contains("einziges finales Selektionsgate"));
-        assertTrue(fourYears.getName().contains("kein Gate"));
-        assertTrue(publication.getName().contains("keine Zusatzfilter"));
-        assertTrue(publication.getFilterConditions().isEmpty());
-        assertFalse(project.getDatabanks().get("g11_safety_pick").isEmpty());
-        assertNotNull(project.getStrategyArchives().get(archive.getStrategyKey())
-                .getRun("g11_safety_pick"));
-        for (int i = project.getTasks().indexOf(top20); i < project.getTasks().size(); i++) {
-            WorkflowTask task = project.getTasks().get(i);
-            assertEquals(WorkflowTask.TaskStatus.PENDING, task.getStatus());
-            assertTrue(project.getDatabanks().get(task.getTargetDatabank()).isEmpty());
-            assertNull(project.getStrategyArchives().get(archive.getStrategyKey())
-                    .getRun(task.getTargetDatabank()));
-        }
-    }
-
-    @Test
-    public void repairsWrongStageSearchSpaceOnGridFundament() {
-        List<EaParameter> preset = completeSyntheticPreset();
-        CustomProject project = ToTheMoon132GuidedWorkflowFactory.create(
-                "Guided", preset, Path.of("build", "guided-reports"));
-
-        WorkflowTask grid = project.getTasks().stream()
-                .filter(task -> task.getName().startsWith("01 Grid-Fundament"))
-                .findFirst().orElseThrow();
-        WorkflowTask safety = project.getTasks().stream()
-                .filter(task -> task.getName().startsWith("11 Adaptive"))
-                .findFirst().orElseThrow();
-
-        // Corrupt stage 01 to use stage 11 search space (the bug seen in production).
-        grid.setOptimizerTargetParameters(safety.getOptimizerTargetParameters());
-        grid.setOptimizerParameterSnapshot(safety.getOptimizerParameterSnapshot());
-        grid.setStatus(WorkflowTask.TaskStatus.COMPLETED);
-        project.getDatabanks().put("g01_grid_raw", new ArrayList<>(List.of()));
-
-        assertTrue(ToTheMoon132GuidedWorkflowFactory.repairStageOptimizerSearchSpaces(project));
-        assertFalse(ToTheMoon132GuidedWorkflowFactory.repairStageOptimizerSearchSpaces(project));
-
-        assertEquals(List.of("Inp_Grid_Step", "Inp_Step_Multiplier", "Inp_Next_Lot_Multiplier"),
-                grid.getOptimizerTargetParameters());
-        Set<String> enabled = new HashSet<>();
-        for (EaParameter parameter : grid.getOptimizerParameterSnapshot()) {
-            if (parameter.isOptimizeEnabled()) enabled.add(parameter.getName());
-        }
-        assertEquals(Set.of("Inp_Grid_Step", "Inp_Step_Multiplier", "Inp_Next_Lot_Multiplier"), enabled);
-        assertEquals("550", find(grid, "Inp_Grid_Step").getOptimizeStart());
-        assertEquals("900", find(grid, "Inp_Grid_Step").getOptimizeEnd());
-        assertEquals(WorkflowTask.TaskStatus.PENDING, grid.getStatus());
-        assertTrue(project.getDatabanks().get("g01_grid_raw").isEmpty());
-    }
-
-    @Test
-    public void searchSpaceRepairInvalidatesEveryTaskFromEarliestChangedOptimizer() {
-        CustomProject project = ToTheMoon132GuidedWorkflowFactory.create(
-                "Guided", completeSyntheticPreset(), null);
-        WorkflowTask upperEnvelopes = findOptimizer(project, "03 Envelopes oben");
-        WorkflowTask risk = findOptimizer(project, "08 Grid-Risiko");
-        WorkflowTask upstream = findByTarget(project, "g02_cadence_pick");
-        int firstChangedIndex = project.getTasks().indexOf(upperEnvelopes);
-        CombinedPass sentinel = pass(7);
-
-        upperEnvelopes.setOptimizerMode(1); // expected genetic
-        risk.setOptimizerMode(2);           // expected complete
-        for (WorkflowTask task : project.getTasks()) {
-            task.setStatus(WorkflowTask.TaskStatus.COMPLETED);
-            if (!DatabankManager.RESULTS.equals(task.getTargetDatabank())) {
-                project.getDatabanks().put(task.getTargetDatabank(),
-                        new ArrayList<>(List.of(sentinel)));
-            }
-        }
-        StrategyBacktestArchive archive = new StrategyBacktestArchive("7|Strat 7", "Strat 7", 7);
-        for (WorkflowTask task : project.getTasks()) {
-            if (!DatabankManager.RESULTS.equals(task.getTargetDatabank())) {
-                StrategyBacktestRun run = new StrategyBacktestRun();
-                run.setTabName(task.getTargetDatabank());
-                archive.upsert(run);
-            }
-        }
-        project.getStrategyArchives().put(archive.getStrategyKey(), archive);
-
-        assertTrue(ToTheMoon132GuidedWorkflowFactory.repairStageOptimizerSearchSpaces(project));
-        assertFalse(ToTheMoon132GuidedWorkflowFactory.repairStageOptimizerSearchSpaces(project));
-
-        assertEquals(WorkflowTask.TaskStatus.COMPLETED, upstream.getStatus());
-        assertFalse(project.getDatabanks().get(upstream.getTargetDatabank()).isEmpty());
-        assertNotNull(project.getStrategyArchives().get(archive.getStrategyKey())
-                .getRun(upstream.getTargetDatabank()));
-        for (int i = firstChangedIndex; i < project.getTasks().size(); i++) {
-            WorkflowTask task = project.getTasks().get(i);
-            assertEquals("stale status at " + task.getName(),
-                    WorkflowTask.TaskStatus.PENDING, task.getStatus());
-            assertTrue("stale databank " + task.getTargetDatabank(),
-                    project.getDatabanks().get(task.getTargetDatabank()).isEmpty());
-            assertNull("stale archive " + task.getTargetDatabank(),
-                    project.getStrategyArchives().get(archive.getStrategyKey())
-                            .getRun(task.getTargetDatabank()));
-        }
-    }
-
-    @Test
-    public void repairScrubsLegacyTimeframeBandsWithoutRebuildingCorrectStage() {
-        CustomProject project = ToTheMoon132GuidedWorkflowFactory.create(
-                "Guided", completeSyntheticPreset(), Path.of("build", "guided-reports"));
-        WorkflowTask grid = findOptimizer(project, "01 Grid-Fundament");
-
-        List<EaParameter> snapshot = grid.getOptimizerParameterSnapshot();
-        EaParameter adxTf = snapshot.stream()
-                .filter(parameter -> "Inp_ADX_Timeframe".equals(parameter.getName()))
-                .findFirst().orElseThrow();
-        adxTf.setOptimizeStart("0");
-        adxTf.setOptimizeStep("0");
-        adxTf.setOptimizeEnd("49153");
-        adxTf.setOptimizeEnabled(false);
-        grid.setOptimizerParameterSnapshot(snapshot);
-
-        assertTrue(ToTheMoon132GuidedWorkflowFactory.repairStageOptimizerSearchSpaces(project));
-        assertFalse(ToTheMoon132GuidedWorkflowFactory.repairStageOptimizerSearchSpaces(project));
-
-        assertEquals("1", find(grid, "Inp_ADX_Timeframe").getOptimizeStart());
-        assertEquals("1", find(grid, "Inp_ADX_Timeframe").getOptimizeStep());
-        assertEquals("16385", find(grid, "Inp_ADX_Timeframe").getOptimizeEnd());
-        assertFalse(find(grid, "Inp_ADX_Timeframe").isOptimizeEnabled());
-        assertEquals(List.of("Inp_Grid_Step", "Inp_Step_Multiplier", "Inp_Next_Lot_Multiplier"),
-                grid.getOptimizerTargetParameters());
-    }
-
-    @Test
-    public void repairsEmptyPersistedSnapshotsFromDiskPreset() {
-        // Simulate the production Guided 4Y project: stage names present, snapshots empty.
-        CustomProject project = new CustomProject("Guided", "ToTheMoon_KI_v132", "AUDCAD", "M5");
-        WorkflowTask grid = new WorkflowTask("01 Grid-Fundament — Optimizer", WorkflowTask.TaskType.OPTIMIZER);
-        grid.setTargetDatabank("g01_grid_raw");
-        project.addTask(grid);
-
-        assertTrue(ToTheMoon132GuidedWorkflowFactory.repairStageOptimizerSearchSpaces(project));
-        assertEquals(List.of("Inp_Grid_Step", "Inp_Step_Multiplier", "Inp_Next_Lot_Multiplier"),
-                grid.getOptimizerTargetParameters());
-        assertFalse(grid.getOptimizerParameterSnapshot().isEmpty());
-        Set<String> enabled = new HashSet<>();
-        for (EaParameter parameter : grid.getOptimizerParameterSnapshot()) {
-            if (parameter.isOptimizeEnabled()) enabled.add(parameter.getName());
-        }
-        assertEquals(Set.of("Inp_Grid_Step", "Inp_Step_Multiplier", "Inp_Next_Lot_Multiplier"), enabled);
-    }
-
     private static List<EaParameter> completeSyntheticPreset() {
         List<EaParameter> result = new ArrayList<>();
         for (Map.Entry<String, List<String>> stage
@@ -452,24 +231,6 @@ public class ToTheMoon132GuidedWorkflowFactoryTest {
         fixed.setOptimizeEnd("true");
         result.add(fixed);
         return result;
-    }
-
-    private static CombinedPass pass(int passNumber) {
-        Pass pass = new Pass();
-        pass.setPassNumber(passNumber);
-        pass.setProfit(100);
-        pass.setTotalTrades(100);
-        return new CombinedPass(pass, null, 50, 1, "");
-    }
-
-    private static StrategyBacktestArchive archiveWithTabs(String... tabs) {
-        StrategyBacktestArchive archive = new StrategyBacktestArchive("42|Strat 42", "Strat 42", 42);
-        for (String tab : tabs) {
-            StrategyBacktestRun run = new StrategyBacktestRun();
-            run.setTabName(tab);
-            archive.upsert(run);
-        }
-        return archive;
     }
 
     private static WorkflowTask findOptimizer(CustomProject project, String stagePrefix) {

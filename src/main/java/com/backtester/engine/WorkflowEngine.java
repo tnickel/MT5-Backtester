@@ -2502,9 +2502,15 @@ public class WorkflowEngine {
         }
         if (snapshot.isEmpty()) {
             throw new IllegalStateException("Optimizer-Task '" + task.getName()
-                    + "' hat keinen Parameter-Snapshot. Guided-Projekte neu laden "
-                    + "(Search-Space-Repair) oder Task-Ziele neu setzen.");
+                    + "' hat keinen Parameter-Snapshot. Task-Ziele neu setzen.");
         }
+
+        List<String> targets = task.getOptimizerTargetParameters();
+        if (targets != null && !targets.isEmpty()) {
+            snapshot = EaParameter.applyOptimizeFlags(snapshot, targets);
+        }
+
+        EaParameterManager.normalizeTimeframeOptimizeBands(snapshot);
         EaParameter.requireValidOptimizeSteps(snapshot);
         setEaParameters(snapshot);
     }

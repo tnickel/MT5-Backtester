@@ -189,6 +189,29 @@ public class OptimizationResult {
         }
 
         /**
+         * Fills blank symbol/period from the run that produced this pass, and writes
+         * the tick model onto backtest/forward legs when they exist.
+         */
+        public void stampMarketIfBlank(String symbol, String period, String tickModel) {
+            if (symbol != null && !symbol.isBlank()
+                    && (this.symbol == null || this.symbol.isBlank())) {
+                this.symbol = symbol;
+            }
+            if (period != null && !period.isBlank()
+                    && (this.period == null || this.period.isBlank())) {
+                this.period = period;
+            }
+            if (tickModel != null && !tickModel.isBlank()) {
+                if (backtestPass != null) {
+                    backtestPass.setTickModel(tickModel);
+                }
+                if (forwardPass != null) {
+                    forwardPass.setTickModel(tickModel);
+                }
+            }
+        }
+
+        /**
          * Tick / modeling accuracy used when this strategy was produced
          * (from the backtest pass, e.g. "1 minute OHLC").
          */

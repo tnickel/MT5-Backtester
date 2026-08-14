@@ -177,6 +177,7 @@ public final class OptimizerSettingsHighlightDialog {
                 super.updateItem(item, empty);
                 getStyleClass().removeAll(
                         "section-header-row",
+                        "optimizer-invalid-row",
                         "optimizer-target-row",
                         "optimizer-latest-change-row",
                         "optimizer-prior-change-row");
@@ -193,6 +194,10 @@ public final class OptimizerSettingsHighlightDialog {
                 }
                 HighlightKind kind = resolveHighlightKind(item);
                 switch (kind) {
+                    case INVALID -> {
+                        setStyle("-fx-background-color: rgba(255, 23, 68, 0.35);");
+                        getStyleClass().add("optimizer-invalid-row");
+                    }
                     case TARGET -> {
                         setStyle(TARGET_STYLE);
                         getStyleClass().add("optimizer-target-row");
@@ -226,6 +231,7 @@ public final class OptimizerSettingsHighlightDialog {
                 setText(mark ? "●" : "");
                 setAlignment(Pos.CENTER);
                 switch (kind) {
+                    case INVALID -> setStyle("-fx-text-fill: #ff1744; -fx-font-weight: bold;");
                     case TARGET -> setStyle("-fx-text-fill: #00e676; -fx-font-weight: bold;");
                     case LATEST -> setStyle("-fx-text-fill: #ffd740; -fx-font-weight: bold;");
                     case PRIOR -> setStyle("-fx-text-fill: #ff9800; -fx-font-weight: bold;");
@@ -355,14 +361,18 @@ public final class OptimizerSettingsHighlightDialog {
         int green = 0;
         int yellow = 0;
         int orange = 0;
+        int red = 0;
         for (EaParameter p : rows) {
             if (p == null || p.isSectionHeader()) continue;
             HighlightKind kind = resolveHighlightKind(p);
-            if (kind == HighlightKind.TARGET) green++;
+            if (kind == HighlightKind.INVALID) red++;
+            else if (kind == HighlightKind.TARGET) green++;
             else if (kind == HighlightKind.LATEST) yellow++;
             else if (kind == HighlightKind.PRIOR) orange++;
         }
-        countBadge.setText(green + " grün · " + yellow + " gelb · " + orange + " orange");
+        String badgeStr = green + " grün · " + yellow + " gelb · " + orange + " orange";
+        if (red > 0) badgeStr += " · " + red + " rot (Fehler)";
+        countBadge.setText(badgeStr);
 
         if (task.getType() != WorkflowTask.TaskType.OPTIMIZER) {
             subtitleLabel.setText(
@@ -504,7 +514,7 @@ public final class OptimizerSettingsHighlightDialog {
             // Always paint Opt flags from the resolved stage targets, never from a stale
             // live-EA optimizeEnabled state that may still reflect a later stage.
             if (!highlightTargets.isEmpty()) {
-                return applyOptimizeFlags(copy, new ArrayList<>(highlightTargets));
+                return EaParameter.applyOptimizeFlags(copy, new ArrayList<>(highlightTargets));
             }
             return copy;
         }
@@ -514,30 +524,11 @@ public final class OptimizerSettingsHighlightDialog {
             if (p != null) copy.add(p.copy());
         }
         if (!highlightTargets.isEmpty()) {
-            return applyOptimizeFlags(copy, new ArrayList<>(highlightTargets));
+            return EaParameter.applyOptimizeFlags(copy, new ArrayList<>(highlightTargets));
         }
         // No stage targets known: clear all Opt flags so a later stage's live EA
         // cannot paint green rows onto an unrelated tile.
-        return applyOptimizeFlags(copy, List.of());
-    }
-
-    static List<EaParameter> applyOptimizeFlags(List<EaParameter> parameters, List<String> targetNames) {
-        Set<String> targets = new HashSet<>();
-        if (targetNames != null) {
-            for (String name : targetNames) {
-                if (name != null && !name.isBlank()) targets.add(name.trim().toLowerCase(Locale.ROOT));
-            }
-        }
-        List<EaParameter> result = new ArrayList<>();
-        if (parameters == null) return result;
-        for (EaParameter source : parameters) {
-            if (source == null) continue;
-            EaParameter copy = source.copy();
-            String name = copy.getName() != null ? copy.getName().trim().toLowerCase(Locale.ROOT) : "";
-            copy.setOptimizeEnabled(!name.isEmpty() && targets.contains(name));
-            result.add(copy);
-        }
-        return result;
+        return EaParameter.applyOptimizeFlags(copy, List.of());
     }
 
     /**
@@ -550,14 +541,18 @@ public final class OptimizerSettingsHighlightDialog {
         if (task == null || task.getType() != WorkflowTask.TaskType.OPTIMIZER) {
             return names;
         }
+        List<String> stored = task.getOptimizerTargetParameters();
+        if (stored != null && !stored.isEmpty()) {
+            for (String name : stored) {
+                if (name != null && !name.isBlank()) names.add(name.trim());
+            }
+            return names;
+        }
         Optional<List<String>> guided = ToTheMoon132GuidedWorkflowFactory
                 .resolveStageTargetsForTaskName(task.getName());
         if (guided.isPresent() && !guided.get().isEmpty()) {
             names.addAll(guided.get());
             return names;
-        }
-        for (String name : task.getOptimizerTargetParameters()) {
-            if (name != null && !name.isBlank()) names.add(name.trim());
         }
         return names;
     }
@@ -623,12 +618,15 @@ public final class OptimizerSettingsHighlightDialog {
     }
 
     enum HighlightKind {
-        NONE, TARGET, LATEST, PRIOR
+        NONE, TARGET, LATEST, PRIOR, INVALID
     }
 
     private HighlightKind resolveHighlightKind(EaParameter param) {
         if (param == null || param.isSectionHeader() || param.getName() == null) {
             return HighlightKind.NONE;
+        }
+        if (param.hasInvalidOptimizeStep() || param.hasInvalidSearchSpace()) {
+            return HighlightKind.INVALID;
         }
         String name = param.getName().trim();
         if (containsIgnoreCase(highlightNames, name)) return HighlightKind.TARGET;

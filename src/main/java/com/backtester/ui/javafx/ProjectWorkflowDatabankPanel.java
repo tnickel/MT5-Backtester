@@ -667,12 +667,12 @@ public class ProjectWorkflowDatabankPanel {
 
         Button backupBtn = new Button("💾 Backup");
         backupBtn.setStyle("-fx-background-color: transparent; -fx-text-fill: #b388ff; -fx-font-weight: bold; -fx-cursor: hand;");
-        backupBtn.setTooltip(new Tooltip("Projekt und Databanken in eine Datei exportieren"));
+        backupBtn.setTooltip(new Tooltip("Vollstaendiges Projekt-Backup: Tasks, Einstellungen, Databanken, Archive, Lineage"));
         backupBtn.setOnAction(e -> host.backupProject());
 
         Button restoreBtn = new Button("📂 Restore");
         restoreBtn.setStyle("-fx-background-color: transparent; -fx-text-fill: #b388ff; -fx-font-weight: bold; -fx-cursor: hand;");
-        restoreBtn.setTooltip(new Tooltip("Projekt und Databanken aus einer Datei importieren"));
+        restoreBtn.setTooltip(new Tooltip("Projekt 1:1 aus einer Backup-Datei wiederherstellen"));
         restoreBtn.setOnAction(e -> host.restoreProject());
 
         bar.getChildren().addAll(newDatabankBtn, clearCurrentDbBtn, clearAllBtn, deleteDatabankBtn,

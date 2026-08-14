@@ -31,23 +31,35 @@ public class EaParameterTableHelper {
 
         log.info("=== [SECTION-HEADER-LOG] EaParameterTableHelper.configureTable invoked! ===");
 
-        // Custom RowFactory: highlight section header rows
+        // Custom RowFactory: highlight section header rows & invalid search space rows
         paramTable.setRowFactory(tv -> new TableRow<EaParameter>() {
+            private final Tooltip errorTooltip = new Tooltip();
             @Override
             protected void updateItem(EaParameter item, boolean empty) {
                 super.updateItem(item, empty);
                 if (empty || item == null) {
                     setStyle("");
+                    setTooltip(null);
                     getStyleClass().remove("section-header-row");
                 } else if (item.isSectionHeader()) {
                     log.info("=== [SECTION-HEADER-LOG] TableRow rendering section header: name='{}', title='{}' ===", item.getName(), item.getFormattedSectionTitle());
                     setStyle("-fx-background-color: #152238; -fx-font-weight: bold;");
+                    setTooltip(null);
                     if (!getStyleClass().contains("section-header-row")) {
                         getStyleClass().add("section-header-row");
                     }
                 } else {
-                    setStyle("");
-                    getStyleClass().remove("section-header-row");
+                    String error = item.getSearchSpaceValidationError(null);
+                    if (error != null) {
+                        setStyle("-fx-background-color: rgba(255, 23, 68, 0.35);");
+                        errorTooltip.setText("Fehler: " + error);
+                        setTooltip(errorTooltip);
+                        getStyleClass().remove("section-header-row");
+                    } else {
+                        setStyle("");
+                        setTooltip(null);
+                        getStyleClass().remove("section-header-row");
+                    }
                 }
             }
         });

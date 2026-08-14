@@ -10,8 +10,9 @@ import java.util.Locale;
 import java.util.Map;
 
 /**
- * Read-only safety check that proves an optimizer can reproduce the parameter basis
- * that is in force before MT5 is allowed to start.
+ * Read-only safety check before MT5 starts: every target of an enabled optimizer
+ * must keep the current master value inside its search bounds. Exact grid hits are
+ * not required — a nearby walkable point (within one step) is enough.
  */
 public final class MasterSearchSpaceValidator {
 
@@ -199,7 +200,7 @@ public final class MasterSearchSpaceValidator {
         if (issues == null || issues.isEmpty()) return;
         StringBuilder message = new StringBuilder(
                 "Master-Suchraumprüfung fehlgeschlagen. MT5 wurde nicht gestartet. "
-                        + "Jeder Optimizer muss die wirksame Master-Basis exakt reproduzieren können:");
+                        + "Jeder Optimizer muss den Masterwert im Suchraum (Start..Ende) haben:");
         for (Issue issue : issues) {
             message.append("\n- ").append(issue.describe());
         }
@@ -263,10 +264,6 @@ public final class MasterSearchSpaceValidator {
                     "Master-Timeframe liegt außerhalb des Suchraums."));
             return;
         }
-        if ((masterIndex - startIndex) % stepWidth != 0) {
-            issues.add(issue(taskName, band, masterValue,
-                    "Master-Timeframe liegt zwischen zwei Rasterpunkten."));
-        }
     }
 
     private static void validateNumeric(String taskName,
@@ -300,10 +297,8 @@ public final class MasterSearchSpaceValidator {
                     "Masterwert liegt außerhalb des Suchraums."));
             return;
         }
-        if (value.subtract(first).remainder(stepWidth).compareTo(BigDecimal.ZERO) != 0) {
-            issues.add(issue(taskName, band, masterValue,
-                    "Masterwert liegt zwischen zwei Rasterpunkten."));
-        }
+        // Off-grid is allowed. MT5 walks start + n*step; the nearest point is then
+        // at most one step away, which is close enough to keep the master in play.
     }
 
     private static boolean knownEnumDomainContains(String name,

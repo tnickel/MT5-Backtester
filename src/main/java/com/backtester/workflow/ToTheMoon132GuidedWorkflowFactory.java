@@ -2,7 +2,6 @@ package com.backtester.workflow;
 
 import com.backtester.config.EaParameter;
 import com.backtester.config.EaParameterManager;
-
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -131,8 +130,10 @@ public final class ToTheMoon132GuidedWorkflowFactory {
             optimizer.setTargetDatabank(stage.databankPrefix + "_raw");
             optimizer.setOptimizerMode(stage.optimizerMode);
             optimizer.setOptimizerCriterion(7); // MT5 complex criterion includes sample size and risk.
-            optimizer.setOptimizerForwardMode(4);
-            optimizer.setOptimizerForwardDate(FORWARD_FROM);
+            optimizer.setOptimizerForwardMode(1);
+            java.time.LocalDate fwdStart = com.backtester.engine.ForwardSplit.computeForwardStartDate(
+                    java.time.LocalDate.parse(DEVELOPMENT_FROM), java.time.LocalDate.parse(DEVELOPMENT_TO), 1, null);
+            optimizer.setOptimizerForwardDate(fwdStart != null ? fwdStart.toString() : FORWARD_FROM);
             optimizer.setDeleteFailed(false);
             if (optimizerReportsRoot != null) {
                 optimizer.setOptimizerOutputDirectory(
@@ -152,7 +153,7 @@ public final class ToTheMoon132GuidedWorkflowFactory {
             filter.setTargetDatabank(stage.databankPrefix + "_pick");
             filter.setDeleteFailed(true);
             filter.setFilterConditions(i == STAGES.size() - 1
-                    ? strictDevelopmentFilters() : developmentFilters());
+                    ? strictDevelopmentFilters(sym) : developmentFilters(sym));
             project.addTask(filter);
             previousPick = stage.databankPrefix + "_pick";
         }
@@ -184,177 +185,7 @@ public final class ToTheMoon132GuidedWorkflowFactory {
     }
 
     /**
-     * Idempotently upgrades projects created before the score-ranked Top-20
-     * gate was added. Existing optimizer results through g11 are preserved;
-     * only the obsolete downstream retest outputs are invalidated.
-     */
-    public static boolean ensureDevelopmentTop20Selection(CustomProject project) {
-        if (project == null || !"ToTheMoon_KI_v132".equalsIgnoreCase(project.getExpert())) {
-            return false;
-        }
-
-        List<WorkflowTask> tasks = project.getTasks();
-        WorkflowTask developmentRetest = tasks.stream()
-                .filter(task -> task != null && task.getType() == WorkflowTask.TaskType.RETESTER
-                        && "g12_dev_tick".equalsIgnoreCase(task.getTargetDatabank()))
-                .findFirst().orElse(null);
-        if (developmentRetest == null) return false;
-
-        WorkflowTask selection = tasks.stream()
-                .filter(task -> task != null && task.getType() == WorkflowTask.TaskType.DIVERSITY_FILTER
-                        && DEVELOPMENT_TOP20_DATABANK.equalsIgnoreCase(task.getTargetDatabank()))
-                .findFirst().orElse(null);
-        int earliestChangedIndex = Integer.MAX_VALUE;
-        boolean changed = false;
-
-        if (selection == null) {
-            int retestIndex = tasks.indexOf(developmentRetest);
-            String source = developmentRetest.getSourceDatabank();
-            WorkflowTask finalOptimizer = tasks.subList(0, retestIndex).stream()
-                    .filter(task -> task != null && task.getType() == WorkflowTask.TaskType.OPTIMIZER)
-                    .reduce((first, second) -> second).orElse(null);
-            selection = createDevelopmentTop20Task(source,
-                    finalOptimizer != null ? finalOptimizer.getOptimizerParameterSnapshot() : List.of(),
-                    project.getSymbol(), project.getPeriod());
-            tasks.add(retestIndex, selection);
-            earliestChangedIndex = retestIndex;
-            changed = true;
-        } else if (!selection.isDiversityDeduplicateEffectiveV132()) {
-            selection.setDiversityDeduplicateEffectiveV132(true);
-            earliestChangedIndex = tasks.indexOf(selection);
-            changed = true;
-        }
-
-        WorkflowTask desiredDevelopment = createDevelopmentRetestTask(project.getSymbol(), project.getPeriod());
-        WorkflowTask desiredOos = createOosRetestTask(project.getSymbol(), project.getPeriod());
-        WorkflowTask desiredFourYears = createFinalFourYearsTask(project.getSymbol(), project.getPeriod());
-        WorkflowTask desiredPublication = createFinalPublicationTask(project.getSymbol(), project.getPeriod());
-
-        WorkflowTask[] existingTail = {
-                developmentRetest,
-                findByTarget(tasks, "g13_oos_tick"),
-                findByTarget(tasks, "g14_final_4y"),
-                findByTarget(tasks, DatabankManager.FINAL)
-        };
-        WorkflowTask[] desiredTail = {
-                desiredDevelopment, desiredOos, desiredFourYears, desiredPublication
-        };
-        for (int i = 0; i < existingTail.length; i++) {
-            WorkflowTask existing = existingTail[i];
-            if (existing != null && synchronizeTailTask(existing, desiredTail[i])) {
-                earliestChangedIndex = Math.min(earliestChangedIndex, tasks.indexOf(existing));
-                changed = true;
-            }
-        }
-
-        if (changed && earliestChangedIndex >= 0 && earliestChangedIndex < tasks.size()) {
-            invalidateTasksFrom(project, earliestChangedIndex);
-        }
-        return changed;
-    }
-
-    /**
-     * Idempotently realigns each staged Optimizer's target list + snapshot to the
-     * current {@link #STAGES} definition. Fixes projects whose first stages were
-     * wrongly saved with later-stage search spaces (e.g. Adaptive/Escalation on
-     * Grid-Fundament).
-     *
-     * @return {@code true} if any task was rewritten
-     */
-    public static boolean repairStageOptimizerSearchSpaces(CustomProject project) {
-        if (project == null || !"ToTheMoon_KI_v132".equalsIgnoreCase(project.getExpert())
-                || project.getTasks() == null) {
-            return false;
-        }
-
-        List<EaParameter> fallbackBase = findLargestOptimizerSnapshot(project);
-        if (fallbackBase.isEmpty()) {
-            fallbackBase = loadProvenPresetFromDisk(project.getExpert());
-        }
-        if (fallbackBase.isEmpty()) {
-            return false;
-        }
-
-        boolean changed = false;
-        int earliestChangedIndex = Integer.MAX_VALUE;
-
-        for (WorkflowTask task : project.getTasks()) {
-            if (task == null || task.getType() != WorkflowTask.TaskType.OPTIMIZER) {
-                continue;
-            }
-            Stage stage = findStageForTaskName(task.getName());
-            if (stage == null) {
-                continue;
-            }
-
-            List<String> expectedTargets = stage.targetNames();
-            Set<String> expected = new LinkedHashSet<>(expectedTargets);
-            Set<String> actualTargets = new LinkedHashSet<>();
-            for (String name : task.getOptimizerTargetParameters()) {
-                if (name != null && !name.isBlank()) {
-                    actualTargets.add(name.trim());
-                }
-            }
-            Set<String> actualEnabled = enabledOptimizeNames(task.getOptimizerParameterSnapshot());
-            boolean rangesWrong = !stageRangesMatchSnapshot(task.getOptimizerParameterSnapshot(), stage);
-            boolean optimizerModeWrong = task.getOptimizerMode() != stage.optimizerMode;
-            boolean snapshotMissing = task.getOptimizerParameterSnapshot() == null
-                    || task.getOptimizerParameterSnapshot().isEmpty();
-
-            if (!snapshotMissing && expected.equals(actualTargets) && expected.equals(actualEnabled)
-                    && !rangesWrong && !optimizerModeWrong) {
-                // Stage search-space already correct — still scrub legacy TF bands (0/0/MN1)
-                // on non-target rows so the Parameter-Tabelle does not keep Schritt 0 / Stopp MN1.
-                List<EaParameter> scrubbed = task.getOptimizerParameterSnapshot();
-                if (normalizeTimeframeBandsInSnapshot(scrubbed)) {
-                    task.setOptimizerParameterSnapshot(scrubbed);
-                    changed = true;
-                    earliestChangedIndex = Math.min(earliestChangedIndex,
-                            project.getTasks().indexOf(task));
-                }
-                continue;
-            }
-
-            List<EaParameter> base = !task.getOptimizerParameterSnapshot().isEmpty()
-                    ? task.getOptimizerParameterSnapshot()
-                    : fallbackBase;
-
-            task.setOptimizerTargetParameters(expectedTargets);
-            task.setOptimizerParameterSnapshot(buildStageSnapshot(base, stage));
-            task.setOptimizerMode(stage.optimizerMode);
-            task.setLastExecutionLog("Search-Space auf Factory-Definition für '"
-                    + stage.name + "' korrigiert.");
-            changed = true;
-            earliestChangedIndex = Math.min(earliestChangedIndex,
-                    project.getTasks().indexOf(task));
-        }
-        if (changed && earliestChangedIndex >= 0
-                && earliestChangedIndex < project.getTasks().size()) {
-            invalidateTasksFrom(project, earliestChangedIndex);
-        }
-        return changed;
-    }
-
-    /** Fixes legacy TF optimize bands in-place without changing Y/N targets. */
-    private static boolean normalizeTimeframeBandsInSnapshot(List<EaParameter> snapshot) {
-        if (snapshot == null || snapshot.isEmpty()) {
-            return false;
-        }
-        boolean changed = false;
-        for (EaParameter parameter : snapshot) {
-            boolean scrubbed = EaParameter.sanitizeTimeframeFieldsForSetFile(parameter);
-            scrubbed |= EaParameter.normalizeTimeframeOptimizeBand(parameter);
-            scrubbed |= EaParameter.normalizeBooleanOptimizeBand(parameter);
-            if (scrubbed) {
-                changed = true;
-            }
-        }
-        return changed;
-    }
-
-    /**
-     * Loads the on-disk proven preset used when creating Guided projects, so empty
-     * persisted optimizer snapshots can be rebuilt.
+     * Loads the on-disk proven preset used when creating Guided projects.
      */
     public static List<EaParameter> loadProvenPresetFromDisk(String expert) {
         try {
@@ -369,102 +200,6 @@ public final class ToTheMoon132GuidedWorkflowFactory {
         } catch (RuntimeException ex) {
             return List.of();
         }
-    }
-
-    private static List<EaParameter> findLargestOptimizerSnapshot(CustomProject project) {
-        List<EaParameter> best = List.of();
-        for (WorkflowTask task : project.getTasks()) {
-            if (task == null || task.getType() != WorkflowTask.TaskType.OPTIMIZER) {
-                continue;
-            }
-            List<EaParameter> snapshot = task.getOptimizerParameterSnapshot();
-            if (snapshot != null && snapshot.size() > best.size()) {
-                best = snapshot;
-            }
-        }
-        return best;
-    }
-
-    private static Set<String> enabledOptimizeNames(List<EaParameter> snapshot) {
-        Set<String> enabled = new LinkedHashSet<>();
-        if (snapshot == null) {
-            return enabled;
-        }
-        for (EaParameter parameter : snapshot) {
-            if (parameter != null && parameter.isOptimizeEnabled()
-                    && parameter.getName() != null && !parameter.getName().isBlank()) {
-                enabled.add(parameter.getName().trim());
-            }
-        }
-        return enabled;
-    }
-
-    private static boolean stageRangesMatchSnapshot(List<EaParameter> snapshot, Stage stage) {
-        if (snapshot == null || snapshot.isEmpty()) {
-            return false;
-        }
-        Map<String, EaParameter> byName = new LinkedHashMap<>();
-        for (EaParameter parameter : snapshot) {
-            if (parameter == null || parameter.isSectionHeader()
-                    || parameter.getName() == null || parameter.getName().isBlank()) {
-                continue;
-            }
-            byName.putIfAbsent(parameter.getName(), parameter);
-        }
-        for (Range range : stage.ranges) {
-            EaParameter parameter = byName.get(range.parameterName);
-            if (parameter == null || !parameter.isOptimizeEnabled()) {
-                return false;
-            }
-            // Compare against the band the factory would actually produce: the configured
-            // range after champion alignment. Comparing against the raw range would flag
-            // every aligned stage as broken and rebuild it on each project load.
-            EaParameter expected = expectedStageBand(parameter, range);
-            if (!safeEq(parameter.getOptimizeStart(), expected.getOptimizeStart())
-                    || !safeEq(parameter.getOptimizeStep(), expected.getOptimizeStep())
-                    || !safeEq(parameter.getOptimizeEnd(), expected.getOptimizeEnd())) {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    private static EaParameter expectedStageBand(EaParameter current, Range range) {
-        EaParameter probe = current.copy();
-        probe.setOptimizeStart(range.start);
-        probe.setOptimizeStep(range.step);
-        probe.setOptimizeEnd(range.end);
-        probe.setOptimizeEnabled(true);
-        ChampionSearchSpaceAligner.align(probe);
-        return probe;
-    }
-
-    private static boolean safeEq(String a, String b) {
-        String left = a == null ? "" : a.trim();
-        String right = b == null ? "" : b.trim();
-        return left.equals(right);
-    }
-
-    private static Stage findStageForTaskName(String taskName) {
-        if (taskName == null || taskName.isBlank()) {
-            return null;
-        }
-        String normalized = taskName.trim();
-        int sep = normalized.indexOf(" — ");
-        if (sep < 0) {
-            sep = normalized.indexOf(" - ");
-        }
-        String stageKey = sep > 0 ? normalized.substring(0, sep).trim() : normalized;
-        if (stageKey.toLowerCase(Locale.ROOT).endsWith(" optimizer")) {
-            stageKey = stageKey.substring(0, stageKey.length() - " optimizer".length()).trim();
-        }
-        for (Stage stage : STAGES) {
-            if (stageKey.equalsIgnoreCase(stage.name)
-                    || stageKey.regionMatches(true, 0, stage.name, 0, stage.name.length())) {
-                return stage;
-            }
-        }
-        return null;
     }
 
     private static WorkflowTask createDevelopmentTop20Task(String sourceDatabank,
@@ -550,111 +285,6 @@ public final class ToTheMoon132GuidedWorkflowFactory {
         return task;
     }
 
-    /** Updates an existing persisted tail task without replacing its stable task id/enabled flag. */
-    private static boolean synchronizeTailTask(WorkflowTask existing, WorkflowTask desired) {
-        if (existing == null || desired == null) return false;
-        boolean changed = !safeEq(existing.getName(), desired.getName())
-                || existing.getType() != desired.getType()
-                || !safeEq(existing.getSourceDatabank(), desired.getSourceDatabank())
-                || !safeEq(existing.getTargetDatabank(), desired.getTargetDatabank())
-                || !safeEq(existing.getStartDate(), desired.getStartDate())
-                || !safeEq(existing.getEndDate(), desired.getEndDate())
-                || !safeEq(existing.getRetestSymbol(), desired.getRetestSymbol())
-                || !safeEq(existing.getRetestPeriod(), desired.getRetestPeriod())
-                || existing.getExecutionMode() != desired.getExecutionMode()
-                || existing.isDeleteFailed() != desired.isDeleteFailed()
-                || !sameFilterConditions(existing.getFilterConditions(), desired.getFilterConditions());
-        if (!changed) return false;
-
-        existing.setName(desired.getName());
-        existing.setType(desired.getType());
-        existing.setSourceDatabank(desired.getSourceDatabank());
-        existing.setTargetDatabank(desired.getTargetDatabank());
-        existing.setStartDate(desired.getStartDate());
-        existing.setEndDate(desired.getEndDate());
-        existing.setRetestSymbol(desired.getRetestSymbol());
-        existing.setRetestPeriod(desired.getRetestPeriod());
-        existing.setExecutionMode(desired.getExecutionMode());
-        existing.setDeleteFailed(desired.isDeleteFailed());
-        List<FilterCondition> filters = new ArrayList<>();
-        for (FilterCondition filter : desired.getFilterConditions()) {
-            if (filter != null) filters.add(filter.copyForPersistence());
-        }
-        existing.setFilterConditions(filters);
-        return true;
-    }
-
-    private static boolean sameFilterConditions(List<FilterCondition> left,
-                                                List<FilterCondition> right) {
-        if (left == null || right == null || left.size() != right.size()) return false;
-        for (int i = 0; i < left.size(); i++) {
-            FilterCondition a = left.get(i);
-            FilterCondition b = right.get(i);
-            if (a == null || b == null || a.getMetric() != b.getMetric()
-                    || a.getOperator() != b.getOperator()
-                    || Double.compare(a.getValue(), b.getValue()) != 0
-                    || a.isEnabled() != b.isEnabled()) {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    /** Clears every persisted/transient result that depends on the task at startIndex. */
-    private static void invalidateTasksFrom(CustomProject project, int startIndex) {
-        if (project == null || project.getTasks() == null) return;
-        List<WorkflowTask> tasks = project.getTasks();
-        for (int i = Math.max(0, startIndex); i < tasks.size(); i++) {
-            WorkflowTask task = tasks.get(i);
-            if (task == null) continue;
-            if (task.getStatus() != WorkflowTask.TaskStatus.DISABLED) {
-                task.setStatus(WorkflowTask.TaskStatus.PENDING);
-            }
-            task.setOutputPasses(new ArrayList<>());
-            task.setLastExecutionLog("");
-            task.setFilterRejectionNote("");
-            task.setSensitivityRunTimestamp(0L);
-            if (task.getType() == WorkflowTask.TaskType.OPTIMIZER) {
-                task.setOptimizerParameterBasisAdopted(false);
-                task.setOptimizerParameterBasisPassNumber(-1);
-                task.setOptimizerParameterBasisDatabank("");
-                task.clearAdoptedFilterGateAudit();
-            }
-            clearDatabank(project, task.getTargetDatabank());
-            removeArchive(project, task.getTargetDatabank());
-        }
-    }
-
-    private static WorkflowTask findByTarget(List<WorkflowTask> tasks, String target) {
-        if (target == null) return null;
-        return tasks.stream().filter(task -> task != null
-                && target.equalsIgnoreCase(task.getTargetDatabank())).findFirst().orElse(null);
-    }
-
-    private static void renameTaskPrefix(WorkflowTask task, String oldPrefix, String newPrefix) {
-        if (task != null && task.getName().startsWith(oldPrefix)) {
-            task.setName(newPrefix + task.getName().substring(oldPrefix.length()));
-        }
-    }
-
-    private static void clearDatabank(CustomProject project, String databankName) {
-        if (databankName == null) return;
-        String storedName = project.getDatabanks().keySet().stream()
-                .filter(name -> databankName.equalsIgnoreCase(name)).findFirst().orElse(databankName);
-        project.getDatabanks().put(storedName, new ArrayList<>());
-    }
-
-    private static void removeArchive(CustomProject project, String databankName) {
-        if (databankName == null) return;
-        project.getStrategyArchives().entrySet().removeIf(entry -> {
-            StrategyBacktestArchive archive = entry.getValue();
-            if (archive == null) return true;
-            archive.getRunsByTab().keySet().removeIf(
-                    tabName -> databankName.equalsIgnoreCase(tabName));
-            return archive.getRunsByTab().isEmpty();
-        });
-    }
-
     public static Map<String, List<String>> stageTargetParameters() {
         Map<String, List<String>> result = new LinkedHashMap<>();
         for (Stage stage : STAGES) result.put(stage.name, stage.targetNames());
@@ -700,9 +330,18 @@ public final class ToTheMoon132GuidedWorkflowFactory {
     }
 
     private static List<FilterCondition> developmentFilters() {
+        return developmentFilters("");
+    }
+
+    private static List<FilterCondition> strictDevelopmentFilters() {
+        return strictDevelopmentFilters("");
+    }
+
+    private static List<FilterCondition> developmentFilters(String symbol) {
+        double minNetProfit = "GBPJPY".equalsIgnoreCase(symbol) ? 500.0 : 0.0;
         return List.of(
-                condition(FilterCondition.Metric.BT_NET_PROFIT, FilterCondition.Operator.GREATER_THAN, 0),
-                condition(FilterCondition.Metric.FW_NET_PROFIT, FilterCondition.Operator.GREATER_THAN, 0),
+                condition(FilterCondition.Metric.BT_NET_PROFIT, FilterCondition.Operator.GREATER_THAN, minNetProfit),
+                condition(FilterCondition.Metric.FW_NET_PROFIT, FilterCondition.Operator.GREATER_THAN, minNetProfit),
                 condition(FilterCondition.Metric.BT_TOTAL_TRADES, FilterCondition.Operator.GREATER_EQUAL, 750),
                 condition(FilterCondition.Metric.FW_TOTAL_TRADES, FilterCondition.Operator.GREATER_EQUAL, 300),
                 condition(FilterCondition.Metric.BT_PROFIT_FACTOR, FilterCondition.Operator.GREATER_EQUAL, 1.20),
@@ -711,8 +350,8 @@ public final class ToTheMoon132GuidedWorkflowFactory {
                 condition(FilterCondition.Metric.FW_MAX_DD_PERCENT, FilterCondition.Operator.LESS_EQUAL, 12));
     }
 
-    private static List<FilterCondition> strictDevelopmentFilters() {
-        List<FilterCondition> filters = new ArrayList<>(developmentFilters());
+    private static List<FilterCondition> strictDevelopmentFilters(String symbol) {
+        List<FilterCondition> filters = new ArrayList<>(developmentFilters(symbol));
         filters.add(condition(FilterCondition.Metric.BT_RECOVERY_FACTOR,
                 FilterCondition.Operator.GREATER_EQUAL, 1.5));
         filters.add(condition(FilterCondition.Metric.FW_RECOVERY_FACTOR,

@@ -136,6 +136,27 @@ public class CustomProjectTest {
         assertEquals("D:\\optimizer\\GBPJPY\\stage-00",
                 clonedTask0.getOptimizerOutputDirectory());
         assertEquals(WorkflowTask.TaskStatus.PENDING, clonedTask0.getStatus());
+        assertFalse(clone.hasProvenMaster());
+        assertEquals(-1, clone.getConfirmedMasterSequence());
+        assertTrue(Double.isNaN(clone.getMasterSelectionRatio()));
+    }
+
+    @Test
+    public void cloningDropsTheConfirmedMasterFloorOfTheSourceMarket() {
+        CustomProject source = new CustomProject("Guided", "ToTheMoon_KI_v132", "AUDCAD", "M5");
+        source.setProvenMasterParameters(List.of(new EaParameter("GridStep", "23")));
+        source.setProvenMasterContextKey("ToTheMoon_KI_v132|AUDCAD|M5");
+        source.setMasterSelectionRatio(4.2);
+        source.setConfirmedMasterSequence(3);
+
+        CustomProject clone = source.cloneProject("Guided (GBPJPY)", "GBPJPY", "M5");
+
+        assertFalse(clone.hasProvenMaster());
+        assertEquals("", clone.getProvenMasterContextKey());
+        assertEquals(-1, clone.getConfirmedMasterSequence());
+        assertTrue(Double.isNaN(clone.getMasterSelectionRatio()));
+        assertTrue(source.hasProvenMaster());
+        assertEquals(3, source.getConfirmedMasterSequence());
     }
 
     @Before
@@ -306,6 +327,17 @@ public class CustomProjectTest {
         assertTrue(project.getTasks().stream()
                 .allMatch(task -> task.getType() == WorkflowTask.TaskType.RETESTER));
         assertFalse(project.migrateLegacyTaskDefinitions());
+    }
+
+    @Test
+    public void persistenceCopyDoesNotRewriteTaskDefinitions() {
+        CustomProject project = new CustomProject("Guided", "EA", "AUDCAD", "M5");
+        project.addTask(new WorkflowTask("1. Langzeittest (5-10 Jahre)", WorkflowTask.TaskType.RETESTER));
+
+        CustomProject copy = project.copyMetadataForPersistence();
+
+        assertEquals("1. Langzeittest (5-10 Jahre)", project.getTasks().get(0).getName());
+        assertEquals("1. Langzeittest (5-10 Jahre)", copy.getTasks().get(0).getName());
     }
 
     @Test

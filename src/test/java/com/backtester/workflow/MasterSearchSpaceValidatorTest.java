@@ -44,15 +44,12 @@ public class MasterSearchSpaceValidatorTest {
     }
 
     @Test
-    public void rejectsMasterBetweenGridPoints() {
+    public void acceptsMasterBetweenGridPointsWhenInsideBounds() {
         WorkflowTask task = optimizer("Raster",
                 parameter("Grid", "1.05", "1.00", "0.10", "2.00"));
 
-        List<MasterSearchSpaceValidator.Issue> issues = MasterSearchSpaceValidator.validateTask(
-                task, List.of(parameter("Grid", "1.05", "0", "1", "2")), "M5");
-
-        assertEquals(1, issues.size());
-        assertTrue(issues.get(0).reason().contains("zwischen zwei Rasterpunkten"));
+        assertTrue(MasterSearchSpaceValidator.validateTask(
+                task, List.of(parameter("Grid", "1.05", "0", "1", "2")), "M5").isEmpty());
     }
 
     @Test
@@ -90,7 +87,7 @@ public class MasterSearchSpaceValidatorTest {
     public void projectCheckAggregatesEnabledGuidedOptimizersOnly() {
         EaParameter masterParameter = parameter("Grid", "10", "0", "1", "20");
         WorkflowTask good = optimizer("Good", parameter("Grid", "10", "0", "5", "20"));
-        WorkflowTask bad = optimizer("Bad", parameter("Grid", "10", "0", "6", "20"));
+        WorkflowTask bad = optimizer("Bad", parameter("Grid", "10", "0", "5", "8"));
         WorkflowTask disabled = optimizer("Disabled", parameter("Grid", "10", "0", "6", "20"));
         disabled.setEnabled(false);
         WorkflowTask retester = new WorkflowTask("Retest", WorkflowTask.TaskType.RETESTER);

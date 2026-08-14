@@ -2,6 +2,7 @@ package com.backtester.ui.javafx;
 
 import com.backtester.config.AppConfig;
 import com.backtester.config.EaParameter;
+import com.backtester.engine.OptimizationConfig;
 import com.backtester.engine.WorkflowEngine;
 import com.backtester.report.OptimizationResult.CombinedPass;
 import com.backtester.engine.MetaTraderRunLock;
@@ -16,9 +17,18 @@ import com.backtester.workflow.WorkflowPauseException;
 import com.backtester.workflow.WorkflowTask;
 import javafx.application.Platform;
 import javafx.concurrent.Task;
+import javafx.geometry.Insets;
 import javafx.scene.control.Alert;
 import javafx.scene.control.ButtonBar;
 import javafx.scene.control.ButtonType;
+import javafx.scene.control.Dialog;
+import javafx.scene.control.Label;
+import javafx.scene.control.TextArea;
+import javafx.scene.layout.Priority;
+import javafx.scene.layout.VBox;
+import javafx.scene.paint.Color;
+import javafx.scene.text.Font;
+import javafx.scene.text.FontWeight;
 import javafx.stage.Window;
 
 import java.nio.file.Path;
@@ -190,6 +200,28 @@ public class ProjectWorkflowPipelineRunner {
             timestampByDatabank.put(targetKey, propagatedTimestamp);
         }
         return timestampByDatabank;
+    }
+
+    private void stampOptimizerPasses(List<CombinedPass> passes, WorkflowTask task) {
+        if (passes == null) {
+            return;
+        }
+        String modelName = tickModelName(task != null ? task.getMt5Model() : -1);
+        String symbol = engine.getSymbol();
+        String period = engine.getPeriod();
+        for (CombinedPass pass : passes) {
+            if (pass != null) {
+                pass.stampMarketIfBlank(symbol, period, modelName);
+            }
+        }
+    }
+
+    private static String tickModelName(int model) {
+        String[] names = OptimizationConfig.MODEL_NAMES;
+        if (model >= 0 && model < names.length) {
+            return names[model];
+        }
+        return "";
     }
 
     /** Applies every task-level override before any runner/config is created. */
@@ -477,25 +509,7 @@ public class ProjectWorkflowPipelineRunner {
                         );
                         if (engine.getOptResult() != null) {
                             outputPasses = engine.getOptResult().buildCombinedPasses(engine.getForwardMode() > 0, engine.loadScoreWeightsFromDb());
-                            String modelName = com.backtester.engine.OptimizationConfig.MODEL_NAMES[task.getMt5Model()];
-                            String optSymbol = engine.getSymbol();
-                            String optPeriod = engine.getPeriod();
-                            if (outputPasses != null) {
-                                for (CombinedPass cp : outputPasses) {
-                                    if (cp.getSymbol() == null || cp.getSymbol().isBlank()) {
-                                        cp.setSymbol(optSymbol);
-                                    }
-                                    if (cp.getPeriod() == null || cp.getPeriod().isBlank()) {
-                                        cp.setPeriod(optPeriod);
-                                    }
-                                    if (cp.getBacktestPass() != null) {
-                                        cp.getBacktestPass().setTickModel(modelName);
-                                    }
-                                    if (cp.getForwardPass() != null) {
-                                        cp.getForwardPass().setTickModel(modelName);
-                                    }
-                                }
-                            }
+                            stampOptimizerPasses(outputPasses, task);
                         }
                         break;
                     case RETESTER:
@@ -737,6 +751,7 @@ public class ProjectWorkflowPipelineRunner {
                                 );
                                 if (engine.getOptResult() != null) {
                                     currentPipelinePasses = engine.getOptResult().buildCombinedPasses(engine.getForwardMode() > 0, engine.loadScoreWeightsFromDb());
+                                    stampOptimizerPasses(currentPipelinePasses, task);
                                 }
                                 break;
                             case RETESTER:
@@ -942,12 +957,37 @@ public class ProjectWorkflowPipelineRunner {
     }
 
     private void showConfigurationError(String message, String header) {
-        Alert alert = new Alert(Alert.AlertType.ERROR, message, ButtonType.OK);
-        alert.setTitle("Workflow-Konfiguration ungültig");
-        alert.setHeaderText(header);
+        Dialog<Void> dialog = new Dialog<>();
+        dialog.setTitle("Workflow-Konfiguration ungültig");
         Window owner = host.getOwnerWindow();
-        if (owner != null) alert.initOwner(owner);
-        alert.showAndWait();
+        if (owner != null) dialog.initOwner(owner);
+
+        VBox content = new VBox(12);
+        content.setPadding(new Insets(16));
+        content.setPrefWidth(720);
+        content.setPrefHeight(420);
+        content.setStyle("-fx-background-color: #0b0d13;");
+
+        Label headerLbl = new Label(header != null ? header : "Workflow-Konfiguration ungültig");
+        headerLbl.setFont(Font.font("Segoe UI", FontWeight.BOLD, 15));
+        headerLbl.setTextFill(Color.web("#ff5252"));
+
+        TextArea textArea = new TextArea(message);
+        textArea.setEditable(false);
+        textArea.setWrapText(true);
+        textArea.setStyle("-fx-control-inner-background: #0f141c; -fx-text-fill: #e2e8f0; -fx-font-family: 'Consolas', 'Courier New', monospace; -fx-font-size: 12px;");
+        VBox.setVgrow(textArea, Priority.ALWAYS);
+
+        content.getChildren().addAll(headerLbl, textArea);
+        dialog.getDialogPane().setContent(content);
+        dialog.getDialogPane().getButtonTypes().add(ButtonType.OK);
+        dialog.getDialogPane().setStyle("-fx-background-color: #0b0d13;");
+
+        if (owner != null && owner.getScene() != null && !owner.getScene().getStylesheets().isEmpty()) {
+            dialog.getDialogPane().getStylesheets().addAll(owner.getScene().getStylesheets());
+        }
+
+        dialog.showAndWait();
     }
 
     private void validateProjectExecutionOrder() {

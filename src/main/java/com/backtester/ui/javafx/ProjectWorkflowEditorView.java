@@ -13,13 +13,13 @@ import com.backtester.report.OptimizationResult.CombinedPass;
 import com.backtester.report.PassPresetResolver;
 import com.backtester.workflow.ChampionSearchSpaceAligner;
 import com.backtester.workflow.CustomProject;
+import com.backtester.workflow.CustomProjectBackup;
 import com.backtester.workflow.DatabankManager;
 import com.backtester.workflow.FilterCondition;
 import com.backtester.workflow.FilterGateAnalysisService;
 import com.backtester.workflow.GuidedOptimizationService;
 import com.backtester.workflow.MasterStrategyEntry;
 import com.backtester.workflow.MasterStrategyLineageService;
-import com.backtester.workflow.ToTheMoon132GuidedWorkflowFactory;
 import com.backtester.workflow.WorkflowPauseException;
 import com.backtester.workflow.WorkflowTask;
 import java.util.Set;
@@ -239,12 +239,6 @@ public class ProjectWorkflowEditorView {
         this.project = proj;
         this.selectedTask = null;
         if (proj != null) {
-            boolean projectChanged = proj.migrateLegacyTaskDefinitions();
-            projectChanged |= ToTheMoon132GuidedWorkflowFactory.ensureDevelopmentTop20Selection(proj);
-            projectChanged |= ToTheMoon132GuidedWorkflowFactory.repairStageOptimizerSearchSpaces(proj);
-            if (projectChanged) {
-                saveProject();
-            }
             engine.resetTransientResults();
             projectTitleLabel.setText("/ " + proj.getName());
             if (automaticModeToggle != null) {
@@ -255,24 +249,6 @@ public class ProjectWorkflowEditorView {
             if (databankPanel != null) {
                 databankPanel.syncPersistCheckboxFromProject();
             }
-
-            // Ensure Task 1 is Strategie-Auswahl
-            if (proj.getTasks() != null) {
-                boolean hasSelection = false;
-                for (WorkflowTask t : proj.getTasks()) {
-                    if (t.getType() == WorkflowTask.TaskType.STRATEGY_SELECTION) {
-                        hasSelection = true;
-                        break;
-                    }
-                }
-                if (!hasSelection) {
-                    WorkflowTask selTask = new WorkflowTask("Strategie-Auswahl", WorkflowTask.TaskType.STRATEGY_SELECTION);
-                    proj.getTasks().add(0, selTask);
-                    projectChanged = true;
-                }
-            }
-
-            if (projectChanged) saveProject();
 
             engine.changeExpert(proj.getExpert());
             engine.setSymbol(proj.getSymbol());
@@ -3611,11 +3587,7 @@ public class ProjectWorkflowEditorView {
         if (file != null) {
             try {
                 // Save current memory state to a temporary snapshot
-                CustomProject snapshot = project.copyMetadataForPersistence();
-                databankManager.saveToProject(snapshot, true);
-
-                com.google.gson.Gson gson = DatabaseManager.createCustomProjectGson();
-                String json = gson.toJson(snapshot);
+                String json = CustomProjectBackup.toJson(project, databankManager);
                 Files.writeString(file.toPath(), json, StandardCharsets.UTF_8);
 
                 Alert alert = new Alert(Alert.AlertType.INFORMATION, "Backup erfolgreich gespeichert!");
@@ -3637,25 +3609,22 @@ public class ProjectWorkflowEditorView {
         if (file != null) {
             try {
                 String json = Files.readString(file.toPath(), StandardCharsets.UTF_8);
-                com.google.gson.Gson gson = DatabaseManager.createCustomProjectGson();
-                CustomProject loaded = gson.fromJson(json, CustomProject.class);
-
-                if (loaded != null) {
-                    loadProject(loaded);
-                    saveProject();
-                    projectSaveCoordinator.flushAsync().whenComplete((saved, error) -> Platform.runLater(() -> {
-                        if (error != null || !Boolean.TRUE.equals(saved)) {
-                            logger.error("Wiederhergestelltes Projekt konnte nicht gespeichert werden", error);
-                            new Alert(Alert.AlertType.ERROR,
-                                    "Das Backup wurde geladen, konnte aber nicht in SQLite gespeichert werden.",
-                                    ButtonType.OK).show();
-                        } else {
-                            new Alert(Alert.AlertType.INFORMATION,
-                                    "Projekt, Tasks, Einstellungen und Databanken wurden wiederhergestellt.",
-                                    ButtonType.OK).show();
-                        }
-                    }));
-                }
+                CustomProject loaded = CustomProjectBackup.restoreInto(
+                        project, CustomProjectBackup.fromJson(json));
+                loadProject(loaded);
+                saveProject();
+                projectSaveCoordinator.flushAsync().whenComplete((saved, error) -> Platform.runLater(() -> {
+                    if (error != null || !Boolean.TRUE.equals(saved)) {
+                        logger.error("Wiederhergestelltes Projekt konnte nicht gespeichert werden", error);
+                        new Alert(Alert.AlertType.ERROR,
+                                "Das Backup wurde geladen, konnte aber nicht in SQLite gespeichert werden.",
+                                ButtonType.OK).show();
+                    } else {
+                        new Alert(Alert.AlertType.INFORMATION,
+                                "Projekt, Tasks, Einstellungen und Databanken wurden wiederhergestellt.",
+                                ButtonType.OK).show();
+                    }
+                }));
             } catch (Exception ex) {
                 logger.error("Fehler beim Restore", ex);
                 Alert alert = new Alert(Alert.AlertType.ERROR, "Fehler beim Restore: " + ex.getMessage());

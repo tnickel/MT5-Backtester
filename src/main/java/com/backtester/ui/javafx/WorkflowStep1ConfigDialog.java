@@ -224,23 +224,23 @@ public final class WorkflowStep1ConfigDialog {
         TableColumn<EaParameter, String> valCol = new TableColumn<>("Wert");
         valCol.setCellValueFactory(new PropertyValueFactory<>("value"));
         valCol.setCellFactory(EnumAwareParamCell.forTableColumn());
-        valCol.setOnEditCommit(e -> e.getRowValue().setValue(e.getNewValue()));
+        valCol.setOnEditCommit(e -> { e.getRowValue().setValue(e.getNewValue()); paramTable.refresh(); });
         valCol.setPrefWidth(100);
 
         TableColumn<EaParameter, String> startCol = new TableColumn<>("Start");
         startCol.setCellValueFactory(new PropertyValueFactory<>("optimizeStart"));
         startCol.setCellFactory(EnumAwareParamCell.forTableColumn());
-        startCol.setOnEditCommit(e -> e.getRowValue().setOptimizeStart(e.getNewValue()));
+        startCol.setOnEditCommit(e -> { e.getRowValue().setOptimizeStart(e.getNewValue()); paramTable.refresh(); });
 
         TableColumn<EaParameter, String> stepCol = new TableColumn<>("Schritt");
         stepCol.setCellValueFactory(new PropertyValueFactory<>("optimizeStep"));
         stepCol.setCellFactory(EnumAwareParamCell.forTableColumn());
-        stepCol.setOnEditCommit(e -> e.getRowValue().setOptimizeStep(e.getNewValue()));
+        stepCol.setOnEditCommit(e -> { e.getRowValue().setOptimizeStep(e.getNewValue()); paramTable.refresh(); });
 
         TableColumn<EaParameter, String> stopCol = new TableColumn<>("Stopp");
         stopCol.setCellValueFactory(new PropertyValueFactory<>("optimizeEnd"));
         stopCol.setCellFactory(EnumAwareParamCell.forTableColumn());
-        stopCol.setOnEditCommit(e -> e.getRowValue().setOptimizeEnd(e.getNewValue()));
+        stopCol.setOnEditCommit(e -> { e.getRowValue().setOptimizeEnd(e.getNewValue()); paramTable.refresh(); });
 
         paramTable.getColumns().addAll(optCol, nameCol, valCol, startCol, stepCol, stopCol);
         EaParameterTableHelper.configureTable(paramTable, optCol, nameCol, valCol, startCol, stepCol, stopCol);
