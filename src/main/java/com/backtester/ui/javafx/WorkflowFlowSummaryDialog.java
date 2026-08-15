@@ -1,5 +1,8 @@
 package com.backtester.ui.javafx;
 
+import com.backtester.report.OptimizationResult.CombinedPass;
+import com.backtester.workflow.ClusterFlowTreeModel;
+import com.backtester.workflow.ClusterIdentity;
 import com.backtester.workflow.CustomProject;
 import com.backtester.workflow.DatabankManager;
 import com.backtester.workflow.WorkflowFlowSummaryService;
@@ -22,9 +25,12 @@ import javafx.scene.chart.BarChart;
 import javafx.scene.chart.CategoryAxis;
 import javafx.scene.chart.NumberAxis;
 import javafx.scene.chart.XYChart;
+import javafx.scene.control.Alert;
 import javafx.scene.control.Button;
+import javafx.scene.control.ButtonType;
 import javafx.scene.control.CheckBox;
 import javafx.scene.control.Label;
+import javafx.scene.control.Tooltip;
 import javafx.scene.control.ScrollPane;
 import javafx.scene.control.TableCell;
 import javafx.scene.control.TableColumn;
@@ -34,6 +40,8 @@ import javafx.scene.control.TextField;
 import javafx.scene.control.ToggleButton;
 import javafx.scene.control.ToggleGroup;
 import javafx.scene.layout.BorderPane;
+import javafx.scene.layout.ColumnConstraints;
+import javafx.scene.layout.GridPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
 import javafx.scene.layout.StackPane;
@@ -71,9 +79,13 @@ public final class WorkflowFlowSummaryDialog {
         stage.initModality(Modality.NONE);
         if (owner != null) stage.initOwner(owner);
 
+        if (project != null && hasClusteredPasses(project)) {
+            DatabankManager.rebuildCensus(project);
+        }
         List<FlowNode> nodes = WorkflowHandoffAuditService.buildTimeline(project, databankManager);
         List<FlowStepSummary> stepSummaries = WorkflowFlowSummaryService.build(
                 project, databankManager, outputDirectoryResolver);
+        ClusterFlowTreeModel treeModel = ClusterFlowTreeModel.from(project, nodes);
         Map<Integer, FlowStepSummary> summaryByNumber = new HashMap<>();
         for (FlowStepSummary step : stepSummaries) {
             if (step != null) summaryByNumber.put(step.getIndex(), step);
@@ -89,7 +101,11 @@ public final class WorkflowFlowSummaryDialog {
         title.setTextFill(Color.web("#00e5ff"));
 
         String projectName = project != null && project.getName() != null ? project.getName() : "—";
-        Label subtitle = new Label("Alle Workflow-Kacheln für „" + projectName
+        Label subtitle = new Label(treeModel.hasTree()
+                ? "Linienbaum für „" + projectName
+                + "“ — Zeilen = Stufen, Spalten = Cluster B1…Bn. "
+                + "Klick auf die Stufe öffnet die Parameter-Übernahme; Klick auf eine Cluster-Zelle öffnet die Equity-Galerie dieser Linie."
+                : "Alle Workflow-Kacheln für „" + projectName
                 + "“ — Nummerierung identisch zur Pipeline (1…N). Optimizer zeigen die Setfile-Übernahme.");
         subtitle.setWrapText(true);
         subtitle.setStyle("-fx-text-fill: #9aa4b5; -fx-font-size: 12px;");
@@ -97,10 +113,13 @@ public final class WorkflowFlowSummaryDialog {
         VBox detailHost = new VBox(12);
         detailHost.setPadding(new Insets(4, 0, 0, 0));
 
-        HBox timeline = createTimeline(nodes, node -> detailHost.getChildren().setAll(
-                createNodeDetail(node, summaryByNumber.get(node.getWorkflowNumber()))));
+        NodeConsumer onSelect = node -> detailHost.getChildren().setAll(
+                createNodeDetail(node, summaryByNumber.get(node.getWorkflowNumber())));
+        javafx.scene.Node overview = treeModel.hasTree()
+                ? createClusterTree(stage, project, databankManager, treeModel, nodes, onSelect)
+                : createTimeline(nodes, onSelect);
 
-        VBox header = new VBox(8, title, subtitle, timeline);
+        VBox header = new VBox(8, title, subtitle, overview);
         root.setTop(header);
 
         ScrollPane scroll = new ScrollPane(detailHost);
@@ -139,6 +158,23 @@ public final class WorkflowFlowSummaryDialog {
 
     private interface NodeConsumer {
         void accept(FlowNode node);
+    }
+
+    private static boolean hasClusteredPasses(CustomProject project) {
+        if (project == null || project.getDatabanks() == null) {
+            return false;
+        }
+        for (List<CombinedPass> passes : project.getDatabanks().values()) {
+            if (passes == null) {
+                continue;
+            }
+            for (CombinedPass pass : passes) {
+                if (ClusterIdentity.hasId(pass)) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     private static HBox createTimeline(List<FlowNode> nodes, NodeConsumer onSelect) {
@@ -197,6 +233,140 @@ public final class WorkflowFlowSummaryDialog {
         HBox wrap = new HBox(strip);
         HBox.setHgrow(strip, Priority.ALWAYS);
         return wrap;
+    }
+
+    private static ScrollPane createClusterTree(Window owner,
+                                                CustomProject project,
+                                                DatabankManager databankManager,
+                                                ClusterFlowTreeModel model,
+                                                List<FlowNode> nodes,
+                                                NodeConsumer onSelect) {
+        Map<Integer, FlowNode> nodeByNumber = new HashMap<>();
+        if (nodes != null) {
+            for (FlowNode node : nodes) {
+                if (node != null) {
+                    nodeByNumber.put(node.getWorkflowNumber(), node);
+                }
+            }
+        }
+
+        GridPane grid = new GridPane();
+        grid.setHgap(4);
+        grid.setVgap(4);
+        grid.setPadding(new Insets(8));
+
+        Label corner = new Label("Stamm");
+        corner.setStyle("-fx-text-fill: #94a3b8; -fx-font-size: 11px; -fx-font-weight: bold;");
+        grid.add(corner, 0, 0);
+
+        ColumnConstraints trunkCol = new ColumnConstraints();
+        trunkCol.setMinWidth(120);
+        trunkCol.setPrefWidth(160);
+        grid.getColumnConstraints().add(trunkCol);
+
+        for (int c = 0; c < model.getColumns().size(); c++) {
+            ClusterFlowTreeModel.Column column = model.getColumns().get(c);
+            Label header = new Label(column.headerText());
+            header.setWrapText(true);
+            header.setMaxWidth(72);
+            header.setTextAlignment(TextAlignment.CENTER);
+            header.setAlignment(Pos.CENTER);
+            boolean dead = column.isDead();
+            header.setStyle("-fx-text-fill: " + (dead ? "#64748b" : "#00e5ff")
+                    + "; -fx-font-size: 11px; -fx-font-weight: bold;");
+            grid.add(header, c + 1, 0);
+            ColumnConstraints col = new ColumnConstraints();
+            col.setMinWidth(48);
+            col.setPrefWidth(64);
+            grid.getColumnConstraints().add(col);
+        }
+
+        ToggleGroup group = new ToggleGroup();
+        ToggleButton firstSelected = null;
+        for (int r = 0; r < model.getRows().size(); r++) {
+            ClusterFlowTreeModel.Row row = model.getRows().get(r);
+            FlowNode node = nodeByNumber.get(row.getWorkflowNumber());
+            ToggleButton trunk = new ToggleButton(row.trunkLabel());
+            trunk.setMaxWidth(Double.MAX_VALUE);
+            trunk.setWrapText(true);
+            trunk.setToggleGroup(group);
+            if (node != null) {
+                trunk.setUserData(node);
+                styleTimelineChip(trunk, node, false);
+                trunk.selectedProperty().addListener((obs, o, selected) -> {
+                    styleTimelineChip(trunk, node, selected);
+                    if (selected) {
+                        onSelect.accept(node);
+                    }
+                });
+                if (firstSelected == null && node.hasHandoff()) {
+                    firstSelected = trunk;
+                }
+                if (firstSelected == null && r == 0) {
+                    firstSelected = trunk;
+                }
+            } else {
+                trunk.setDisable(true);
+            }
+            grid.add(trunk, 0, r + 1);
+
+            for (int c = 0; c < row.getCells().size(); c++) {
+                ClusterFlowTreeModel.Cell cell = row.getCells().get(c);
+                Button leaf = new Button(cell.cellLabel());
+                leaf.setMaxWidth(Double.MAX_VALUE);
+                leaf.setTooltip(new Tooltip(cell.hoverText()));
+                boolean grey = cell.greyed() || "—".equals(cell.cellLabel());
+                leaf.setStyle(
+                        "-fx-background-color: #141822; -fx-text-fill: " + (grey ? "#64748b" : "#e6e9f0")
+                                + "; -fx-font-size: 11px; -fx-font-weight: bold; "
+                                + "-fx-border-color: " + (grey ? "#334155" : "#2e3545")
+                                + "; -fx-border-radius: 4; -fx-background-radius: 4; -fx-cursor: hand;");
+                if (node != null) {
+                    leaf.setOnAction(e -> {
+                        if (ClusterFlowTreeModel.resolveClick(true) == ClusterFlowTreeModel.ClickAction.GALLERY) {
+                            openClusterGallery(owner, project, databankManager, row, cell);
+                        }
+                    });
+                }
+                grid.add(leaf, c + 1, r + 1);
+            }
+        }
+        if (firstSelected != null) {
+            firstSelected.setSelected(true);
+        }
+
+        ScrollPane scroll = new ScrollPane(grid);
+        scroll.setFitToWidth(true);
+        scroll.setPrefHeight(Math.min(280, 48 + model.getRows().size() * 40.0));
+        scroll.setStyle(
+                "-fx-background: #10141e; -fx-background-color: #10141e; -fx-border-color: #232a3b; "
+                        + "-fx-border-radius: 6; -fx-background-radius: 6;");
+        return scroll;
+    }
+
+    private static void openClusterGallery(Window owner,
+                                           CustomProject project,
+                                           DatabankManager databankManager,
+                                           ClusterFlowTreeModel.Row row,
+                                           ClusterFlowTreeModel.Cell cell) {
+        String clusterId = cell != null ? cell.getClusterId() : null;
+        String pickDb = ClusterFlowTreeModel.pickDatabankName(row);
+        if (clusterId == null || clusterId.isBlank()) {
+            return;
+        }
+        if (pickDb.isBlank() || databankManager == null) {
+            Alert alert = new Alert(Alert.AlertType.INFORMATION,
+                    "Keine lebenden Strategien in " + clusterId + ".",
+                    ButtonType.OK);
+            alert.setTitle("Equity-Galerie");
+            alert.setHeaderText(null);
+            if (owner != null) {
+                alert.initOwner(owner);
+            }
+            alert.showAndWait();
+            return;
+        }
+        DatabankEquityGalleryDialog.show(owner, databankManager, pickDb, project, null, clusterId);
     }
 
     private static void styleTimelineChip(ToggleButton chip, FlowNode node, boolean selected) {

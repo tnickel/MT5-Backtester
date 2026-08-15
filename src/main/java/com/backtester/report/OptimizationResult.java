@@ -156,6 +156,8 @@ public class OptimizationResult {
         /** Chart period / timeframe that produced this strategy (e.g. M5). Persisted with the databank. */
         private String period;
         private String reportDirectory;
+        /** Stable B-cluster identity (e.g. "B1"); part of DatabankManager passIdentity. */
+        private String clusterId;
 
         public String getReportDirectory() {
             if (reportDirectory != null && !reportDirectory.isEmpty()) return reportDirectory;
@@ -237,6 +239,14 @@ public class OptimizationResult {
 
         public void setStrategyName(String strategyName) {
             this.strategyName = strategyName;
+        }
+
+        public String getClusterId() {
+            return clusterId;
+        }
+
+        public void setClusterId(String clusterId) {
+            this.clusterId = clusterId;
         }
 
         public CombinedPass(Pass backtestPass, Pass forwardPass, double score, double consistency, String scoreDetails) {
@@ -334,6 +344,7 @@ public class OptimizationResult {
             copy.symbol = symbol;
             copy.period = period;
             copy.reportDirectory = reportDirectory;
+            copy.clusterId = clusterId;
             return copy;
         }
     }

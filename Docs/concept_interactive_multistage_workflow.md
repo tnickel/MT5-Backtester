@@ -1,6 +1,9 @@
 # Konzept-Spezifikation: Guided Multi-Stage Workflow Optimizer
 ## (Interaktive & Stufenweise Optimierungspipeline für ToTheMoon132)
 
+Mehrere Champion-Linien statt einem Grid nach g01–g04:
+`Docs/concept_b_cluster_linienbaum.md` (Show Flow als Linienbaum; Kette bleibt linear).
+
 ---
 
 ## 1. Executive Summary & Problemstellung

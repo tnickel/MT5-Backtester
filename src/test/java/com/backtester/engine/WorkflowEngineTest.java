@@ -868,6 +868,35 @@ public class WorkflowEngineTest {
         }
     }
 
+    @Test
+    public void mergeSplitLongtermPassesAddsProfitsAndKeepsWorseDrawdown() {
+        Pass is = new Pass();
+        is.setPassNumber(7);
+        is.setProfit(100.0);
+        is.setTotalTrades(40);
+        is.setDrawdownPercent(8.0);
+        is.setExpectedPayoff(2.5);
+        is.setFromDate("2022-08-01");
+        is.setToDate("2024-01-31");
+        Pass fw = new Pass();
+        fw.setPassNumber(7);
+        fw.setProfit(50.0);
+        fw.setTotalTrades(20);
+        fw.setDrawdownPercent(12.0);
+        fw.setExpectedPayoff(2.5);
+        fw.setFromDate("2024-02-01");
+        fw.setToDate("2025-08-01");
+        fw.setReportDirectory("fw-report");
+
+        Pass merged = WorkflowEngine.mergeSplitLongtermPasses(is, fw);
+        assertEquals(150.0, merged.getProfit(), 0.001);
+        assertEquals(60, merged.getTotalTrades());
+        assertEquals(12.0, merged.getDrawdownPercent(), 0.001);
+        assertEquals("2022-08-01", merged.getFromDate());
+        assertEquals("2025-08-01", merged.getToDate());
+        assertEquals("fw-report", merged.getReportDirectory());
+    }
+
     private void deleteRecursive(File f) {
         if (f.isDirectory()) {
             File[] children = f.listFiles();

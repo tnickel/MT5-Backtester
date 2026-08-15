@@ -895,57 +895,39 @@ public class WorkflowEngine {
                     log.debug("[SETFILE-PARAM] Pass #{} | {} = {}", cp.getPassNumber(), p.getName(), p.getValue());
                 }
 
-                BacktestConfig btConfig = new BacktestConfig();
-                btConfig.setExpert(expert);
-                btConfig.setExpertParameters(presetFileName);
-                btConfig.setSymbol(effSymbol);
-                btConfig.setPeriod(effPeriod);
-                btConfig.setFromDate(effFrom);
-                btConfig.setToDate(effTo);
-                btConfig.setDeposit(deposit);
-                btConfig.setCurrency(currency);
-                btConfig.setLeverage(leverage);
-                btConfig.setModel(effModel);
-                btConfig.setShutdownTerminal(true);
-                btConfig.setAutoKillMt5(true);
-                btConfig.setReportFileName("LongtermReport_Pass" + cp.getPassNumber());
+                BacktestConfig btConfig = newBacktestConfig(
+                        presetFileName, effSymbol, effPeriod, effFrom, effTo, effModel,
+                        "LongtermReport_Pass" + cp.getPassNumber());
 
-                if (logCallback != null) {
-                    logCallback.accept(String.format("[%d/%d] Führe Retest für Pass %d aus...", (i + 1), total, cp.getPassNumber()));
-                }
-
-                BacktestResult btRes = currentLongtermRunner.runBacktest(btConfig);
-                if (cancelRequested || Thread.currentThread().isInterrupted()) {
-                    throw new InterruptedException("Retest abgebrochen.");
-                }
-                if (btRes != null && btRes.isSuccess()) {
-                    String tickModelName = btConfig.getModelName();
-                    OptimizationResult.Pass ltPass = new OptimizationResult.Pass();
-                    ltPass.setPassNumber(cp.getPassNumber());
-                    ltPass.setFromDate(effFrom.toString());
-                    ltPass.setToDate(effTo.toString());
-                    ltPass.setTickModel(tickModelName);
-                    ltPass.setProfit(btRes.getTotalProfit());
-                    ltPass.setTotalTrades(btRes.getTotalTrades());
-                    ltPass.setProfitFactor(btRes.getProfitFactor());
-                    ltPass.setDrawdownPercent(btRes.getMaxDrawdownPercent());
-                    ltPass.setRecoveryFactor(btRes.getRecoveryFactor());
-                    ltPass.setSharpeRatio(btRes.getSharpeRatio());
-                    ltPass.setExpectedPayoff(btRes.getExpectedPayoff());
-                    ltPass.setParameterValues(new LinkedHashMap<>(cp.getBacktestPass().getParameterValues()));
-                    ltPass.setReportDirectory(btRes.getOutputDirectory());
-                    if (config.isSaveEquityHistoryInDatabank() && btRes.getEquityHistory() != null && !btRes.getEquityHistory().isEmpty()) {
-                        ltPass.setEquityHistory(new ArrayList<>(btRes.getEquityHistory()));
+                OptimizationResult.Pass ltPass;
+                if (task != null && task.hasExplicitForwardSplit()) {
+                    ltPass = runSplitLongtermBacktest(cp, task, btConfig, logCallback, i, total);
+                } else {
+                    if (logCallback != null) {
+                        logCallback.accept(String.format("[%d/%d] Führe Retest für Pass %d aus...",
+                                (i + 1), total, cp.getPassNumber()));
                     }
+                    BacktestResult btRes = currentLongtermRunner.runBacktest(btConfig);
+                    if (cancelRequested || Thread.currentThread().isInterrupted()) {
+                        throw new InterruptedException("Retest abgebrochen.");
+                    }
+                    ltPass = toLongtermPass(cp, btConfig, btRes, effFrom, effTo);
+                    if (ltPass == null && logCallback != null) {
+                        String detail = btRes != null ? btRes.getMessage() : "kein Ergebnis";
+                        logCallback.accept(String.format("WARNUNG: Retest für Pass %d schlug fehl: %s",
+                                cp.getPassNumber(), detail));
+                    }
+                }
+                if (ltPass != null) {
                     cp.setLongtermPass(ltPass);
-                    cp.setReportDirectory(btRes.getOutputDirectory());
-                    archiveLongtermRun(task, cp, ltPass, setfileContent, effSymbol, effPeriod, tickModelName,
-                            effFrom.toString(), effTo.toString());
+                    if (ltPass.getReportDirectory() != null && !ltPass.getReportDirectory().isBlank()) {
+                        cp.setReportDirectory(ltPass.getReportDirectory());
+                    }
+                    archiveLongtermRun(task, cp, ltPass, setfileContent, effSymbol, effPeriod,
+                            ltPass.getTickModel(),
+                            ltPass.getFromDate() != null ? ltPass.getFromDate() : effFrom.toString(),
+                            ltPass.getToDate() != null ? ltPass.getToDate() : effTo.toString());
                     successfulCandidates.add(cp);
-                } else if (logCallback != null) {
-                    String detail = btRes != null ? btRes.getMessage() : "kein Ergebnis";
-                    logCallback.accept(String.format("WARNUNG: Retest für Pass %d schlug fehl: %s",
-                            cp.getPassNumber(), detail));
                 }
             }
         } finally {
@@ -958,6 +940,158 @@ public class WorkflowEngine {
 
         saveState();
         return successfulCandidates;
+    }
+
+    private BacktestConfig newBacktestConfig(String presetFileName,
+                                             String symbol,
+                                             String period,
+                                             LocalDate from,
+                                             LocalDate to,
+                                             int model,
+                                             String reportFileName) {
+        BacktestConfig btConfig = new BacktestConfig();
+        btConfig.setExpert(expert);
+        btConfig.setExpertParameters(presetFileName);
+        btConfig.setSymbol(symbol);
+        btConfig.setPeriod(period);
+        btConfig.setFromDate(from);
+        btConfig.setToDate(to);
+        btConfig.setDeposit(deposit);
+        btConfig.setCurrency(currency);
+        btConfig.setLeverage(leverage);
+        btConfig.setModel(model);
+        btConfig.setShutdownTerminal(true);
+        btConfig.setAutoKillMt5(true);
+        btConfig.setReportFileName(reportFileName);
+        return btConfig;
+    }
+
+    private OptimizationResult.Pass runSplitLongtermBacktest(CombinedPass cp,
+                                                             com.backtester.workflow.WorkflowTask task,
+                                                             BacktestConfig template,
+                                                             Consumer<String> logCallback,
+                                                             int index,
+                                                             int total) throws Exception {
+        LocalDate from = template.getFromDate();
+        LocalDate to = template.getToDate();
+        LocalDate forwardDate = null;
+        try {
+            if (task.getOptimizerForwardDate() != null && !task.getOptimizerForwardDate().isBlank()) {
+                forwardDate = LocalDate.parse(task.getOptimizerForwardDate());
+            }
+        } catch (Exception ignored) {
+        }
+        LocalDate isTo = ForwardSplit.computeBacktestEndDate(from, to, task.getOptimizerForwardMode(), forwardDate);
+        LocalDate fwFrom = ForwardSplit.computeForwardStartDate(from, to, task.getOptimizerForwardMode(), forwardDate);
+        if (isTo == null || fwFrom == null) {
+            if (logCallback != null) {
+                logCallback.accept("WARNUNG: 1:1-Split für Pass " + cp.getPassNumber() + " nicht berechenbar.");
+            }
+            return null;
+        }
+
+        if (logCallback != null) {
+            logCallback.accept(String.format("[%d/%d] Tick-IS Pass %d (%s–%s)...",
+                    index + 1, total, cp.getPassNumber(), from, isTo));
+        }
+        BacktestConfig isConfig = newBacktestConfig(
+                template.getExpertParameters(), template.getSymbol(), template.getPeriod(),
+                from, isTo, template.getModel(),
+                "LongtermReport_Pass" + cp.getPassNumber() + "_IS");
+        BacktestResult isRes = currentLongtermRunner.runBacktest(isConfig);
+        if (cancelRequested || Thread.currentThread().isInterrupted()) {
+            throw new InterruptedException("Retest abgebrochen.");
+        }
+        OptimizationResult.Pass isPass = toLongtermPass(cp, isConfig, isRes, from, isTo);
+        if (isPass == null) {
+            if (logCallback != null) {
+                String detail = isRes != null ? isRes.getMessage() : "kein Ergebnis";
+                logCallback.accept(String.format("WARNUNG: Tick-IS für Pass %d schlug fehl: %s",
+                        cp.getPassNumber(), detail));
+            }
+            return null;
+        }
+
+        if (logCallback != null) {
+            logCallback.accept(String.format("[%d/%d] Tick-FW Pass %d (%s–%s)...",
+                    index + 1, total, cp.getPassNumber(), fwFrom, to));
+        }
+        BacktestConfig fwConfig = newBacktestConfig(
+                template.getExpertParameters(), template.getSymbol(), template.getPeriod(),
+                fwFrom, to, template.getModel(),
+                "LongtermReport_Pass" + cp.getPassNumber() + "_FW");
+        BacktestResult fwRes = currentLongtermRunner.runBacktest(fwConfig);
+        if (cancelRequested || Thread.currentThread().isInterrupted()) {
+            throw new InterruptedException("Retest abgebrochen.");
+        }
+        OptimizationResult.Pass fwPass = toLongtermPass(cp, fwConfig, fwRes, fwFrom, to);
+        if (fwPass == null) {
+            if (logCallback != null) {
+                String detail = fwRes != null ? fwRes.getMessage() : "kein Ergebnis";
+                logCallback.accept(String.format("WARNUNG: Tick-FW für Pass %d schlug fehl: %s",
+                        cp.getPassNumber(), detail));
+            }
+            return null;
+        }
+
+        if (!(isPass.getProfit() > 0) || !(fwPass.getProfit() > 0)) {
+            if (logCallback != null) {
+                logCallback.accept(String.format(
+                        "Tick-1:1 verworfen Pass %d: IS-Profit=%.2f FW-Profit=%.2f (beide Hälften müssen im Plus sein).",
+                        cp.getPassNumber(), isPass.getProfit(), fwPass.getProfit()));
+            }
+            return null;
+        }
+        return mergeSplitLongtermPasses(isPass, fwPass);
+    }
+
+    private OptimizationResult.Pass toLongtermPass(CombinedPass cp,
+                                                   BacktestConfig btConfig,
+                                                   BacktestResult btRes,
+                                                   LocalDate from,
+                                                   LocalDate to) {
+        if (btRes == null || !btRes.isSuccess() || cp == null || cp.getBacktestPass() == null) {
+            return null;
+        }
+        OptimizationResult.Pass ltPass = new OptimizationResult.Pass();
+        ltPass.setPassNumber(cp.getPassNumber());
+        ltPass.setFromDate(from.toString());
+        ltPass.setToDate(to.toString());
+        ltPass.setTickModel(btConfig.getModelName());
+        ltPass.setProfit(btRes.getTotalProfit());
+        ltPass.setTotalTrades(btRes.getTotalTrades());
+        ltPass.setProfitFactor(btRes.getProfitFactor());
+        ltPass.setDrawdownPercent(btRes.getMaxDrawdownPercent());
+        ltPass.setRecoveryFactor(btRes.getRecoveryFactor());
+        ltPass.setSharpeRatio(btRes.getSharpeRatio());
+        ltPass.setExpectedPayoff(btRes.getExpectedPayoff());
+        ltPass.setParameterValues(new LinkedHashMap<>(cp.getBacktestPass().getParameterValues()));
+        ltPass.setReportDirectory(btRes.getOutputDirectory());
+        if (config.isSaveEquityHistoryInDatabank() && btRes.getEquityHistory() != null
+                && !btRes.getEquityHistory().isEmpty()) {
+            ltPass.setEquityHistory(new ArrayList<>(btRes.getEquityHistory()));
+        }
+        return ltPass;
+    }
+
+    static OptimizationResult.Pass mergeSplitLongtermPasses(OptimizationResult.Pass isPass,
+                                                            OptimizationResult.Pass fwPass) {
+        OptimizationResult.Pass combined = isPass.copy();
+        combined.setToDate(fwPass.getToDate());
+        combined.setProfit(isPass.getProfit() + fwPass.getProfit());
+        combined.setTotalTrades(isPass.getTotalTrades() + fwPass.getTotalTrades());
+        combined.setDrawdownPercent(Math.max(isPass.getDrawdownPercent(), fwPass.getDrawdownPercent()));
+        if (Double.isFinite(isPass.getExpectedPayoff()) && Double.isFinite(fwPass.getExpectedPayoff())
+                && (isPass.getTotalTrades() + fwPass.getTotalTrades()) > 0) {
+            int trades = isPass.getTotalTrades() + fwPass.getTotalTrades();
+            combined.setExpectedPayoff(
+                    (isPass.getExpectedPayoff() * isPass.getTotalTrades()
+                            + fwPass.getExpectedPayoff() * fwPass.getTotalTrades()) / trades);
+        }
+        if (fwPass.getReportDirectory() != null && !fwPass.getReportDirectory().isBlank()) {
+            combined.setReportDirectory(fwPass.getReportDirectory());
+        }
+        return combined;
     }
 
     public List<CombinedPass> runStep3() {
@@ -1021,7 +1155,7 @@ public class WorkflowEngine {
                                                      List<EaParameter> comparisonParameters) {
         return clusterDatabankPasses(sourcePasses, parameterDifferencePct, tradeDifferencePct,
                 minimumDifferentParameters, maximumStrategies, rankByScore,
-                comparisonParameters, false);
+                comparisonParameters, false, false);
     }
 
     /**
@@ -1036,6 +1170,20 @@ public class WorkflowEngine {
                                                      boolean rankByScore,
                                                      List<EaParameter> comparisonParameters,
                                                      boolean deduplicateEffectiveV132) {
+        return clusterDatabankPasses(sourcePasses, parameterDifferencePct, tradeDifferencePct,
+                minimumDifferentParameters, maximumStrategies, rankByScore,
+                comparisonParameters, deduplicateEffectiveV132, false);
+    }
+
+    public List<CombinedPass> clusterDatabankPasses(List<CombinedPass> sourcePasses,
+                                                     double parameterDifferencePct,
+                                                     double tradeDifferencePct,
+                                                     int minimumDifferentParameters,
+                                                     int maximumStrategies,
+                                                     boolean rankByScore,
+                                                     List<EaParameter> comparisonParameters,
+                                                     boolean deduplicateEffectiveV132,
+                                                     boolean rankByActivity) {
         if (!Double.isFinite(parameterDifferencePct) || parameterDifferencePct < 0.0 || parameterDifferencePct > 1.0) {
             throw new IllegalArgumentException("Parameter-Differenz muss zwischen 0 und 100 Prozent liegen.");
         }
@@ -1054,7 +1202,19 @@ public class WorkflowEngine {
                 }
             }
         }
-        if (rankByScore) {
+        if (rankByActivity) {
+            candidates.sort((left, right) -> {
+                int trades = Integer.compare(ohlcTradeCount(right), ohlcTradeCount(left));
+                if (trades != 0) {
+                    return trades;
+                }
+                int profit = Double.compare(ohlcProfit(right), ohlcProfit(left));
+                if (profit != 0) {
+                    return profit;
+                }
+                return Integer.compare(left.getPassNumber(), right.getPassNumber());
+            });
+        } else if (rankByScore) {
             candidates.sort(java.util.Comparator
                     .comparingDouble(CombinedPass::getScore).reversed()
                     .thenComparingInt(CombinedPass::getPassNumber));
@@ -1086,7 +1246,27 @@ public class WorkflowEngine {
         }
 
         finishDiversitySelection();
+        List<CombinedPass> copies = new ArrayList<>();
+        for (CombinedPass selected : selectedDiversePasses) {
+            if (selected != null) {
+                copies.add(selected.copy());
+            }
+        }
+        selectedDiversePasses = copies;
         return new ArrayList<>(selectedDiversePasses);
+    }
+
+    private static int ohlcTradeCount(CombinedPass pass) {
+        return pass == null ? 0 : pass.getBtTrades() + pass.getFwTrades();
+    }
+
+    private static double ohlcProfit(CombinedPass pass) {
+        if (pass == null) {
+            return Double.NEGATIVE_INFINITY;
+        }
+        double backtest = Double.isFinite(pass.getBtProfit()) ? pass.getBtProfit() : 0.0;
+        double forward = Double.isFinite(pass.getFwProfit()) ? pass.getFwProfit() : 0.0;
+        return backtest + forward;
     }
 
     /** Visible for focused regression tests in this package. */

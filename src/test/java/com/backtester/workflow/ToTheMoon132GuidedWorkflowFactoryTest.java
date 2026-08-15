@@ -23,12 +23,13 @@ public class ToTheMoon132GuidedWorkflowFactoryTest {
         assertEquals("ToTheMoon_KI_v132", project.getExpert());
         assertEquals("AUDCAD", project.getSymbol());
         assertEquals("M5", project.getPeriod());
-        assertEquals(28, project.getTasks().size());
+        assertEquals(32, project.getTasks().size());
         assertEquals(WorkflowTask.TaskType.STRATEGY_SELECTION, project.getTasks().get(0).getType());
 
         Set<String> taskIds = new HashSet<>();
         Set<String> databankTargets = new HashSet<>();
         int optimizerCount = 0;
+        int masterReferenceCount = 0;
         for (WorkflowTask task : project.getTasks()) {
             assertTrue(taskIds.add(task.getId()));
             assertEquals(WorkflowTask.TaskStatus.PENDING, task.getStatus());
@@ -50,12 +51,69 @@ public class ToTheMoon132GuidedWorkflowFactoryTest {
                 }
                 assertEquals(new HashSet<>(task.getOptimizerTargetParameters()), enabled);
             }
+            if (task.getType() == WorkflowTask.TaskType.MASTER_REFERENCE) {
+                masterReferenceCount++;
+            }
             if (task.getType() != WorkflowTask.TaskType.STRATEGY_SELECTION) {
                 assertTrue("Databank targets must stay unambiguous: " + task.getTargetDatabank(),
                         databankTargets.add(task.getTargetDatabank()));
             }
         }
         assertEquals(11, optimizerCount);
+        assertEquals(0, masterReferenceCount);
+
+        WorkflowTask isOos = findByTarget(project, ToTheMoon132GuidedWorkflowFactory.GRID_IS_OOS_DATABANK);
+        assertEquals(WorkflowTask.TaskType.PRE_FILTER, isOos.getType());
+        assertEquals(ToTheMoon132GuidedWorkflowFactory.GRID_QUALITY_DATABANK, isOos.getSourceDatabank());
+        assertEquals(4, isOos.getFilterConditions().size());
+        assertTrue(isOos.getFilterConditions().stream()
+                .anyMatch(c -> c.getMetric() == FilterCondition.Metric.BT_NET_PROFIT
+                        && c.getValue() == ToTheMoon132GuidedWorkflowFactory.GRID_HALF_MIN_PROFIT));
+        assertTrue(isOos.getFilterConditions().stream()
+                .anyMatch(c -> c.getMetric() == FilterCondition.Metric.FW_TOTAL_TRADES
+                        && c.getValue() == ToTheMoon132GuidedWorkflowFactory.GRID_HALF_MIN_TRADES));
+
+        WorkflowTask shortlist = findByTarget(project, ToTheMoon132GuidedWorkflowFactory.GRID_SHORTLIST_DATABANK);
+        assertEquals(WorkflowTask.TaskType.DIVERSITY_FILTER, shortlist.getType());
+        assertEquals(ToTheMoon132GuidedWorkflowFactory.GRID_IS_OOS_DATABANK, shortlist.getSourceDatabank());
+        assertEquals(ToTheMoon132GuidedWorkflowFactory.GRID_SHORTLIST_MAX_STRATEGIES,
+                shortlist.getDiversityMaxStrategies());
+        assertFalse(shortlist.isDiversityStampClusterIds());
+        assertTrue(shortlist.isDiversityRankByScore());
+        assertFalse(shortlist.isDiversityRankByActivity());
+        assertFalse(shortlist.copyForPersistence().isDiversityStampClusterIds());
+
+        WorkflowTask tickGate = findByTarget(project, ToTheMoon132GuidedWorkflowFactory.GRID_TICK_DATABANK);
+        assertEquals(WorkflowTask.TaskType.RETESTER, tickGate.getType());
+        assertEquals(ToTheMoon132GuidedWorkflowFactory.GRID_SHORTLIST_DATABANK, tickGate.getSourceDatabank());
+        assertEquals(WorkflowTask.MODE_EVERY_TICK, tickGate.getExecutionMode());
+        assertTrue(tickGate.hasExplicitForwardSplit());
+        assertEquals(1, tickGate.getOptimizerForwardMode());
+        assertEquals("2024-02-01", tickGate.getOptimizerForwardDate());
+        assertEquals(2, tickGate.getFilterConditions().size());
+        assertTrue(tickGate.getFilterConditions().stream()
+                .anyMatch(c -> c.getMetric() == FilterCondition.Metric.LT_NET_PROFIT
+                        && c.getValue() == ToTheMoon132GuidedWorkflowFactory.GRID_TICK_MIN_PROFIT));
+        assertTrue(tickGate.getFilterConditions().stream()
+                .anyMatch(c -> c.getMetric() == FilterCondition.Metric.LT_TOTAL_TRADES
+                        && c.getValue() == ToTheMoon132GuidedWorkflowFactory.GRID_TICK_MIN_TRADES));
+
+        WorkflowTask gridCluster = project.getTasks().stream()
+                .filter(task -> task.getType() == WorkflowTask.TaskType.DIVERSITY_FILTER)
+                .filter(task -> ToTheMoon132GuidedWorkflowFactory.GRID_CLUSTER_DATABANK
+                        .equals(task.getTargetDatabank()))
+                .findFirst().orElseThrow();
+        assertEquals(ToTheMoon132GuidedWorkflowFactory.GRID_TICK_DATABANK, gridCluster.getSourceDatabank());
+        assertTrue(project.getTasks().indexOf(isOos) < project.getTasks().indexOf(shortlist));
+        assertTrue(project.getTasks().indexOf(shortlist) < project.getTasks().indexOf(tickGate));
+        assertTrue(project.getTasks().indexOf(tickGate) < project.getTasks().indexOf(gridCluster));
+        WorkflowTask g02Optimizer = project.getTasks().stream()
+                .filter(task -> task.getType() == WorkflowTask.TaskType.OPTIMIZER)
+                .filter(task -> task.getName() != null && task.getName().startsWith("02 "))
+                .findFirst().orElseThrow();
+        assertTrue(project.getTasks().indexOf(gridCluster) < project.getTasks().indexOf(g02Optimizer));
+        assertEquals(ToTheMoon132GuidedWorkflowFactory.GRID_CLUSTER_DATABANK, g02Optimizer.getSourceDatabank());
+
         WorkflowTask top20 = project.getTasks().stream()
                 .filter(task -> ToTheMoon132GuidedWorkflowFactory.DEVELOPMENT_TOP20_DATABANK
                         .equals(task.getTargetDatabank()))
@@ -70,8 +128,17 @@ public class ToTheMoon132GuidedWorkflowFactoryTest {
         assertEquals(WorkflowTask.DEFAULT_DIVERSITY_TRADE_DIFF_PCT,
                 top20.getDiversityTradeDiffPct(), 0.0);
         assertEquals(2, top20.getDiversityMinDifferentParams());
-        assertEquals(WorkflowTask.DEFAULT_DIVERSITY_MAX_STRATEGIES,
-                top20.getDiversityMaxStrategies());
+        assertEquals(ClusterIdentity.MAX_CLUSTERS, top20.getDiversityMaxStrategies());
+        assertTrue(top20.getDiversityParameterSnapshot().stream()
+                .anyMatch(p -> "Inp_Grid_Step".equals(p.getName()) && p.isOptimizeEnabled()));
+        assertTrue(top20.getDiversityParameterSnapshot().stream()
+                .anyMatch(p -> "Inp_TakeProfit".equals(p.getName()) && p.isOptimizeEnabled()));
+        assertTrue(top20.getDiversityParameterSnapshot().stream()
+                .anyMatch(p -> "Inp_Envelopes_Deviation".equals(p.getName()) && p.isOptimizeEnabled()));
+        assertTrue(top20.getDiversityParameterSnapshot().stream()
+                .noneMatch(p -> "Inp_Use_ADX_Filter".equals(p.getName()) && p.isOptimizeEnabled()));
+        assertTrue(gridCluster.getDiversityParameterSnapshot().stream()
+                .anyMatch(p -> "Inp_TakeProfit".equals(p.getName()) && p.isOptimizeEnabled()));
         WorkflowTask developmentRetest = project.getTasks().stream()
                 .filter(task -> "g12_dev_tick".equals(task.getTargetDatabank()))
                 .findFirst().orElseThrow();
@@ -125,12 +192,96 @@ public class ToTheMoon132GuidedWorkflowFactoryTest {
         known.setValue("725");
         CustomProject project = ToTheMoon132GuidedWorkflowFactory.create("Guided", preset, null);
 
-        WorkflowTask firstOptimizer = project.getTasks().get(1);
-        WorkflowTask secondOptimizer = project.getTasks().get(3);
+        WorkflowTask firstOptimizer = findOptimizer(project, "01 Grid-Fundament");
+        WorkflowTask secondOptimizer = findOptimizer(project, "02 Order-Taktung");
         assertTrue(find(firstOptimizer, "Inp_Grid_Step").isOptimizeEnabled());
         assertEquals("725", find(firstOptimizer, "Inp_Grid_Step").getValue());
         assertFalse(find(secondOptimizer, "Inp_Grid_Step").isOptimizeEnabled());
         assertEquals("725", find(secondOptimizer, "Inp_Grid_Step").getValue());
+        assertTrue(find(firstOptimizer, "Inp_TakeProfit").isOptimizeEnabled());
+        assertFalse(find(secondOptimizer, "Inp_TakeProfit").isOptimizeEnabled());
+    }
+
+    @Test
+    public void firstStageSearchesEveryTradingKnobGenetically() {
+        List<String> gridTargets = ToTheMoon132GuidedWorkflowFactory.stageTargetParameters()
+                .get("01 Grid-Fundament");
+        assertTrue(gridTargets.containsAll(List.of(
+                "Inp_Grid_Step",
+                "Inp_Step_Multiplier",
+                "Inp_Next_Lot_Multiplier",
+                "Inp_TakeProfit",
+                "Inp_Envelopes_Period",
+                "Inp_Envelopes_Deviation",
+                "Inp_Envelopes_Period_Lower",
+                "Inp_Envelopes_Deviation_Lower",
+                "Inp_Use_Trend_Filter",
+                "Min_Profit",
+                "Inp_Use_ADX_Filter",
+                "Inp_Use_Session_Filter")));
+        assertFalse(gridTargets.contains("TimeFrame_Envelopes"));
+        assertTrue(gridTargets.size() > 40);
+
+        List<EaParameter> preset = completeSyntheticPreset();
+        EaParameter takeProfit = preset.stream()
+                .filter(p -> "Inp_TakeProfit".equals(p.getName())).findFirst().orElseThrow();
+        takeProfit.setValue("65");
+        CustomProject project = ToTheMoon132GuidedWorkflowFactory.create("Guided", preset, null);
+        WorkflowTask optimizer = findOptimizer(project, "01 Grid-Fundament");
+        assertEquals(2, optimizer.getOptimizerMode());
+        assertEquals(7, optimizer.getOptimizerCriterion());
+        assertEquals(1, optimizer.getOptimizerForwardMode());
+        assertBand(find(optimizer, "Inp_TakeProfit"), "40", "5", "80");
+        assertBand(find(optimizer, "Inp_Grid_Step"), "400", "25", "900");
+        assertBand(find(optimizer, "Inp_Envelopes_Deviation"), "0.08", "0.01", "0.40");
+        assertBand(find(optimizer, "Inp_Envelopes_Deviation_Lower"), "0.10", "0.01", "0.50");
+        assertTrue(find(optimizer, "Inp_TakeProfit").isOptimizeEnabled());
+        assertTrue(find(optimizer, "Inp_Envelopes_Period").isOptimizeEnabled());
+        assertTrue(find(optimizer, "Inp_Use_Trend_Filter").isOptimizeEnabled());
+        assertTrue(find(optimizer, "Inp_Use_ADX_Filter").isOptimizeEnabled());
+        assertFalse(optimizer.getOptimizerTargetParameters().contains("TimeFrame_Envelopes"));
+    }
+
+    @Test
+    public void searchStagesDoNotAddExtraQualityFilters() {
+        CustomProject project = ToTheMoon132GuidedWorkflowFactory.create(
+                "Guided", completeSyntheticPreset(), null);
+        long filtered = project.getTasks().stream()
+                .filter(task -> task.getType() == WorkflowTask.TaskType.PRE_FILTER)
+                .filter(task -> task.getName() != null && task.getName().contains("Optimizer")
+                        || (task.getName() != null && task.getName().contains("Qualitätsfilter")))
+                .filter(task -> !task.getFilterConditions().isEmpty())
+                .count();
+        assertEquals(0, filtered);
+    }
+
+    @Test
+    public void jpyPairsUseAWiderGridBandInTheFirstStage() {
+        CustomProject project = ToTheMoon132GuidedWorkflowFactory.create(
+                "Guided", "GBPJPY", "M5", completeSyntheticPreset(), null);
+        WorkflowTask optimizer = findOptimizer(project, "01 Grid-Fundament");
+        assertBand(find(optimizer, "Inp_Grid_Step"), "1200", "100", "2500");
+        assertBand(find(optimizer, "Inp_Step_Multiplier"), "1.10", "0.05", "1.40");
+        assertBand(find(optimizer, "Inp_Next_Lot_Multiplier"), "1.20", "0.05", "1.60");
+        assertEquals("2000", find(optimizer, "Inp_Grid_Step").getValue());
+        assertEquals("0.3", find(optimizer, "Inp_Envelopes_Deviation").getValue());
+    }
+
+    @Test
+    public void architectureBaselineFreezesH1EnvelopesAndTrendFilter() {
+        List<EaParameter> preset = completeSyntheticPreset();
+        CustomProject project = ToTheMoon132GuidedWorkflowFactory.create("Guided", preset, null);
+        WorkflowTask optimizer = findOptimizer(project, "01 Grid-Fundament");
+
+        assertEquals("16385", find(optimizer, "TimeFrame_Envelopes").getValue());
+        assertEquals("16385", find(optimizer, "TimeFrame_Envelopes_Lower").getValue());
+        assertFalse(find(optimizer, "TimeFrame_Envelopes").isOptimizeEnabled());
+        assertEquals("true", find(optimizer, "Inp_Use_Trend_Filter").getValue());
+        assertTrue(find(optimizer, "Inp_Use_Trend_Filter").isOptimizeEnabled());
+        assertEquals("250", find(optimizer, "Inp_Trend_EMA_Period").getValue());
+        assertEquals("4", find(optimizer, "Envelopes_Price_Lower").getValue());
+        assertEquals("0.17", find(optimizer, "Inp_Envelopes_Deviation").getValue());
+        assertEquals("0.29", find(optimizer, "Inp_Envelopes_Deviation_Lower").getValue());
     }
 
     @Test
@@ -147,8 +298,8 @@ public class ToTheMoon132GuidedWorkflowFactoryTest {
     @Test
     public void indicatorStagesOptimizeEnumTimeframeBandThroughH1() {
         Map<String, List<String>> stages = ToTheMoon132GuidedWorkflowFactory.stageTargetParameters();
-        assertTrue(stages.get("03 Envelopes oben").contains("TimeFrame_Envelopes"));
-        assertTrue(stages.get("04 Envelopes unten").contains("TimeFrame_Envelopes_Lower"));
+        assertFalse(stages.get("03 Envelopes oben").contains("TimeFrame_Envelopes"));
+        assertFalse(stages.get("04 Envelopes unten").contains("TimeFrame_Envelopes_Lower"));
         assertTrue(stages.get("05 ADX-Regime").contains("Inp_ADX_Timeframe"));
         assertTrue(stages.get("06 ATR-Gridabstand").contains("Inp_ATR_Timeframe"));
         assertTrue(stages.get("07 Volatilität & Richtung").contains("Inp_Vol_ATR_Timeframe"));
@@ -156,24 +307,24 @@ public class ToTheMoon132GuidedWorkflowFactoryTest {
         CustomProject project = ToTheMoon132GuidedWorkflowFactory.create(
                 "Guided", completeSyntheticPreset(), null);
 
-        assertTimeframeBand(findOptimizer(project, "03 Envelopes oben"), "TimeFrame_Envelopes");
-        assertTimeframeBand(findOptimizer(project, "04 Envelopes unten"), "TimeFrame_Envelopes_Lower");
         assertTimeframeBand(findOptimizer(project, "05 ADX-Regime"), "Inp_ADX_Timeframe");
         assertTimeframeBand(findOptimizer(project, "06 ATR-Gridabstand"), "Inp_ATR_Timeframe");
         assertTimeframeBand(findOptimizer(project, "07 Volatilität & Richtung"), "Inp_Vol_ATR_Timeframe");
     }
 
     @Test
-    public void envelopesUseV132PercentageDomainsAndGeneticSearch() {
+    public void envelopesKeepSanePercentageDomainsAndGeneticSearch() {
         CustomProject project = ToTheMoon132GuidedWorkflowFactory.create(
                 "Guided", completeSyntheticPreset(), null);
         WorkflowTask upper = findOptimizer(project, "03 Envelopes oben");
         WorkflowTask lower = findOptimizer(project, "04 Envelopes unten");
 
-        assertBand(find(upper, "Inp_Envelopes_Deviation"), "0.01", "0.01", "1.70");
-        assertBand(find(lower, "Inp_Envelopes_Deviation_Lower"), "0.01", "0.01", "2.00");
+        assertBand(find(upper, "Inp_Envelopes_Deviation"), "0.08", "0.01", "0.40");
+        assertBand(find(lower, "Inp_Envelopes_Deviation_Lower"), "0.10", "0.01", "0.50");
         assertBand(find(upper, "Envelopes_Price"), "1", "1", "7");
         assertBand(find(lower, "Envelopes_Price_Lower"), "1", "1", "7");
+        assertFalse(upper.getOptimizerTargetParameters().contains("TimeFrame_Envelopes"));
+        assertFalse(lower.getOptimizerTargetParameters().contains("TimeFrame_Envelopes_Lower"));
         assertEquals(2, upper.getOptimizerMode());
         assertEquals(2, lower.getOptimizerMode());
     }
@@ -187,7 +338,7 @@ public class ToTheMoon132GuidedWorkflowFactoryTest {
                 "Guided", "GBPJPY", "M5", preset, null);
 
         List<MasterSearchSpaceValidator.Issue> issues = MasterSearchSpaceValidator.validateProject(
-                project.getTasks(), preset, project.getPeriod());
+                project.getTasks(), project.getProvenMasterParameters(), project.getPeriod());
 
         assertTrue(issues.stream().map(MasterSearchSpaceValidator.Issue::describe)
                 .reduce("", (left, right) -> left + "\n" + right), issues.isEmpty());
@@ -224,13 +375,19 @@ public class ToTheMoon132GuidedWorkflowFactoryTest {
                 result.add(parameter);
             }
         }
-        EaParameter fixed = new EaParameter("Inp_Use_RSI_Filter", "false");
-        fixed.setStringType(false);
-        fixed.setOptimizeStart("false");
-        fixed.setOptimizeStep("1");
-        fixed.setOptimizeEnd("true");
-        result.add(fixed);
+        addFixed(result, "TimeFrame_Envelopes", "1");
+        addFixed(result, "TimeFrame_Envelopes_Lower", "1");
+        addFixed(result, "Values_Envelopes_Lower", "1");
+        addFixed(result, "Inp_Use_Trend_Filter", "false");
+        addFixed(result, "Inp_Trend_EMA_Period", "450");
         return result;
+    }
+
+    private static void addFixed(List<EaParameter> result, String name, String value) {
+        if (result.stream().anyMatch(existing -> name.equals(existing.getName()))) return;
+        EaParameter parameter = new EaParameter(name, value);
+        parameter.setStringType(false);
+        result.add(parameter);
     }
 
     private static WorkflowTask findOptimizer(CustomProject project, String stagePrefix) {

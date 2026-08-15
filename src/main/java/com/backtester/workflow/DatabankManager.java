@@ -7,6 +7,7 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 /**
@@ -40,6 +41,7 @@ public class DatabankManager {
         }
         // Seed tab-keyed archive from legacy longtermPass slots when missing.
         StrategyBacktestArchiveStore.migrateFromLongtermPasses(project);
+        rebuildCensus(project);
     }
 
     public synchronized void saveToProject(CustomProject project) {
@@ -60,6 +62,7 @@ public class DatabankManager {
         project.setDatabanks(snapshot);
         if (includeContents) {
             StrategyBacktestArchiveStore.migrateFromLongtermPasses(project);
+            rebuildCensus(project);
         }
     }
 
@@ -103,18 +106,18 @@ public class DatabankManager {
         if (storedName == null || references == null || references.isEmpty()) return new ArrayList<>();
 
         java.util.Set<String> identities = new java.util.HashSet<>();
-        java.util.Set<Integer> passNumbers = new java.util.HashSet<>();
+        java.util.Set<String> passKeys = new java.util.HashSet<>();
         for (CombinedPass reference : references) {
             if (reference == null) continue;
             identities.add(passIdentity(reference));
-            passNumbers.add(reference.getPassNumber());
+            passKeys.add(passNumberKey(reference));
         }
 
         List<CombinedPass> matches = new ArrayList<>();
         for (CombinedPass candidate : databanks.get(storedName)) {
             if (candidate == null || candidate.getBacktestPass() == null) continue;
             if (identities.contains(passIdentity(candidate))
-                    || passNumbers.contains(candidate.getPassNumber())) {
+                    || passKeys.contains(passNumberKey(candidate))) {
                 matches.add(candidate.copy());
             }
         }
@@ -176,6 +179,26 @@ public class DatabankManager {
 
         String rejectionNote = FilterRejectionReport.describeDroppedLeader(
                 task, candidates, filteredOutput);
+        if (task.getType() == WorkflowTask.TaskType.PRE_FILTER) {
+            List<CombinedPass> withFallback = applyPreFilterEmptyFallback(candidates, filteredOutput);
+            if (shouldHaltChainAfterPreFilter(task, withFallback) && !candidates.isEmpty()) {
+                String halt = " Die Kette wird angehalten, statt mit dem Score-Besten weiterzulaufen.";
+                rejectionNote = rejectionNote.isBlank()
+                        ? "Kein Pass hat den Qualitätsfilter überstanden." + halt
+                        : rejectionNote + halt;
+            }
+            filteredOutput = withFallback;
+            // Quality banks (e.g. g01_grid_quality) must keep every survivor so
+            // the following form-diversity task can stamp B1–B10. Census picks
+            // still cap and assign missing ids here.
+            if (isCensusPickDatabank(targetName)) {
+                filteredOutput = ClusterIdentity.stampUnassignedByScore(filteredOutput);
+            }
+        } else if (task.getType() == WorkflowTask.TaskType.DIVERSITY_FILTER
+                && task.isDiversityStampClusterIds()
+                && task.getDiversityMaxStrategies() <= ClusterIdentity.MAX_CLUSTERS) {
+            filteredOutput = ClusterIdentity.stampInOrder(filteredOutput);
+        }
         task.setFilterRejectionNote(rejectionNote);
         if (!rejectionNote.isBlank()) {
             logger.warn("DATABANK FILTER: {}", rejectionNote);
@@ -215,6 +238,71 @@ public class DatabankManager {
         return filtered;
     }
 
+    /**
+     * Unclustered empty PRE_FILTER stays empty — promoting the score leader
+     * created zombie pipelines that burned hours of MT5 without an adoptable
+     * master. Clustered rows never receive another cluster's champion: a
+     * non-empty filter that emptied one cluster stays empty for that cluster;
+     * a fully empty clustered filter may keep each cluster's own leader.
+     */
+    static List<CombinedPass> applyPreFilterEmptyFallback(List<CombinedPass> candidates,
+                                                          List<CombinedPass> accepted) {
+        if (accepted != null && !accepted.isEmpty()) {
+            return new ArrayList<>(accepted);
+        }
+        if (candidates == null || candidates.isEmpty()) {
+            return new ArrayList<>();
+        }
+        boolean anyClustered = false;
+        Map<String, List<CombinedPass>> byCluster = new LinkedHashMap<>();
+        for (CombinedPass candidate : candidates) {
+            if (candidate == null) {
+                continue;
+            }
+            String id = ClusterIdentity.normalize(candidate);
+            if (id == null) {
+                continue;
+            }
+            anyClustered = true;
+            byCluster.computeIfAbsent(id, key -> new ArrayList<>()).add(candidate);
+        }
+        if (!anyClustered) {
+            return new ArrayList<>();
+        }
+        List<CombinedPass> kept = new ArrayList<>();
+        for (List<CombinedPass> group : byCluster.values()) {
+            GuidedOptimizationService.selectBestPass(group).ifPresent(kept::add);
+        }
+        return kept;
+    }
+
+    /**
+     * True when a PRE_FILTER wrote nothing. The pipeline must pause here:
+     * the next optimizer does not require input and would otherwise keep
+     * searching around a missing basis.
+     */
+    public static boolean shouldHaltChainAfterPreFilter(WorkflowTask task, List<CombinedPass> output) {
+        return task != null
+                && task.getType() == WorkflowTask.TaskType.PRE_FILTER
+                && (output == null || output.isEmpty());
+    }
+
+    public static String emptyPreFilterHaltMessage(WorkflowTask task) {
+        String name = task != null && task.getName() != null ? task.getName() : "Qualitätsfilter";
+        return "Automatik angehalten: Filter '" + name
+                + "' hat 0 Überlebende. Die Kette läuft nicht mit dem Score-Besten weiter.";
+    }
+
+    /**
+     * Rebuilds {@link ClusterCensus} from the project's databank snapshot.
+     */
+    public static void rebuildCensus(CustomProject project) {
+        if (project == null) {
+            return;
+        }
+        project.setClusterCensus(ClusterCensus.rebuild(project));
+    }
+
     private void resetToDefaults() {
         databanks.clear();
         databanks.put(RESULTS, new ArrayList<>());
@@ -249,6 +337,10 @@ public class DatabankManager {
         return cleanName;
     }
 
+    private static boolean isCensusPickDatabank(String name) {
+        return name != null && name.toLowerCase(Locale.ROOT).endsWith("_pick");
+    }
+
     private static boolean isStandard(String name) {
         return RESULTS.equalsIgnoreCase(name)
                 || EXISTING_PORTFOLIO.equalsIgnoreCase(name)
@@ -281,8 +373,21 @@ public class DatabankManager {
         return new ArrayList<>(merged.values());
     }
 
-    private static String passIdentity(CombinedPass pass) {
+    /**
+     * Dedup key for a databank row. Cluster id is included so sequential
+     * optimizer runs (each restarting MT5 pass numbers at 1) do not collapse
+     * B1#5 onto B7#5. Unclustered rows keep the legacy pass+name key.
+     */
+    public static String passIdentity(CombinedPass pass) {
         if (pass == null) return "<null>";
-        return pass.getPassNumber() + "\u0000" + pass.getStrategyName();
+        String cluster = ClusterIdentity.normalize(pass);
+        return pass.getPassNumber() + "\u0000" + pass.getStrategyName()
+                + "\u0000" + (cluster != null ? cluster : "");
+    }
+
+    /** Gallery rename fallback: same pass number only inside the same cluster. */
+    private static String passNumberKey(CombinedPass pass) {
+        String cluster = ClusterIdentity.normalize(pass);
+        return pass.getPassNumber() + "\u0000" + (cluster != null ? cluster : "");
     }
 }

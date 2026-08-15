@@ -69,6 +69,7 @@ public final class DatabankArtifactContextResolver {
             if (type == null) return null;
             type = type.canonical();
             if (type == WorkflowTask.TaskType.RETESTER
+                    || type == WorkflowTask.TaskType.MASTER_REFERENCE
                     || type == WorkflowTask.TaskType.OPTIMIZER
                     || type == WorkflowTask.TaskType.ROBUSTNESS_CV) {
                 return producer;

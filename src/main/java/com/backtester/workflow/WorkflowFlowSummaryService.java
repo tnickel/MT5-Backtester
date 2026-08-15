@@ -218,6 +218,8 @@ public final class WorkflowFlowSummaryService {
                     allTasks, databankManager);
             case RETESTER -> summarizeDatabankMove(task, index, typeLabel, statusLabel, tone,
                     databankManager, "Retest ausgeführt");
+            case MASTER_REFERENCE -> summarizeDatabankMove(task, index, typeLabel, statusLabel, tone,
+                    databankManager, "Master-Referenz gemessen");
             case DIVERSITY_FILTER -> summarizeDatabankMove(task, index, typeLabel, statusLabel, tone,
                     databankManager, "Diversitäts-Filter ausgeführt");
             case STRATEGY_SELECTION -> new FlowStepSummary(index, task.getName(), typeLabel, statusLabel, tone,

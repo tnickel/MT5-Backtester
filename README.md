@@ -78,6 +78,8 @@ This keeps the final export honest: only strategies that explicitly pass validat
 
 For the reasoning behind this design, see [Docs/ANTI_CURVEFITTING.md](Docs/ANTI_CURVEFITTING.md).
 
+Custom-project stage chains (ToTheMoon Guided / Tick-Kill) stay linear. **Show Flow** will show a **B-cluster lineage tree** (up to 10 grid-form lines) instead of one frozen champion after g01–g04. Spec (German): [Docs/concept_b_cluster_linienbaum.md](Docs/concept_b_cluster_linienbaum.md).
+
 ![Advanced Strategy Evaluator](images/backtester_advanced_evaluator.png)
 
 ---
@@ -258,7 +260,8 @@ MT5-Backtester/
 │   ├── dukascopy/              # DukascopyDownloader, Bi5Decoder, CsvConverter
 │   └── ui/                     # 13 Swing components (panels, dialogs, charts)
 ├── config/                     # backtester.properties + ea_params/
-├── doc/                        # Project documentation & blog articles
+├── doc/                        # User manual & blog articles
+├── Docs/                       # Concept specs (German), incl. B-cluster lineage tree
 ├── images/                     # Screenshots for README
 ├── mql5/                       # MQL5 helper scripts
 ├── install/                    # Installer resources
@@ -289,3 +292,4 @@ This project is open source. See the repository for details.
 
 - **GitHub**: [https://github.com/tnickel/MT5-Backtester](https://github.com/tnickel/MT5-Backtester)
 - **Portfolio**: [https://tnickel-ki.de/](https://tnickel-ki.de/)
+- **B-Cluster Linienbaum (Show Flow)**: [Docs/concept_b_cluster_linienbaum.md](Docs/concept_b_cluster_linienbaum.md)

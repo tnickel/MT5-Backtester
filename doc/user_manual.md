@@ -16,6 +16,9 @@
 10. [MT5-Prozessschutz (Process Guard)](#10-mt5-prozessschutz-process-guard)
 11. [Claude Desktop Integration (MCP Server)](#11-claude-desktop-integration-mcp-server)
 12. [Bereich: Workflow Automator (🔄 Workflow Automator)](#12-bereich-workflow-automator)
+    12.1. [Custom Projects & StrategyQuant Workflow Pipeline](#121-custom-projects--strategyquant-workflow-pipeline)
+    12.2. [B-Cluster-Linienbaum (Show Flow)](#122-b-cluster-linienbaum-show-flow)
+    12.3. [Standard-Workflow (6-Schritte-Assistent)](#123-standard-workflow-6-schritte-assistent)
 13. [Bereich: Controlling (📊 Controlling)](#13-bereich-controlling-controlling)
 
 ---
@@ -334,9 +337,14 @@ Im Tab **Custom Projects (StrategyQuant)** können Sie komplexe, mehrstufige Tes
       - `Open Prices Only` (Nur Eröffnungspreise)
     - **Start day (Test From) & End day (Test To)**: Datumsbereich für den Retest.
 
+#### 12.2 B-Cluster-Linienbaum (Show Flow)
+Die Task-Kette bleibt linear (Optimizer → Filter → …). **Show Flow** zeigt dazu einen **Linienbaum**: Stufen als Stamm, bis zu zehn Grid-Form-Cluster **B1–B10** als Äste. Knotenbeschriftung = wie viele Strategien in dem Ast leben (z. B. `B2 · g09 · 2`). Tote Linien bleiben grau mit `0 ✕`. Tick-Kills sind Pass/Fail pro Linie; das Ranking bleibt OOS (`k16`).
+
+Vollständige Semantik, Census-Regel (`_pick` statt `_raw`) und Umsetzungsphasen: [Docs/concept_b_cluster_linienbaum.md](../Docs/concept_b_cluster_linienbaum.md).
+
 ---
 
-#### 12.2 Standard-Workflow (6-Schritte-Assistent)
+#### 12.3 Standard-Workflow (6-Schritte-Assistent)
 Der klassische, geführte 6-Schritte-Workflow wird kontinuierlich in der SQLite-Datenbank gesichert. Dabei unterscheidet die Anwendung zwischen zwei Speicher-Modellen:
 
 * **Aktiver Zwischenstand (`WORKFLOW_STATE`-Tabelle):** Nach jedem erfolgreich abgeschlossenen Schritt (Schritt 1 bis 5) wird der aktuelle Zustand der Pipeline automatisch in der Tabelle `WORKFLOW_STATE` unter der festen `id = 1` überschrieben.

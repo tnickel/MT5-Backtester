@@ -37,6 +37,7 @@ public class WorkflowTask {
         DIVERSITY_FILTER("Diversitäts-Clustering", "Unkorrelierte Top-Strategien selektieren", true),
         ROBUSTNESS_CV("Robustness Test (CV)", "Parameter-Sensitivity Sweeps & Stresstests", true),
         KI_EVALUATION("KI-Bewertung", "LLM-gestützte Stabilitätsanalyse", true),
+        MASTER_REFERENCE("Master-Referenz", "Referenz-Backtest der Stufen-Master unter festen Bedingungen", false),
         PORTFOLIO_EXPORT("Portfolio Export", "Finale .set / PDF Berichte speichern", true),
 
         // Persisted aliases kept exclusively for backwards-compatible Gson loading.
@@ -142,8 +143,15 @@ public class WorkflowTask {
     private Integer diversityMinDifferentParams;
     private Integer diversityMaxStrategies;
     private boolean diversityRankByScore;
+    /** Prefer higher OHLC trade count, then profit, before diversity. */
+    private boolean diversityRankByActivity;
     /** Guided v132-only opt-in: collapse parameter rows that are behaviorally identical. */
     private boolean diversityDeduplicateEffectiveV132;
+    /**
+     * Null/true stamps B1–B10 after a diversity task. Wide shortlists set
+     * this false so 100 survivors are not collapsed to ten cluster ids.
+     */
+    private Boolean diversityStampClusterIds;
     private List<EaParameter> diversityParameterSnapshot = new ArrayList<>();
     private Double robustnessSweepPct;
     private Integer robustnessSteps;
@@ -290,6 +298,16 @@ public class WorkflowTask {
     }
     public void setOptimizerForwardDate(String optimizerForwardDate) {
         this.optimizerForwardDate = optimizerForwardDate != null ? optimizerForwardDate.trim() : "";
+    }
+
+    /**
+     * Retesters only split 1:1 when both mode and date were set explicitly.
+     * The getter default (mode 1) must not turn every existing kill-gate
+     * into two MetaTrader runs.
+     */
+    public boolean hasExplicitForwardSplit() {
+        return optimizerForwardMode != null && optimizerForwardMode > 0
+                && optimizerForwardDate != null && !optimizerForwardDate.isBlank();
     }
 
     /**
@@ -533,9 +551,22 @@ public class WorkflowTask {
         this.diversityMaxStrategies = value;
     }
 
+    public boolean isDiversityStampClusterIds() {
+        return diversityStampClusterIds == null || diversityStampClusterIds;
+    }
+
+    public void setDiversityStampClusterIds(boolean diversityStampClusterIds) {
+        this.diversityStampClusterIds = diversityStampClusterIds;
+    }
+
     public boolean isDiversityRankByScore() { return diversityRankByScore; }
     public void setDiversityRankByScore(boolean diversityRankByScore) {
         this.diversityRankByScore = diversityRankByScore;
+    }
+
+    public boolean isDiversityRankByActivity() { return diversityRankByActivity; }
+    public void setDiversityRankByActivity(boolean diversityRankByActivity) {
+        this.diversityRankByActivity = diversityRankByActivity;
     }
 
     public boolean isDiversityDeduplicateEffectiveV132() {
@@ -664,7 +695,9 @@ public class WorkflowTask {
         copy.diversityMinDifferentParams = diversityMinDifferentParams;
         copy.diversityMaxStrategies = diversityMaxStrategies;
         copy.diversityRankByScore = diversityRankByScore;
+        copy.diversityRankByActivity = diversityRankByActivity;
         copy.diversityDeduplicateEffectiveV132 = diversityDeduplicateEffectiveV132;
+        copy.diversityStampClusterIds = diversityStampClusterIds;
         copy.setDiversityParameterSnapshot(getDiversityParameterSnapshot());
         copy.robustnessSweepPct = robustnessSweepPct;
         copy.robustnessSteps = robustnessSteps;

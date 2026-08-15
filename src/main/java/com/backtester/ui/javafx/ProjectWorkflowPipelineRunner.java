@@ -6,6 +6,10 @@ import com.backtester.engine.OptimizationConfig;
 import com.backtester.engine.WorkflowEngine;
 import com.backtester.report.OptimizationResult.CombinedPass;
 import com.backtester.engine.MetaTraderRunLock;
+import com.backtester.report.PassPresetResolver;
+import com.backtester.workflow.ClusterAutomation;
+import com.backtester.workflow.ClusterCensus;
+import com.backtester.workflow.ClusterIdentity;
 import com.backtester.workflow.CustomProject;
 import com.backtester.workflow.DatabankManager;
 import com.backtester.workflow.GuidedOptimizationService;
@@ -98,6 +102,18 @@ public class ProjectWorkflowPipelineRunner {
         void purgeWorkflowRunArtifacts();
 
         void adoptBestPassAutomatically(WorkflowTask nextOptimizer);
+
+        /**
+         * After a stage pick: adopt the winner into the next optimizer if needed,
+         * then run the reference backtest that fills the master lineage.
+         */
+        void recordMasterReferenceCheckpoint(WorkflowTask checkpoint);
+
+        /**
+         * Measure each live cluster champion. Does not apply improve-or-die.
+         */
+        List<CombinedPass> recordClusteredMasterReferences(WorkflowTask checkpoint,
+                                                           List<CombinedPass> inputPasses);
 
         Path optimizerOutputBaseDirectory(WorkflowTask task);
 
@@ -235,6 +251,7 @@ public class ProjectWorkflowPipelineRunner {
         boolean requiresExpert = (task.getType() == WorkflowTask.TaskType.STRATEGY_SELECTION ||
                                   task.getType() == WorkflowTask.TaskType.OPTIMIZER ||
                                   task.getType() == WorkflowTask.TaskType.RETESTER ||
+                                  task.getType() == WorkflowTask.TaskType.MASTER_REFERENCE ||
                                   task.getType() == WorkflowTask.TaskType.ROBUSTNESS_CV);
 
         if (requiresExpert) {
@@ -254,8 +271,13 @@ public class ProjectWorkflowPipelineRunner {
             engine.setOptimizationCriterion(task.getOptimizerCriterion());
             engine.setForwardMode(task.getOptimizerForwardMode());
             engine.setForwardDate(parseDateOrNull(task.getOptimizerForwardDate()));
-            engine.applyOptimizerTaskParameters(task,
-                    GuidedOptimizationService.requiresAdoptedBasis(project, task));
+            List<CombinedPass> sourcePasses = databankManager.getDatabank(task.getSourceDatabank());
+            boolean sequentialClusters = ClusterAutomation.shouldRunSequentialClusterOptimizers(
+                    project, sourcePasses);
+            if (!sequentialClusters) {
+                engine.applyOptimizerTaskParameters(task,
+                        GuidedOptimizationService.requiresAdoptedBasis(project, task));
+            }
         }
         String taskSymbol = task.getRetestSymbol();
         String taskPeriod = task.getRetestPeriod();
@@ -347,7 +369,28 @@ public class ProjectWorkflowPipelineRunner {
 
     private static boolean taskRequiresInputStrategies(WorkflowTask.TaskType type) {
         return type != WorkflowTask.TaskType.STRATEGY_SELECTION
-                && type != WorkflowTask.TaskType.OPTIMIZER;
+                && type != WorkflowTask.TaskType.OPTIMIZER
+                && type != WorkflowTask.TaskType.MASTER_REFERENCE;
+    }
+
+    private static List<CombinedPass> championPasses(List<CombinedPass> inputPasses) {
+        return GuidedOptimizationService.selectBestPass(inputPasses)
+                .map(pass -> {
+                    List<CombinedPass> one = new ArrayList<>();
+                    one.add(pass);
+                    return one;
+                })
+                .orElseGet(ArrayList::new);
+    }
+
+    /** One score leader per cluster id. Empty when nothing is clustered. */
+    public static List<CombinedPass> championsByCluster(List<CombinedPass> inputPasses) {
+        return ClusterAutomation.championsByCluster(inputPasses);
+    }
+
+    public static List<CombinedPass> liveClusterChampions(CustomProject project,
+                                                          List<CombinedPass> inputPasses) {
+        return ClusterAutomation.liveChampions(project, inputPasses);
     }
 
     /**
@@ -396,9 +439,13 @@ public class ProjectWorkflowPipelineRunner {
     private void requireTaskInputStrategies(WorkflowTask task, List<CombinedPass> inputPasses) {
         if (taskRequiresInputStrategies(task.getType())
                 && (inputPasses == null || inputPasses.isEmpty())) {
-            throw new IllegalStateException("Task '" + task.getName() + "' kann nicht starten: Die Quell-Databank '"
+            throw new WorkflowPauseException("Task '" + task.getName() + "' kann nicht starten: Die Quell-Databank '"
                     + task.getSourceDatabank() + "' enthält keine Strategien.");
         }
+    }
+
+    private boolean pipelineCancelled() {
+        return activeProjectTask != null && activeProjectTask.isCancelled();
     }
 
     // ─── Execution Logic ──────────────────────────────────────────────────────
@@ -409,7 +456,10 @@ public class ProjectWorkflowPipelineRunner {
         CustomProject project = host.getProject();
         host.commitCurrentTaskDataSettings();
         try {
-            requireMasterSearchSpace(task, masterBasisForPreflight(project));
+            if (!shouldDeferRuntimeSearchSpaceCheck(project, task,
+                    databankManager.getDatabank(task.getSourceDatabank()))) {
+                requireMasterSearchSpace(task, masterBasisForPreflight(project));
+            }
         } catch (IllegalStateException ex) {
             showConfigurationError(ex.getMessage(), "Einzelstep kann nicht sicher gestartet werden");
             return;
@@ -459,33 +509,20 @@ public class ProjectWorkflowPipelineRunner {
 
                 List<CombinedPass> inputPasses = databankManager.getDatabank(task.getSourceDatabank());
                 List<CombinedPass> outputPasses = new ArrayList<>();
-                requireTaskInputStrategies(task, inputPasses);
-
-                if (GuidedOptimizationService.isFollowUpOptimizer(project, task)) {
-                    if (shouldAutomaticallyAdoptBestPass(project, task)) {
-                        try {
-                            host.adoptBestPassAutomatically(task);
-                        } catch (WorkflowPauseException pause) {
-                            pauseChain(task, pause.getMessage(), 0.0);
-                            return null;
-                        }
-                    } else if (GuidedOptimizationService.requiresAdoptedBasis(project, task)) {
-                        task.setStatus(WorkflowTask.TaskStatus.PENDING);
-                        String pickDb = handPickDatabankLabel(task);
-                        String pauseMessage = "Einzelstep pausiert: Task '" + task.getName()
-                                + "' braucht zuerst einen Hand-Pick aus der Databank '" + pickDb
-                                + "' (Rechtsklick auf einen Pass → Parameter übernehmen).";
-                        task.setLastExecutionLog(pauseMessage);
-                        host.logToConsole("GUIDED", pauseMessage);
-                        updateProgressUI(0.0,
-                                "Pausiert: Pass als Parameter-Basis für '" + task.getName() + "' auswählen.");
-                        showHandPickRequiredDialog(task.getName(), pickDb);
-                        host.saveProject();
-                        return null;
-                    }
+                try {
+                    requireTaskInputStrategies(task, inputPasses);
+                } catch (WorkflowPauseException pause) {
+                    pauseChain(task, pause.getMessage(), 0.0);
+                    return null;
                 }
 
-                requireRuntimeMasterSearchSpace(task, runtimeBasis(task, project));
+                if (!prepareFollowUpOptimizer(project, task, inputPasses, 0.0)) {
+                    return null;
+                }
+
+                if (!shouldDeferRuntimeSearchSpaceCheck(project, task, inputPasses)) {
+                    requireRuntimeMasterSearchSpace(task, runtimeBasis(task, project));
+                }
                 task.setStatus(WorkflowTask.TaskStatus.RUNNING);
                 Platform.runLater(() -> {
                     host.refreshTaskChain();
@@ -501,15 +538,13 @@ public class ProjectWorkflowPipelineRunner {
                         outputPasses = new ArrayList<>(inputPasses);
                         break;
                     case OPTIMIZER:
-                        engine.runStep1();
-                        engine.runStep2(
-                            msg -> host.logToConsole("MT5-OPT", msg),
-                            (curr, totPasses) -> updateProgressUI((double) curr / Math.max(1, totPasses), "Optimizer Pass " + curr + " / " + totPasses),
-                            host.optimizerOutputBaseDirectory(task)
-                        );
-                        if (engine.getOptResult() != null) {
-                            outputPasses = engine.getOptResult().buildCombinedPasses(engine.getForwardMode() > 0, engine.loadScoreWeightsFromDb());
-                            stampOptimizerPasses(outputPasses, task);
+                        try {
+                            outputPasses = executeOptimizer(task, project, inputPasses,
+                                (curr, totPasses) -> updateProgressUI((double) curr / Math.max(1, totPasses),
+                                        "Optimizer Pass " + curr + " / " + totPasses));
+                        } catch (WorkflowPauseException pause) {
+                            pauseChain(task, pause.getMessage(), 0.0);
+                            return null;
                         }
                         break;
                     case RETESTER:
@@ -525,6 +560,21 @@ public class ProjectWorkflowPipelineRunner {
                             }
                         );
                         break;
+                    case MASTER_REFERENCE:
+                        if (inputPasses == null || inputPasses.isEmpty()) {
+                            host.logToConsole("MASTER-VERLAUF", "Checkpoint '" + task.getName()
+                                    + "' übersprungen: Die Quell-Databank '" + task.getSourceDatabank()
+                                    + "' ist leer.");
+                            outputPasses = new ArrayList<>();
+                            break;
+                        }
+                        try {
+                            outputPasses = runMasterReference(task, project, inputPasses);
+                        } catch (WorkflowPauseException pause) {
+                            pauseChain(task, pause.getMessage(), 0.0);
+                            return null;
+                        }
+                        break;
                     case PRE_FILTER:
                         outputPasses = new ArrayList<>(inputPasses);
                         break;
@@ -537,7 +587,8 @@ public class ProjectWorkflowPipelineRunner {
                                 task.getDiversityMaxStrategies(),
                                 task.isDiversityRankByScore(),
                                 task.getDiversityParameterSnapshot(),
-                                task.isDiversityDeduplicateEffectiveV132());
+                                task.isDiversityDeduplicateEffectiveV132(),
+                                task.isDiversityRankByActivity());
                         break;
                     case ROBUSTNESS_CV:
                         engine.setSelectedDiversePasses(inputPasses);
@@ -576,6 +627,10 @@ public class ProjectWorkflowPipelineRunner {
 
                 List<CombinedPass> processed = databankManager.processTaskDatabanks(task, outputPasses);
                 task.setOutputPasses(processed);
+                if (DatabankManager.shouldHaltChainAfterPreFilter(task, processed)) {
+                    pauseChain(task, DatabankManager.emptyPreFilterHaltMessage(task), 1.0);
+                    return null;
+                }
                 task.setStatus(WorkflowTask.TaskStatus.COMPLETED);
                 // Otherwise an earlier pause message keeps claiming the task is waiting.
                 task.setLastExecutionLog("Erfolgreich beendet: " + processed.size()
@@ -629,7 +684,8 @@ public class ProjectWorkflowPipelineRunner {
         try {
             validateProjectExecutionOrder();
             MasterSearchSpaceValidator.requireProject(
-                    project.getTasks(), masterBasisForPreflight(project), project.getPeriod());
+                    preflightSearchSpaceTasks(project),
+                    masterBasisForPreflight(project), project.getPeriod());
         } catch (IllegalStateException ex) {
             showConfigurationError(ex.getMessage(), "Projekt kann nicht sicher gestartet werden");
             return;
@@ -695,31 +751,14 @@ public class ProjectWorkflowPipelineRunner {
                                 + "' enthält keine Strategien. Der Task wird erneut ausgeführt.");
                     }
 
-                    if (GuidedOptimizationService.isFollowUpOptimizer(project, task)) {
-                        if (shouldAutomaticallyAdoptBestPass(project, task)) {
-                            try {
-                                host.adoptBestPassAutomatically(task);
-                            } catch (WorkflowPauseException pause) {
-                                pauseChain(task, pause.getMessage(), (double) i / total);
-                                return null;
-                            }
-                        } else if (GuidedOptimizationService.requiresAdoptedBasis(project, task)) {
-                            task.setStatus(WorkflowTask.TaskStatus.PENDING);
-                            String pickDb = handPickDatabankLabel(task);
-                            String pauseMessage = "Workflow wartet vor Task " + (i + 1) + " ('"
-                                    + task.getName() + "') auf einen Hand-Pick aus der Databank '"
-                                    + pickDb + "'.";
-                            task.setLastExecutionLog(pauseMessage);
-                            host.logToConsole("GUIDED", pauseMessage);
-                            updateProgressUI((double) i / total,
-                                    "Pausiert: Pass als Parameter-Basis für '" + task.getName() + "' auswählen.");
-                            showHandPickRequiredDialog(task.getName(), pickDb);
-                            host.saveProject();
-                            return null;
-                        }
+                    List<CombinedPass> inputPasses = databankManager.getDatabank(task.getSourceDatabank());
+                    if (!prepareFollowUpOptimizer(project, task, inputPasses, (double) i / total)) {
+                        return null;
                     }
 
-                    requireRuntimeMasterSearchSpace(task, runtimeBasis(task, project));
+                    if (!shouldDeferRuntimeSearchSpaceCheck(project, task, inputPasses)) {
+                        requireRuntimeMasterSearchSpace(task, runtimeBasis(task, project));
+                    }
                     task.setStatus(WorkflowTask.TaskStatus.RUNNING);
                     final int currentIdx = i;
                     Platform.runLater(() -> {
@@ -732,7 +771,6 @@ public class ProjectWorkflowPipelineRunner {
                         " [Source: " + task.getSourceDatabank() + " -> Target: " + task.getTargetDatabank() + "] ===");
 
                     try {
-                        List<CombinedPass> inputPasses = databankManager.getDatabank(task.getSourceDatabank());
                         currentPipelinePasses = new ArrayList<>(inputPasses);
                         requireTaskInputStrategies(task, inputPasses);
                         applyTaskExecutionConfig(task);
@@ -743,16 +781,9 @@ public class ProjectWorkflowPipelineRunner {
                                 host.logToConsole("STRATEGIE-SELEKTION", "Strategie " + engine.getExpert() + " (" + engine.getSymbol() + " " + engine.getPeriod() + ") initialisiert.");
                                 break;
                             case OPTIMIZER:
-                                engine.runStep1();
-                                engine.runStep2(
-                                    msg -> host.logToConsole("MT5-OPT", msg),
-                                    (curr, totPasses) -> updateProgressUI((double) currentIdx / total, "Optimizer Pass " + curr + " / " + totPasses),
-                                    host.optimizerOutputBaseDirectory(task)
-                                );
-                                if (engine.getOptResult() != null) {
-                                    currentPipelinePasses = engine.getOptResult().buildCombinedPasses(engine.getForwardMode() > 0, engine.loadScoreWeightsFromDb());
-                                    stampOptimizerPasses(currentPipelinePasses, task);
-                                }
+                                currentPipelinePasses = executeOptimizer(task, project, inputPasses,
+                                    (curr, totPasses) -> updateProgressUI((double) currentIdx / total,
+                                            "Optimizer Pass " + curr + " / " + totPasses));
                                 break;
                             case RETESTER:
                                 long loopRetStartMs = System.currentTimeMillis();
@@ -768,6 +799,21 @@ public class ProjectWorkflowPipelineRunner {
                                     }
                                 );
                                 break;
+                            case MASTER_REFERENCE:
+                                if (inputPasses == null || inputPasses.isEmpty()) {
+                                    host.logToConsole("MASTER-VERLAUF", "Checkpoint '" + task.getName()
+                                            + "' übersprungen: Die Quell-Databank '" + task.getSourceDatabank()
+                                            + "' ist leer.");
+                                    currentPipelinePasses = new ArrayList<>();
+                                    break;
+                                }
+                                try {
+                                    currentPipelinePasses = runMasterReference(task, project, inputPasses);
+                                } catch (WorkflowPauseException pause) {
+                                    pauseChain(task, pause.getMessage(), (double) i / total);
+                                    return null;
+                                }
+                                break;
                             case PRE_FILTER:
                                 currentPipelinePasses = new ArrayList<>(inputPasses);
                                 break;
@@ -780,7 +826,8 @@ public class ProjectWorkflowPipelineRunner {
                                         task.getDiversityMaxStrategies(),
                                         task.isDiversityRankByScore(),
                                         task.getDiversityParameterSnapshot(),
-                                        task.isDiversityDeduplicateEffectiveV132());
+                                        task.isDiversityDeduplicateEffectiveV132(),
+                                        task.isDiversityRankByActivity());
                                 break;
                             case ROBUSTNESS_CV:
                                 engine.setSelectedDiversePasses(inputPasses);
@@ -819,6 +866,11 @@ public class ProjectWorkflowPipelineRunner {
 
                         List<CombinedPass> processed = databankManager.processTaskDatabanks(task, currentPipelinePasses);
                         task.setOutputPasses(processed);
+                        if (DatabankManager.shouldHaltChainAfterPreFilter(task, processed)) {
+                            pauseChain(task, DatabankManager.emptyPreFilterHaltMessage(task),
+                                    (double) i / total);
+                            return null;
+                        }
                         task.setStatus(WorkflowTask.TaskStatus.COMPLETED);
                         // Otherwise an earlier pause message keeps claiming the task is waiting.
                         task.setLastExecutionLog("Erfolgreich beendet: " + processed.size()
@@ -827,6 +879,9 @@ public class ProjectWorkflowPipelineRunner {
                             host.logToConsole("FILTER-WARNUNG", task.getFilterRejectionNote());
                         }
                         host.logToConsole("PROJECT", "Task " + (i + 1) + " (" + task.getName() + ") erfolgreich beendet. Databank '" + task.getTargetDatabank() + "' hat nun " + processed.size() + " Strategien.");
+                    } catch (WorkflowPauseException pause) {
+                        pauseChain(task, pause.getMessage(), (double) i / total);
+                        return null;
                     } catch (Exception taskEx) {
                         task.setStatus(WorkflowTask.TaskStatus.FAILED);
                         String errMsg = taskEx.getMessage() != null ? taskEx.getMessage() : taskEx.getClass().getSimpleName();
@@ -893,6 +948,38 @@ public class ProjectWorkflowPipelineRunner {
      * A project without one uses its own first enabled optimizer snapshot. The global
      * engine state is deliberately excluded because it may still belong to another project.
      */
+    /**
+     * Follow-up Automatik with 2+ live clusters cannot share one SET/snapshot.
+     * Search-space checks run after each cluster basis is applied instead.
+     */
+    public static boolean shouldDeferRuntimeSearchSpaceCheck(CustomProject project,
+                                                             WorkflowTask task,
+                                                             List<CombinedPass> sourcePasses) {
+        if (task == null || task.getType() != WorkflowTask.TaskType.OPTIMIZER
+                || task.getOptimizerTargetParameters().isEmpty()) {
+            return false;
+        }
+        return ClusterAutomation.shouldRunSequentialClusterOptimizers(project, sourcePasses);
+    }
+
+    private List<WorkflowTask> preflightSearchSpaceTasks(CustomProject project) {
+        List<WorkflowTask> tasks = new ArrayList<>();
+        if (project == null || project.getTasks() == null) {
+            return tasks;
+        }
+        for (WorkflowTask task : project.getTasks()) {
+            if (task == null) continue;
+            List<CombinedPass> source = databankManager != null
+                    ? databankManager.getDatabank(task.getSourceDatabank())
+                    : List.of();
+            if (shouldDeferRuntimeSearchSpaceCheck(project, task, source)) {
+                continue;
+            }
+            tasks.add(task);
+        }
+        return tasks;
+    }
+
     static List<EaParameter> masterBasisForPreflight(CustomProject project) {
         if (hasContextValidProvenMaster(project)) {
             return project.getProvenMasterParameters();
@@ -1014,6 +1101,7 @@ public class ProjectWorkflowPipelineRunner {
             }
             if (task.getType() == WorkflowTask.TaskType.OPTIMIZER
                     || task.getType() == WorkflowTask.TaskType.RETESTER
+                    || task.getType() == WorkflowTask.TaskType.MASTER_REFERENCE
                     || task.getType() == WorkflowTask.TaskType.ROBUSTNESS_CV) {
                 LocalDate start = parseDateOrNull(task.getStartDate());
                 LocalDate end = parseDateOrNull(task.getEndDate());
@@ -1199,6 +1287,175 @@ public class ProjectWorkflowPipelineRunner {
             return task.getSourceDatabank().trim();
         }
         return "der vorherigen Stufe";
+    }
+
+    /**
+     * Follow-up Automatik: pause on 0 live clusters; sequential skip of the global
+     * champion adopt when 2+ lines live; otherwise today's single adopt.
+     *
+     * @return false when the chain was paused
+     */
+    private boolean prepareFollowUpOptimizer(CustomProject project,
+                                             WorkflowTask task,
+                                             List<CombinedPass> inputPasses,
+                                             double pauseProgress) {
+        if (!GuidedOptimizationService.isFollowUpOptimizer(project, task)) {
+            return true;
+        }
+        if (ClusterAutomation.hasZeroLiveClusters(project, inputPasses)) {
+            pauseChain(task, ClusterAutomation.zeroLiveClustersMessage(task), pauseProgress);
+            return false;
+        }
+        if (ClusterAutomation.shouldRunSequentialClusterOptimizers(project, inputPasses)) {
+            host.logToConsole("CLUSTER", "Folge-Optimizer '" + task.getName()
+                    + "' läuft nacheinander für "
+                    + ClusterAutomation.liveChampions(project, inputPasses).size()
+                    + " lebende Linien (ein Terminal).");
+            return true;
+        }
+        if (shouldAutomaticallyAdoptBestPass(project, task)) {
+            try {
+                host.adoptBestPassAutomatically(task);
+            } catch (WorkflowPauseException pause) {
+                pauseChain(task, pause.getMessage(), pauseProgress);
+                return false;
+            }
+            return true;
+        }
+        if (GuidedOptimizationService.requiresAdoptedBasis(project, task)) {
+            task.setStatus(WorkflowTask.TaskStatus.PENDING);
+            String pickDb = handPickDatabankLabel(task);
+            String pauseMessage = "Workflow wartet vor '" + task.getName()
+                    + "' auf einen Hand-Pick aus der Databank '" + pickDb + "'.";
+            task.setLastExecutionLog(pauseMessage);
+            host.logToConsole("GUIDED", pauseMessage);
+            updateProgressUI(pauseProgress,
+                    "Pausiert: Pass als Parameter-Basis für '" + task.getName() + "' auswählen.");
+            showHandPickRequiredDialog(task.getName(), pickDb);
+            host.saveProject();
+            return false;
+        }
+        return true;
+    }
+
+    private List<CombinedPass> runMasterReference(WorkflowTask task,
+                                                  CustomProject project,
+                                                  List<CombinedPass> inputPasses) {
+        if (ClusterAutomation.usesClusteredAutomatik(project, inputPasses)) {
+            List<CombinedPass> survivors = host.recordClusteredMasterReferences(task, inputPasses);
+            if (survivors == null || survivors.isEmpty()) {
+                throw new WorkflowPauseException(ClusterAutomation.zeroLiveClustersMessage(task));
+            }
+            return survivors;
+        }
+        host.recordMasterReferenceCheckpoint(task);
+        return championPasses(inputPasses);
+    }
+
+    private List<CombinedPass> executeOptimizer(WorkflowTask task,
+                                                CustomProject project,
+                                                List<CombinedPass> inputPasses,
+                                                java.util.function.BiConsumer<Integer, Integer> progress)
+            throws Exception {
+        if (ClusterAutomation.shouldRunSequentialClusterOptimizers(project, inputPasses)) {
+            return runSequentialClusterOptimizers(task, project, inputPasses, progress);
+        }
+        engine.runStep1();
+        engine.runStep2(
+                msg -> host.logToConsole("MT5-OPT", msg),
+                progress,
+                host.optimizerOutputBaseDirectory(task));
+        List<CombinedPass> outputPasses = new ArrayList<>();
+        if (engine.getOptResult() != null) {
+            outputPasses = engine.getOptResult().buildCombinedPasses(
+                    engine.getForwardMode() > 0, engine.loadScoreWeightsFromDb());
+            stampOptimizerPasses(outputPasses, task);
+        }
+        return outputPasses;
+    }
+
+    private List<CombinedPass> runSequentialClusterOptimizers(WorkflowTask task,
+                                                              CustomProject project,
+                                                              List<CombinedPass> inputPasses,
+                                                              java.util.function.BiConsumer<Integer, Integer> progress)
+            throws Exception {
+        List<CombinedPass> live = ClusterAutomation.liveChampions(project, inputPasses);
+        List<CombinedPass> merged = new ArrayList<>();
+        if (project.getClusterCensus() == null) {
+            project.setClusterCensus(new ClusterCensus());
+        }
+        int total = live.size();
+        int index = 0;
+        int failedLines = 0;
+        for (CombinedPass champion : live) {
+            if (pipelineCancelled()) {
+                throw new InterruptedException(
+                        "Workflow abgebrochen während sequenzieller Cluster-Optimizer.");
+            }
+            index++;
+            String clusterId = ClusterIdentity.normalize(champion);
+            host.logToConsole("CLUSTER", "Optimizer '" + task.getName() + "' Linie " + clusterId
+                    + " (" + index + "/" + total + "), Basis Pass #" + champion.getPassNumber()
+                    + " — sequentiell, ein Terminal.");
+            try {
+                applyClusterOptimizerBasis(task, project, champion);
+                engine.runStep1();
+                engine.runStep2(
+                        msg -> host.logToConsole("MT5-OPT", clusterId + ": " + msg),
+                        progress,
+                        host.optimizerOutputBaseDirectory(task));
+                if (engine.getOptResult() != null) {
+                    List<CombinedPass> produced = engine.getOptResult().buildCombinedPasses(
+                            engine.getForwardMode() > 0, engine.loadScoreWeightsFromDb());
+                    stampOptimizerPasses(produced, task);
+                    ClusterAutomation.stampFixedClusterId(produced, clusterId);
+                    merged.addAll(produced);
+                }
+            } catch (InterruptedException ex) {
+                throw ex;
+            } catch (Exception ex) {
+                failedLines++;
+                String err = ex.getMessage() != null ? ex.getMessage() : ex.getClass().getSimpleName();
+                host.logToConsole("CLUSTER", "Linie " + clusterId + " fehlgeschlagen: " + err
+                        + " — bereits gerechnete Linien bleiben, restliche laufen weiter.");
+                logger.warn("Sequential cluster optimizer failed for {}", clusterId, ex);
+                ClusterAutomation.markDied(project.getClusterCensus(), clusterId,
+                        task.getName(), task.getTargetDatabank());
+            }
+        }
+        List<CombinedPass> kept = ClusterAutomation.applyOptimizerImproveOrDie(
+                project.getClusterCensus(),
+                task.getName(),
+                task.getTargetDatabank(),
+                live,
+                merged);
+        if (kept.isEmpty() && failedLines == total && total > 0) {
+            throw new WorkflowPauseException("Automatik angehalten: Alle "
+                    + total + " Cluster-Linien sind in '" + task.getName() + "' fehlgeschlagen.");
+        }
+        return kept;
+    }
+
+    private void applyClusterOptimizerBasis(WorkflowTask task,
+                                            CustomProject project,
+                                            CombinedPass champion) {
+        PassPresetResolver.Resolution resolution = PassPresetResolver.resolve(
+                champion, project != null ? project.getExpert() : engine.getExpert());
+        if (resolution.fidelity() == PassPresetResolver.Fidelity.CURRENT_CONFIG) {
+            throw new IllegalStateException("Cluster " + ClusterIdentity.normalize(champion)
+                    + ": Pass #" + champion.getPassNumber()
+                    + " hat kein archiviertes Lauf-Preset.");
+        }
+        GuidedOptimizationService.AdoptionResult result = GuidedOptimizationService.adoptPassParameters(
+                project, engine.getEaParameters(), resolution.parameters(), champion,
+                task.getSourceDatabank());
+        if (result.getNextOptimizer() != task) {
+            throw new IllegalStateException("Cluster-Optimizer zielte auf '"
+                    + result.getNextOptimizer().getName() + "' statt '" + task.getName() + "'.");
+        }
+        engine.setEaParameters(task.getOptimizerParameterSnapshot());
+        engine.applyOptimizerTaskParameters(task, false);
+        requireRuntimeMasterSearchSpace(task, result.getParameters());
     }
 
     /**

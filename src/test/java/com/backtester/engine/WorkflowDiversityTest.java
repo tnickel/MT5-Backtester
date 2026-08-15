@@ -320,6 +320,41 @@ public class WorkflowDiversityTest {
     }
 
     @Test
+    public void activityRankedClusteringPrefersMoreTradesOverHigherScore() {
+        WorkflowEngine engine = new WorkflowEngine(null);
+        Pass sleepyHighScore = createSelectionPass(1, 100, 80, 1.0);
+        sleepyHighScore.setParameter("entry", "10");
+        Pass activeLowScore = createSelectionPass(2, 90, 900, 1.0);
+        activeLowScore.setParameter("entry", "80");
+
+        List<CombinedPass> selected = engine.clusterDatabankPasses(List.of(
+                new CombinedPass(sleepyHighScore, null, 99.0, 1.0, ""),
+                new CombinedPass(activeLowScore, null, 10.0, 1.0, "")),
+                0.10, 0.15, 1, 1, false, List.of(), false, true);
+
+        assertEquals(1, selected.size());
+        assertEquals(2, selected.get(0).getPassNumber());
+    }
+
+    @Test
+    public void diversitySelectionDoesNotCapAtTenClusterIds() {
+        WorkflowEngine engine = new WorkflowEngine(null);
+        List<CombinedPass> source = new ArrayList<>();
+        for (int i = 1; i <= 12; i++) {
+            Pass pass = createSelectionPass(i, 100 + i, i * 1000, 1.0);
+            pass.setParameter("entry", String.valueOf(i * 1000));
+            source.add(new CombinedPass(pass, null, 50.0, 1.0, ""));
+        }
+
+        List<CombinedPass> selected = engine.clusterDatabankPasses(source, 0.10, 0.15, 1, 12);
+
+        assertTrue("Shortlist must not be capped at the 10 cluster ids: " + selected.size(),
+                selected.size() > 10);
+        assertTrue(selected.stream().allMatch(pass -> pass.getClusterId() == null
+                || pass.getClusterId().isBlank()));
+    }
+
+    @Test
     public void guidedV132DedupeIgnoresInactiveChildrenStringsCommentsAndMagic() {
         List<EaParameter> snapshot = new ArrayList<>();
         snapshot.add(parameter("Inp_Use_Adaptive_Spacing", "false", false));

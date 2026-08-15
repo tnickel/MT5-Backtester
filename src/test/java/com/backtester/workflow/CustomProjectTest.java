@@ -113,6 +113,24 @@ public class CustomProjectTest {
     }
 
     @Test
+    public void metadataPersistenceCopyKeepsClusterCensus() {
+        CustomProject project = new CustomProject("Guided", "EA", "AUDCAD", "M5");
+        ClusterCensus.ClusterLine line = new ClusterCensus.ClusterLine();
+        line.setClusterId("B1");
+        line.setLabel("Grid-eng");
+        line.setStatus(ClusterCensus.ClusterStatus.LIVE);
+        ClusterCensus census = new ClusterCensus();
+        census.setClusters(List.of(line));
+        project.setClusterCensus(census);
+
+        CustomProject copy = project.copyMetadataForPersistence();
+        copy.getClusterCensus().findLine("B1").setLabel("changed");
+
+        assertEquals("Grid-eng", project.getClusterCensus().findLine("B1").getLabel());
+        assertEquals("B1", copy.getClusterCensus().findLine("B1").getClusterId());
+    }
+
+    @Test
     public void testCloningToNewSymbolUpdatesTasksAndSanitizes() {
         CustomProject source = new CustomProject("ToTheMoon132 (AUDCAD)", "ToTheMoon_KI_v132", "AUDCAD", "M5");
         WorkflowTask task0 = new WorkflowTask("00 Strategie-Auswahl — ToTheMoon132 AUDCAD M5", WorkflowTask.TaskType.STRATEGY_SELECTION);
@@ -311,6 +329,7 @@ public class CustomProjectTest {
         assertFalse(selectable.contains(WorkflowTask.TaskType.LONGTERM_RETEST));
         assertFalse(selectable.contains(WorkflowTask.TaskType.OOS_VALIDATION));
         assertFalse(selectable.contains(WorkflowTask.TaskType.CUSTOM_SCRIPT));
+        assertFalse(selectable.contains(WorkflowTask.TaskType.MASTER_REFERENCE));
     }
 
     @Test

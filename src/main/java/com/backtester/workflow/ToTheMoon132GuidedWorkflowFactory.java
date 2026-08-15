@@ -21,13 +21,89 @@ public final class ToTheMoon132GuidedWorkflowFactory {
     public static final String OOS_FROM = "2025-08-02";
     public static final String FINAL_TO = "2026-08-01";
     public static final String DEVELOPMENT_TOP20_DATABANK = "g11_dev_top20";
+    public static final String GRID_QUALITY_DATABANK = "g01_grid_quality";
+    public static final String GRID_IS_OOS_DATABANK = "g01_grid_is_oos";
+    public static final String GRID_SHORTLIST_DATABANK = "g01_grid_shortlist";
+    public static final String GRID_TICK_DATABANK = "g01_grid_tick";
+    public static final String GRID_CLUSTER_DATABANK = "g01_grid_pick";
+    public static final int GRID_SHORTLIST_MAX_STRATEGIES = 100;
+    public static final int GRID_HALF_MIN_TRADES = 500;
+    public static final double GRID_HALF_MIN_PROFIT = 600;
+    public static final int GRID_TICK_MIN_TRADES = 400;
+    public static final double GRID_TICK_MIN_PROFIT = 200;
     private static final int DEVELOPMENT_TOP20_MIN_DIFFERENT_PARAMS = 2;
+    private static final int GRID_CLUSTER_MIN_DIFFERENT_PARAMS = 1;
 
-    private static final List<Stage> STAGES = List.of(
-            stage("01 Grid-Fundament", "g01_grid",
-                    range("Inp_Grid_Step", "550", "25", "900"),
-                    range("Inp_Step_Multiplier", "1.00", "0.05", "1.30"),
-                    range("Inp_Next_Lot_Multiplier", "1.10", "0.05", "1.50")),
+    private static final String PERIOD_H1 = "16385";
+    private static final Set<String> FORM_DISTANCE_NAMES = Set.of(
+            "Inp_Grid_Step", "Inp_Step_Multiplier", "Inp_Next_Lot_Multiplier", "Inp_TakeProfit",
+            "Inp_Envelopes_Period", "Inp_Envelopes_Deviation",
+            "Inp_Envelopes_Period_Lower", "Inp_Envelopes_Deviation_Lower");
+
+    /**
+     * Pair-aware search stages. g01 is one genetic pass over every trading knob
+     * (complex criterion, 1:1 forward). Later stages refine one section at a time
+     * so the B-cluster paths can be inspected. Envelope timeframes stay H1.
+     */
+    private static List<Stage> stagesFor(String symbol) {
+        List<Stage> sections = sectionStages();
+        Map<String, Range> first = new LinkedHashMap<>();
+        for (Range range : firstPassRanges(isJpyPair(symbol))) {
+            first.putIfAbsent(range.parameterName(), range);
+        }
+        for (Stage section : sections) {
+            for (Range range : section.ranges()) {
+                first.putIfAbsent(range.parameterName(), range);
+            }
+        }
+        List<Stage> stages = new ArrayList<>();
+        stages.add(new Stage("01 Grid-Fundament", "g01_grid", 2, List.copyOf(first.values())));
+        stages.addAll(sections);
+        return List.copyOf(stages);
+    }
+
+    private static List<Range> firstPassRanges(boolean jpy) {
+        List<Range> ranges = new ArrayList<>();
+        ranges.add(range("Inp_Grid_Step", jpy ? "1200" : "400", jpy ? "100" : "25", jpy ? "2500" : "900"));
+        ranges.add(range("Inp_Step_Multiplier", jpy ? "1.10" : "1.05", "0.05", jpy ? "1.40" : "1.35"));
+        ranges.add(range("Inp_Next_Lot_Multiplier", jpy ? "1.20" : "1.15", "0.05", jpy ? "1.60" : "1.45"));
+        ranges.add(range("Inp_TakeProfit", "40", "5", "80"));
+        ranges.add(range("Inp_Envelopes_Period", "8", "2", "20"));
+        ranges.add(range("Inp_Envelopes_Deviation", "0.08", "0.01", "0.40"));
+        ranges.add(range("Inp_Envelopes_Period_Lower", "10", "2", "24"));
+        ranges.add(range("Inp_Envelopes_Deviation_Lower", "0.10", "0.01", "0.50"));
+        ranges.add(range("Inp_Use_Trend_Filter", "false", "1", "true"));
+        ranges.add(range("Inp_Trend_EMA_Period", "100", "25", "400"));
+        ranges.add(range("Inp_Use_RSI_Filter", "false", "1", "true"));
+        ranges.add(range("Inp_RSI_Period", "7", "2", "31"));
+        ranges.add(range("Inp_RSI_Oversold", "15", "2.5", "35"));
+        ranges.add(range("Inp_RSI_Overbought", "65", "2.5", "85"));
+        ranges.add(range("Inp_Use_ER_Filter", "false", "1", "true"));
+        ranges.add(range("Inp_ER_Period", "5", "1", "20"));
+        ranges.add(timeframeRange("Inp_ER_Timeframe"));
+        ranges.add(range("Inp_ER_Max_Level", "0.10", "0.05", "0.60"));
+        ranges.add(range("Inp_Use_D1_Trend_Filter", "false", "1", "true"));
+        ranges.add(range("Inp_D1_Trend_EMA_Period", "50", "25", "300"));
+        ranges.add(range("Inp_Use_BreakEven", "false", "1", "true"));
+        ranges.add(range("Inp_BE_Trigger_Points", "50", "25", "300"));
+        ranges.add(range("Inp_BE_Points", "10", "10", "100"));
+        ranges.add(range("Inp_Max_DD_Percent", "10", "5", "50"));
+        ranges.add(range("Inp_Halt_After_DD_Stop", "false", "1", "true"));
+        ranges.add(range("Inp_Use_Trailing_TP", "false", "1", "true"));
+        ranges.add(range("Inp_Use_Midline_TP", "false", "1", "true"));
+        ranges.add(range("Inp_Use_ATR_TP", "false", "1", "true"));
+        ranges.add(range("Inp_ATR_TP_Multiplier", "0.3", "0.1", "1.0"));
+        ranges.add(range("Inp_Stale_Basket_Hours", "0", "6", "30"));
+        ranges.add(range("Inp_Soft_DD_Percent", "0", "3", "12"));
+        ranges.add(range("Inp_Deep_Basket_Level", "0", "1", "6"));
+        ranges.add(range("Inp_Deep_Basket_BE_Points", "5", "5", "25"));
+        ranges.add(range("Inp_Use_VIX_Filter", "false", "1", "true"));
+        ranges.add(range("Inp_VIX_Max_Level", "15", "2.5", "50"));
+        return ranges;
+    }
+
+    private static List<Stage> sectionStages() {
+        return List.of(
             stage("02 Order-Taktung", "g02_cadence",
                     range("Min_Profit", "3", "1", "9"),
                     range("Inp_Wait_Open_Equal_Orders", "20", "5", "50"),
@@ -35,17 +111,13 @@ public final class ToTheMoon132GuidedWorkflowFactory {
                     range("Inp_Start_Wait_Next_Lot", "1", "1", "3"),
                     range("Inp_Stop_Wait_Next_Lot", "80", "10", "120")),
             geneticStage("03 Envelopes oben", "g03_env_upper",
-                    timeframeRange("TimeFrame_Envelopes"),
-                    range("Inp_Envelopes_Period", "3", "1", "15"),
-                    // iEnvelopes expects percentage points. Keep the shipped v132
-                    // domain so an incumbent such as 1.47 % remains reproducible.
-                    range("Inp_Envelopes_Deviation", "0.01", "0.01", "1.70"),
+                    range("Inp_Envelopes_Period", "8", "2", "20"),
+                    range("Inp_Envelopes_Deviation", "0.08", "0.01", "0.40"),
                     range("Envelopes_Method", "0", "1", "3"),
                     range("Envelopes_Price", "1", "1", "7")),
             geneticStage("04 Envelopes unten", "g04_env_lower",
-                    timeframeRange("TimeFrame_Envelopes_Lower"),
-                    range("Inp_Envelopes_Period_Lower", "9", "2", "41"),
-                    range("Inp_Envelopes_Deviation_Lower", "0.01", "0.01", "2.00"),
+                    range("Inp_Envelopes_Period_Lower", "10", "2", "24"),
+                    range("Inp_Envelopes_Deviation_Lower", "0.10", "0.01", "0.50"),
                     range("Envelopes_Method_Lower", "0", "1", "3"),
                     range("Envelopes_Price_Lower", "1", "1", "7")),
             stage("05 ADX-Regime", "g05_adx",
@@ -85,8 +157,8 @@ public final class ToTheMoon132GuidedWorkflowFactory {
                     range("Inp_Use_Escalation_Block", "false", "1", "true"),
                     range("Inp_Esc_Lookback_Bars", "3", "1", "9"),
                     range("Inp_Esc_ADX_Rise", "1.5", "0.5", "4.5"),
-                    range("Inp_Use_Session_Filter", "false", "1", "true"))
-    );
+                    range("Inp_Use_Session_Filter", "false", "1", "true")));
+    }
 
     private ToTheMoon132GuidedWorkflowFactory() {
     }
@@ -102,67 +174,16 @@ public final class ToTheMoon132GuidedWorkflowFactory {
                                        String period,
                                        List<EaParameter> provenPreset,
                                        Path optimizerReportsRoot) {
-        if (provenPreset == null || provenPreset.isEmpty()) {
-            throw new IllegalArgumentException("Das bewährte ToTheMoon132-Preset ist leer.");
-        }
-        Map<String, EaParameter> baseByName = indexParameters(provenPreset);
-        validateRequiredParameters(baseByName);
-
         String sym = symbol != null && !symbol.isBlank() ? symbol.trim() : "AUDCAD";
         String per = period != null && !period.isBlank() ? period.trim() : "M5";
 
         CustomProject project = new CustomProject(projectName, "ToTheMoon_KI_v132", sym, per);
         project.setSaveDatabanksPersistently(true);
 
-        WorkflowTask selection = new WorkflowTask("00 Strategie-Auswahl — ToTheMoon132 " + sym + " " + per,
-                WorkflowTask.TaskType.STRATEGY_SELECTION);
-        configureMarket(selection, sym, per, DEVELOPMENT_FROM, DEVELOPMENT_TO, WorkflowTask.MODE_OHLC_M1);
-        selection.setSourceDatabank(DatabankManager.RESULTS);
-        selection.setTargetDatabank(DatabankManager.RESULTS);
-        project.addTask(selection);
+        String previousPick = appendSearchChain(project, provenPreset, optimizerReportsRoot);
 
-        String previousPick = DatabankManager.RESULTS;
-        for (int i = 0; i < STAGES.size(); i++) {
-            Stage stage = STAGES.get(i);
-            WorkflowTask optimizer = new WorkflowTask(stage.name + " — Optimizer", WorkflowTask.TaskType.OPTIMIZER);
-            configureMarket(optimizer, sym, per, DEVELOPMENT_FROM, DEVELOPMENT_TO, WorkflowTask.MODE_OHLC_M1);
-            optimizer.setSourceDatabank(previousPick);
-            optimizer.setTargetDatabank(stage.databankPrefix + "_raw");
-            optimizer.setOptimizerMode(stage.optimizerMode);
-            optimizer.setOptimizerCriterion(7); // MT5 complex criterion includes sample size and risk.
-            optimizer.setOptimizerForwardMode(1);
-            java.time.LocalDate fwdStart = com.backtester.engine.ForwardSplit.computeForwardStartDate(
-                    java.time.LocalDate.parse(DEVELOPMENT_FROM), java.time.LocalDate.parse(DEVELOPMENT_TO), 1, null);
-            optimizer.setOptimizerForwardDate(fwdStart != null ? fwdStart.toString() : FORWARD_FROM);
-            optimizer.setDeleteFailed(false);
-            if (optimizerReportsRoot != null) {
-                optimizer.setOptimizerOutputDirectory(
-                        optimizerReportsRoot.resolve(stage.databankPrefix).toAbsolutePath().normalize().toString());
-            }
-            optimizer.setOptimizerTargetParameters(stage.targetNames());
-            optimizer.setOptimizerParameterSnapshot(buildStageSnapshot(provenPreset, stage));
-            optimizer.setOptimizerParameterBasisAdopted(false);
-            optimizer.setOptimizerParameterBasisPassNumber(-1);
-            optimizer.setOptimizerParameterBasisDatabank("");
-            project.addTask(optimizer);
-
-            WorkflowTask filter = new WorkflowTask(stage.name + " — Trade/Qualitätsfilter",
-                    WorkflowTask.TaskType.PRE_FILTER);
-            configureMarket(filter, sym, per, DEVELOPMENT_FROM, DEVELOPMENT_TO, WorkflowTask.MODE_OHLC_M1);
-            filter.setSourceDatabank(stage.databankPrefix + "_raw");
-            filter.setTargetDatabank(stage.databankPrefix + "_pick");
-            filter.setDeleteFailed(true);
-            filter.setFilterConditions(i == STAGES.size() - 1
-                    ? strictDevelopmentFilters(sym) : developmentFilters(sym));
-            project.addTask(filter);
-            previousPick = stage.databankPrefix + "_pick";
-        }
-
-        WorkflowTask finalOptimizer = project.getTasks().stream()
-                .filter(task -> task.getType() == WorkflowTask.TaskType.OPTIMIZER)
-                .reduce((first, second) -> second).orElseThrow();
         WorkflowTask developmentTop20 = createDevelopmentTop20Task(
-                previousPick, finalOptimizer.getOptimizerParameterSnapshot(), sym, per);
+                previousPick, formDistanceSnapshot(project), sym, per);
         project.addTask(developmentTop20);
         previousPick = DEVELOPMENT_TOP20_DATABANK;
 
@@ -182,6 +203,104 @@ public final class ToTheMoon132GuidedWorkflowFactory {
         project.addTask(finalPublication);
 
         return project;
+    }
+
+    /**
+     * Selection plus the 11 M1-OHLC optimizer stages. MT5 ranks by complex
+     * criterion; the PRE_FILTER tasks only forward the raw databank.
+     *
+     * @return last pick databank, currently {@code g11_safety_pick}
+     */
+    public static String appendSearchChain(CustomProject project,
+                                           List<EaParameter> provenPreset,
+                                           Path optimizerReportsRoot) {
+        return appendSearchChain(project, provenPreset, optimizerReportsRoot, false);
+    }
+
+    /**
+     * Selection plus the 11 M1-OHLC optimizer stages. MT5 ranks by complex
+     * criterion; the PRE_FILTER tasks only forward the raw databank.
+     *
+     * @param insertMasterReferences when true, a {@code MASTER_REFERENCE} checkpoint
+     *        follows each stage pick so the master lineage is filled after every
+     *        optimization without waiting for the next optimizer's hand-pick
+     * @return last pick databank, currently {@code g11_safety_pick}
+     */
+    public static String appendSearchChain(CustomProject project,
+                                           List<EaParameter> provenPreset,
+                                           Path optimizerReportsRoot,
+                                           boolean insertMasterReferences) {
+        if (project == null) {
+            throw new IllegalArgumentException("Projekt fehlt.");
+        }
+        if (provenPreset == null || provenPreset.isEmpty()) {
+            throw new IllegalArgumentException("Das bewährte ToTheMoon132-Preset ist leer.");
+        }
+
+        String sym = project.getSymbol() != null && !project.getSymbol().isBlank()
+                ? project.getSymbol().trim() : "AUDCAD";
+        String per = project.getPeriod() != null && !project.getPeriod().isBlank()
+                ? project.getPeriod().trim() : "M5";
+        List<Stage> stages = stagesFor(sym);
+        List<EaParameter> workingPreset = applyArchitectureBaseline(provenPreset, sym);
+        if (project.getProvenMasterParameters() == null || project.getProvenMasterParameters().isEmpty()) {
+            project.setProvenMasterParameters(workingPreset);
+        }
+        validateRequiredParameters(indexParameters(workingPreset), stages);
+
+        WorkflowTask selection = new WorkflowTask("00 Strategie-Auswahl — ToTheMoon132 " + sym + " " + per,
+                WorkflowTask.TaskType.STRATEGY_SELECTION);
+        configureMarket(selection, sym, per, DEVELOPMENT_FROM, DEVELOPMENT_TO, WorkflowTask.MODE_OHLC_M1);
+        selection.setSourceDatabank(DatabankManager.RESULTS);
+        selection.setTargetDatabank(DatabankManager.RESULTS);
+        project.addTask(selection);
+
+        String previousPick = DatabankManager.RESULTS;
+        for (int i = 0; i < stages.size(); i++) {
+            Stage stage = stages.get(i);
+            WorkflowTask optimizer = new WorkflowTask(stage.name + " — Optimizer", WorkflowTask.TaskType.OPTIMIZER);
+            configureMarket(optimizer, sym, per, DEVELOPMENT_FROM, DEVELOPMENT_TO, WorkflowTask.MODE_OHLC_M1);
+            optimizer.setSourceDatabank(previousPick);
+            optimizer.setTargetDatabank(stage.databankPrefix + "_raw");
+            optimizer.setOptimizerMode(stage.optimizerMode);
+            optimizer.setOptimizerCriterion(7); // MetaQuotes complex criterion (equity, risk, sample).
+            optimizer.setOptimizerForwardMode(1); // 1:1 = last half is forward.
+            java.time.LocalDate fwdStart = com.backtester.engine.ForwardSplit.computeForwardStartDate(
+                    java.time.LocalDate.parse(DEVELOPMENT_FROM), java.time.LocalDate.parse(DEVELOPMENT_TO), 1, null);
+            optimizer.setOptimizerForwardDate(fwdStart != null ? fwdStart.toString() : FORWARD_FROM);
+            optimizer.setDeleteFailed(false);
+            if (optimizerReportsRoot != null) {
+                optimizer.setOptimizerOutputDirectory(
+                        optimizerReportsRoot.resolve(stage.databankPrefix).toAbsolutePath().normalize().toString());
+            }
+            optimizer.setOptimizerTargetParameters(stage.targetNames());
+            optimizer.setOptimizerParameterSnapshot(buildStageSnapshot(workingPreset, stage));
+            optimizer.setOptimizerParameterBasisAdopted(false);
+            optimizer.setOptimizerParameterBasisPassNumber(-1);
+            optimizer.setOptimizerParameterBasisDatabank("");
+            project.addTask(optimizer);
+
+            WorkflowTask filter = new WorkflowTask(stage.name + " — Trade/Qualitätsfilter",
+                    WorkflowTask.TaskType.PRE_FILTER);
+            configureMarket(filter, sym, per, DEVELOPMENT_FROM, DEVELOPMENT_TO, WorkflowTask.MODE_OHLC_M1);
+            filter.setSourceDatabank(stage.databankPrefix + "_raw");
+            boolean firstGridStage = i == 0;
+            filter.setTargetDatabank(firstGridStage ? GRID_QUALITY_DATABANK : stage.databankPrefix + "_pick");
+            filter.setDeleteFailed(true);
+            filter.setFilterConditions(List.of());
+            project.addTask(filter);
+            if (firstGridStage) {
+                project.addTask(createGridIsOosFilter(sym, per));
+                project.addTask(createGridShortlistDiversityTask(optimizer, sym, per));
+                project.addTask(createGridTickGateTask(optimizer, sym, per));
+                project.addTask(createGridClusterDiversityTask(optimizer, sym, per));
+            }
+            if (insertMasterReferences) {
+                project.addTask(createMasterReferenceTask(stage, sym, per));
+            }
+            previousPick = stage.databankPrefix + "_pick";
+        }
+        return previousPick;
     }
 
     /**
@@ -206,7 +325,7 @@ public final class ToTheMoon132GuidedWorkflowFactory {
                                                             List<EaParameter> comparisonParameters,
                                                             String symbol,
                                                             String period) {
-        WorkflowTask task = new WorkflowTask("12 Top-20 nach Score & Diversität",
+        WorkflowTask task = new WorkflowTask("12 Re-Diversität der Überlebenden (B-Cluster)",
                 WorkflowTask.TaskType.DIVERSITY_FILTER);
         configureMarket(task, symbol, period,
                 DEVELOPMENT_FROM, DEVELOPMENT_TO, WorkflowTask.MODE_OHLC_M1);
@@ -216,13 +335,152 @@ public final class ToTheMoon132GuidedWorkflowFactory {
         task.setDiversityDeduplicateEffectiveV132(true);
         task.setDiversityParamDiffPct(WorkflowTask.DEFAULT_DIVERSITY_PARAM_DIFF_PCT);
         task.setDiversityTradeDiffPct(WorkflowTask.DEFAULT_DIVERSITY_TRADE_DIFF_PCT);
-        // Stage 11 varies six parameters. With identical performance plateaus,
-        // the engine treats <= min as similar; two therefore requires at least
-        // three materially different stage parameters and yields 20 candidates
-        // for the persisted AUDCAD data instead of only nine with the global default.
         task.setDiversityMinDifferentParams(DEVELOPMENT_TOP20_MIN_DIFFERENT_PARAMS);
-        task.setDiversityMaxStrategies(WorkflowTask.DEFAULT_DIVERSITY_MAX_STRATEGIES);
+        task.setDiversityMaxStrategies(ClusterIdentity.MAX_CLUSTERS);
         task.setDiversityParameterSnapshot(comparisonParameters);
+        task.setDeleteFailed(true);
+        return task;
+    }
+
+    /**
+     * Form-distance snapshot: only grid + envelope bands, even when g01 searches
+     * every knob. Existing {@code clusterId} values are kept by {@link ClusterIdentity}.
+     */
+    static List<EaParameter> formDistanceSnapshot(CustomProject project) {
+        WorkflowTask grid = findOptimizerByStagePrefix(project, "01 Grid-Fundament");
+        if (grid == null) {
+            return List.of();
+        }
+        Map<String, EaParameter> byName = new LinkedHashMap<>();
+        for (EaParameter parameter : formParametersFrom(grid.getOptimizerParameterSnapshot())) {
+            byName.put(parameter.getName(), parameter);
+        }
+        mergeOptimizeEnabled(byName, findOptimizerByStagePrefix(project, "03 Envelopes oben"));
+        mergeOptimizeEnabled(byName, findOptimizerByStagePrefix(project, "04 Envelopes unten"));
+        for (EaParameter parameter : byName.values()) {
+            if (parameter != null && !FORM_DISTANCE_NAMES.contains(parameter.getName())) {
+                parameter.setOptimizeEnabled(false);
+            }
+        }
+        return new ArrayList<>(byName.values());
+    }
+
+    private static List<EaParameter> formParametersFrom(List<EaParameter> snapshot) {
+        List<EaParameter> result = new ArrayList<>();
+        if (snapshot == null) return result;
+        for (EaParameter parameter : snapshot) {
+            if (parameter == null) continue;
+            EaParameter copy = parameter.copy();
+            copy.setOptimizeEnabled(FORM_DISTANCE_NAMES.contains(copy.getName()));
+            result.add(copy);
+        }
+        return result;
+    }
+
+    private static void mergeOptimizeEnabled(Map<String, EaParameter> byName, WorkflowTask optimizer) {
+        if (optimizer == null) return;
+        for (EaParameter source : optimizer.getOptimizerParameterSnapshot()) {
+            if (source == null || !source.isOptimizeEnabled()) continue;
+            EaParameter target = byName.get(source.getName());
+            if (target == null) {
+                byName.put(source.getName(), source.copy());
+                continue;
+            }
+            target.setOptimizeEnabled(true);
+            target.setOptimizeStart(source.getOptimizeStart());
+            target.setOptimizeStep(source.getOptimizeStep());
+            target.setOptimizeEnd(source.getOptimizeEnd());
+        }
+    }
+
+    private static WorkflowTask findOptimizerByStagePrefix(CustomProject project, String stagePrefix) {
+        if (project == null || stagePrefix == null) return null;
+        return project.getTasks().stream()
+                .filter(task -> task.getType() == WorkflowTask.TaskType.OPTIMIZER)
+                .filter(task -> task.getName() != null && task.getName().startsWith(stagePrefix))
+                .findFirst()
+                .orElse(null);
+    }
+
+    private static WorkflowTask createGridIsOosFilter(String symbol, String period) {
+        WorkflowTask task = new WorkflowTask("01 Grid-Fundament — IS/OOS-Konsistenz (1:1)",
+                WorkflowTask.TaskType.PRE_FILTER);
+        configureMarket(task, symbol, period, DEVELOPMENT_FROM, DEVELOPMENT_TO, WorkflowTask.MODE_OHLC_M1);
+        task.setSourceDatabank(GRID_QUALITY_DATABANK);
+        task.setTargetDatabank(GRID_IS_OOS_DATABANK);
+        task.setDeleteFailed(true);
+        task.setFilterConditions(List.of(
+                condition(FilterCondition.Metric.BT_NET_PROFIT, FilterCondition.Operator.GREATER_EQUAL, GRID_HALF_MIN_PROFIT),
+                condition(FilterCondition.Metric.FW_NET_PROFIT, FilterCondition.Operator.GREATER_EQUAL, GRID_HALF_MIN_PROFIT),
+                condition(FilterCondition.Metric.BT_TOTAL_TRADES, FilterCondition.Operator.GREATER_EQUAL, GRID_HALF_MIN_TRADES),
+                condition(FilterCondition.Metric.FW_TOTAL_TRADES, FilterCondition.Operator.GREATER_EQUAL, GRID_HALF_MIN_TRADES)));
+        return task;
+    }
+
+    private static WorkflowTask createGridShortlistDiversityTask(WorkflowTask gridOptimizer,
+                                                                 String symbol,
+                                                                 String period) {
+        WorkflowTask task = new WorkflowTask("01 Grid-Fundament — Diversität (Shortlist 100)",
+                WorkflowTask.TaskType.DIVERSITY_FILTER);
+        configureMarket(task, symbol, period, DEVELOPMENT_FROM, DEVELOPMENT_TO, WorkflowTask.MODE_OHLC_M1);
+        task.setSourceDatabank(GRID_IS_OOS_DATABANK);
+        task.setTargetDatabank(GRID_SHORTLIST_DATABANK);
+        task.setDiversityRankByScore(true);
+        task.setDiversityRankByActivity(false);
+        task.setDiversityDeduplicateEffectiveV132(true);
+        task.setDiversityParamDiffPct(WorkflowTask.DEFAULT_DIVERSITY_PARAM_DIFF_PCT);
+        task.setDiversityTradeDiffPct(WorkflowTask.DEFAULT_DIVERSITY_TRADE_DIFF_PCT);
+        task.setDiversityMinDifferentParams(GRID_CLUSTER_MIN_DIFFERENT_PARAMS);
+        task.setDiversityMaxStrategies(GRID_SHORTLIST_MAX_STRATEGIES);
+        task.setDiversityStampClusterIds(false);
+        task.setDiversityParameterSnapshot(gridOptimizer != null
+                ? formParametersFrom(gridOptimizer.getOptimizerParameterSnapshot())
+                : List.of());
+        task.setDeleteFailed(true);
+        return task;
+    }
+
+    private static WorkflowTask createGridTickGateTask(WorkflowTask gridOptimizer,
+                                                       String symbol,
+                                                       String period) {
+        WorkflowTask task = new WorkflowTask(
+                "01 Grid-Fundament — Tick-Gate (Every Tick, 1:1)",
+                WorkflowTask.TaskType.RETESTER);
+        configureMarket(task, symbol, period, DEVELOPMENT_FROM, DEVELOPMENT_TO, WorkflowTask.MODE_EVERY_TICK);
+        task.setSourceDatabank(GRID_SHORTLIST_DATABANK);
+        task.setTargetDatabank(GRID_TICK_DATABANK);
+        task.setOptimizerForwardMode(1);
+        java.time.LocalDate fwdStart = com.backtester.engine.ForwardSplit.computeForwardStartDate(
+                java.time.LocalDate.parse(DEVELOPMENT_FROM), java.time.LocalDate.parse(DEVELOPMENT_TO), 1, null);
+        task.setOptimizerForwardDate(fwdStart != null
+                ? fwdStart.toString()
+                : (gridOptimizer != null ? gridOptimizer.getOptimizerForwardDate() : FORWARD_FROM));
+        task.setDeleteFailed(true);
+        // OHLC BT/FW stay on the pass; longterm is the combined tick 1:1 result.
+        task.setFilterConditions(List.of(
+                condition(FilterCondition.Metric.LT_NET_PROFIT, FilterCondition.Operator.GREATER_EQUAL, GRID_TICK_MIN_PROFIT),
+                condition(FilterCondition.Metric.LT_TOTAL_TRADES, FilterCondition.Operator.GREATER_EQUAL, GRID_TICK_MIN_TRADES)));
+        return task;
+    }
+
+    private static WorkflowTask createGridClusterDiversityTask(WorkflowTask gridOptimizer,
+                                                               String symbol,
+                                                               String period) {
+        WorkflowTask task = new WorkflowTask("01 Grid-Fundament — Diversität (B-Cluster)",
+                WorkflowTask.TaskType.DIVERSITY_FILTER);
+        configureMarket(task, symbol, period,
+                DEVELOPMENT_FROM, DEVELOPMENT_TO, WorkflowTask.MODE_OHLC_M1);
+        task.setSourceDatabank(GRID_TICK_DATABANK);
+        task.setTargetDatabank(GRID_CLUSTER_DATABANK);
+        task.setDiversityRankByScore(true);
+        task.setDiversityDeduplicateEffectiveV132(true);
+        task.setDiversityParamDiffPct(WorkflowTask.DEFAULT_DIVERSITY_PARAM_DIFF_PCT);
+        task.setDiversityTradeDiffPct(WorkflowTask.DEFAULT_DIVERSITY_TRADE_DIFF_PCT);
+        task.setDiversityMinDifferentParams(GRID_CLUSTER_MIN_DIFFERENT_PARAMS);
+        task.setDiversityMaxStrategies(ClusterIdentity.MAX_CLUSTERS);
+        task.setDiversityParameterSnapshot(gridOptimizer != null
+                ? formParametersFrom(gridOptimizer.getOptimizerParameterSnapshot())
+                : List.of());
         task.setDeleteFailed(true);
         return task;
     }
@@ -286,8 +544,12 @@ public final class ToTheMoon132GuidedWorkflowFactory {
     }
 
     public static Map<String, List<String>> stageTargetParameters() {
+        return stageTargetParameters("");
+    }
+
+    public static Map<String, List<String>> stageTargetParameters(String symbol) {
         Map<String, List<String>> result = new LinkedHashMap<>();
-        for (Stage stage : STAGES) result.put(stage.name, stage.targetNames());
+        for (Stage stage : stagesFor(symbol)) result.put(stage.name, stage.targetNames());
         return result;
     }
 
@@ -319,6 +581,17 @@ public final class ToTheMoon132GuidedWorkflowFactory {
         return Optional.empty();
     }
 
+    private static WorkflowTask createMasterReferenceTask(Stage stage, String symbol, String period) {
+        WorkflowTask task = new WorkflowTask(stage.name + " — Master-Referenz (OHLC 3J)",
+                WorkflowTask.TaskType.MASTER_REFERENCE);
+        configureMarket(task, symbol, period, DEVELOPMENT_FROM, DEVELOPMENT_TO, WorkflowTask.MODE_OHLC_M1);
+        task.setSourceDatabank(stage.databankPrefix + "_pick");
+        task.setTargetDatabank(stage.databankPrefix + "_master");
+        task.setDeleteFailed(true);
+        task.setFilterConditions(List.of());
+        return task;
+    }
+
     private static void configureMarket(WorkflowTask task, String symbol, String period, String from, String to, int executionMode) {
         task.setStartDate(from);
         task.setEndDate(to);
@@ -327,36 +600,6 @@ public final class ToTheMoon132GuidedWorkflowFactory {
         task.setExecutionMode(executionMode);
         task.setStatus(WorkflowTask.TaskStatus.PENDING);
         task.setLastExecutionLog("");
-    }
-
-    private static List<FilterCondition> developmentFilters() {
-        return developmentFilters("");
-    }
-
-    private static List<FilterCondition> strictDevelopmentFilters() {
-        return strictDevelopmentFilters("");
-    }
-
-    private static List<FilterCondition> developmentFilters(String symbol) {
-        double minNetProfit = "GBPJPY".equalsIgnoreCase(symbol) ? 500.0 : 0.0;
-        return List.of(
-                condition(FilterCondition.Metric.BT_NET_PROFIT, FilterCondition.Operator.GREATER_THAN, minNetProfit),
-                condition(FilterCondition.Metric.FW_NET_PROFIT, FilterCondition.Operator.GREATER_THAN, minNetProfit),
-                condition(FilterCondition.Metric.BT_TOTAL_TRADES, FilterCondition.Operator.GREATER_EQUAL, 750),
-                condition(FilterCondition.Metric.FW_TOTAL_TRADES, FilterCondition.Operator.GREATER_EQUAL, 300),
-                condition(FilterCondition.Metric.BT_PROFIT_FACTOR, FilterCondition.Operator.GREATER_EQUAL, 1.20),
-                condition(FilterCondition.Metric.FW_PROFIT_FACTOR, FilterCondition.Operator.GREATER_EQUAL, 1.15),
-                condition(FilterCondition.Metric.BT_MAX_DD_PERCENT, FilterCondition.Operator.LESS_EQUAL, 12),
-                condition(FilterCondition.Metric.FW_MAX_DD_PERCENT, FilterCondition.Operator.LESS_EQUAL, 12));
-    }
-
-    private static List<FilterCondition> strictDevelopmentFilters(String symbol) {
-        List<FilterCondition> filters = new ArrayList<>(developmentFilters(symbol));
-        filters.add(condition(FilterCondition.Metric.BT_RECOVERY_FACTOR,
-                FilterCondition.Operator.GREATER_EQUAL, 1.5));
-        filters.add(condition(FilterCondition.Metric.FW_RECOVERY_FACTOR,
-                FilterCondition.Operator.GREATER_EQUAL, 1.0));
-        return filters;
     }
 
     private static FilterCondition condition(FilterCondition.Metric metric,
@@ -406,9 +649,9 @@ public final class ToTheMoon132GuidedWorkflowFactory {
         return result;
     }
 
-    private static void validateRequiredParameters(Map<String, EaParameter> baseByName) {
+    private static void validateRequiredParameters(Map<String, EaParameter> baseByName, List<Stage> stages) {
         List<String> missing = new ArrayList<>();
-        for (Stage stage : STAGES) {
+        for (Stage stage : stages) {
             for (Range range : stage.ranges) {
                 EaParameter parameter = baseByName.get(range.parameterName);
                 if (parameter == null || parameter.isSectionHeader() || parameter.isStringType()) {
@@ -420,6 +663,106 @@ public final class ToTheMoon132GuidedWorkflowFactory {
             throw new IllegalArgumentException("Im ToTheMoon132-Preset fehlen Zielparameter: "
                     + String.join(", ", missing));
         }
+    }
+
+    /**
+     * Rewrites a poison seed (M1 envelopes, 0.01 % deviation, trend off, pair-wrong
+     * grid) onto the ToTheMoon architecture before any stage snapshot is built.
+     */
+    static List<EaParameter> applyArchitectureBaseline(List<EaParameter> source, String symbol) {
+        List<EaParameter> copy = new ArrayList<>();
+        if (source == null) return copy;
+        for (EaParameter parameter : source) {
+            copy.add(parameter == null ? null : parameter.copy());
+        }
+        Map<String, EaParameter> byName = indexParameters(copy);
+        boolean jpy = isJpyPair(symbol);
+
+        setFixed(byName, "TimeFrame_Envelopes", PERIOD_H1);
+        setFixed(byName, "TimeFrame_Envelopes_Lower", PERIOD_H1);
+        setFixed(byName, "Values_Envelopes_Lower", "1");
+        setFixed(byName, "Envelopes_Method", "0");
+        setFixed(byName, "Envelopes_Price", "1");
+        setFixed(byName, "Envelopes_Method_Lower", "0");
+        setFixed(byName, "Envelopes_Price_Lower", "4");
+        setFixed(byName, "Inp_Use_Trend_Filter", "true");
+        setFixed(byName, "Inp_Trend_EMA_Period", "250");
+
+        clampOrDefault(byName, "Inp_Envelopes_Period", 8, 20, 14);
+        clampOrDefault(byName, "Inp_Envelopes_Period_Lower", 10, 24, 20);
+        clampOrDefault(byName, "Inp_Envelopes_Deviation", 0.08, 0.40, jpy ? 0.30 : 0.17);
+        clampOrDefault(byName, "Inp_Envelopes_Deviation_Lower", 0.10, 0.50, jpy ? 0.45 : 0.29);
+        clampOrDefault(byName, "Inp_Grid_Step", jpy ? 1200 : 400, jpy ? 2500 : 900, jpy ? 2000 : 600);
+        clampOrDefault(byName, "Inp_Step_Multiplier", jpy ? 1.10 : 1.05, jpy ? 1.40 : 1.35, jpy ? 1.30 : 1.15);
+        clampOrDefault(byName, "Inp_Next_Lot_Multiplier", jpy ? 1.20 : 1.15, jpy ? 1.60 : 1.45, jpy ? 1.60 : 1.20);
+        clampOrDefault(byName, "Inp_TakeProfit", 40, 80, 50);
+        clampOrDefault(byName, "Inp_Trend_EMA_Period", 100, 400, 250);
+        clampOrDefault(byName, "Inp_RSI_Period", 7, 31, 21);
+        clampOrDefault(byName, "Inp_RSI_Oversold", 15, 35, 23.6);
+        clampOrDefault(byName, "Inp_RSI_Overbought", 65, 85, 69.7);
+        clampOrDefault(byName, "Inp_ER_Period", 5, 20, 10);
+        clampOrDefault(byName, "Inp_ER_Max_Level", 0.10, 0.60, 0.30);
+        clampOrDefault(byName, "Inp_D1_Trend_EMA_Period", 50, 300, 150);
+        clampOrDefault(byName, "Inp_BE_Trigger_Points", 50, 300, 150);
+        clampOrDefault(byName, "Inp_BE_Points", 10, 100, 30);
+        clampOrDefault(byName, "Inp_Max_DD_Percent", 10, 50, 30);
+        clampOrDefault(byName, "Inp_ATR_TP_Multiplier", 0.3, 1.0, 0.5);
+        clampOrDefault(byName, "Inp_Deep_Basket_BE_Points", 5, 25, 10);
+        clampOrDefault(byName, "Inp_VIX_Max_Level", 15, 50, 30);
+        clampOrDefault(byName, "Min_Profit", 3, 9, 5);
+        clampOrDefault(byName, "Inp_Wait_Open_Equal_Orders", 20, 50, 30);
+        clampOrDefault(byName, "Inp_Wait_Next_Lot", 420, 780, 600);
+        clampOrDefault(byName, "Inp_Stop_Wait_Next_Lot", 80, 120, 100);
+        clampOrDefault(byName, "Inp_ADX_Period", 9, 31, 14);
+        clampOrDefault(byName, "Inp_ADX_Max_Level", 30, 50, 30);
+        clampOrDefault(byName, "Inp_ATR_Period", 5, 19, 10);
+        clampOrDefault(byName, "Inp_ATR_Multiplier", 1.3, 2.9, 1.5);
+        clampOrDefault(byName, "Inp_Vol_ATR_Period", 10, 24, 10);
+        clampOrDefault(byName, "Inp_Vol_ATR_Max_Multiplier", 1.1, 2.0, 1.5);
+        clampOrDefault(byName, "Inp_Max_Grid_Levels", 8, 16, 12);
+        clampOrDefault(byName, "Inp_Emergency_SL_Buffer_Percent", 0.5, 2.0, 1.0);
+        clampOrDefault(byName, "Inp_Max_Entry_Excursion_Points", 100, 300, 100);
+        clampOrDefault(byName, "Inp_Trail_Start_Points", 60, 160, 100);
+        clampOrDefault(byName, "Inp_Trail_Step_Points", 3, 15, 5);
+        clampOrDefault(byName, "Inp_Adaptive_ADX_Ref", 20, 40, 25);
+        clampOrDefault(byName, "Inp_Adaptive_Max_Widen", 1.25, 2.75, 2.0);
+        clampOrDefault(byName, "Inp_Esc_Lookback_Bars", 3, 9, 6);
+        clampOrDefault(byName, "Inp_Esc_ADX_Rise", 1.5, 4.5, 3.0);
+        return copy;
+    }
+
+    private static boolean isJpyPair(String symbol) {
+        return symbol != null && symbol.toUpperCase(Locale.ROOT).contains("JPY");
+    }
+
+    private static void setFixed(Map<String, EaParameter> byName, String name, String value) {
+        EaParameter parameter = byName.get(name);
+        if (parameter == null) return;
+        parameter.setValue(value);
+    }
+
+    private static void clampOrDefault(Map<String, EaParameter> byName, String name,
+                                       double min, double max, double fallback) {
+        EaParameter parameter = byName.get(name);
+        if (parameter == null) return;
+        double value;
+        try {
+            value = Double.parseDouble(EaParameter.normalizeMql5Value(
+                    parameter.getValue() != null ? parameter.getValue() : "").trim());
+        } catch (NumberFormatException ex) {
+            parameter.setValue(plainNumber(fallback));
+            return;
+        }
+        if (value < min || value > max) {
+            parameter.setValue(plainNumber(fallback));
+        }
+    }
+
+    private static String plainNumber(double value) {
+        if (value == Math.rint(value) && Math.abs(value) < 1_000_000_000d) {
+            return Long.toString(Math.round(value));
+        }
+        return java.math.BigDecimal.valueOf(value).stripTrailingZeros().toPlainString();
     }
 
     private static Stage stage(String name, String databankPrefix, Range... ranges) {

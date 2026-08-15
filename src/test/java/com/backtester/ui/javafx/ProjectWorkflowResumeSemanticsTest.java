@@ -1,6 +1,8 @@
 package com.backtester.ui.javafx;
 
 import com.backtester.config.EaParameter;
+import com.backtester.workflow.ClusterAutomation;
+import com.backtester.workflow.ClusterCensus;
 import com.backtester.workflow.CustomProject;
 import com.backtester.workflow.MasterStrategyLineageService;
 import com.backtester.workflow.MasterStrategyEntry;
@@ -249,6 +251,16 @@ public class ProjectWorkflowResumeSemanticsTest {
         // Already-adopted basis must still be refreshed in automatic mode.
         next.setOptimizerParameterBasisAdopted(true);
         assertTrue(ProjectWorkflowEditorView.shouldAutomaticallyAdoptBestPass(project, next));
+    }
+
+    @Test
+    public void clusterLineImprovementGateMatchesEditorConfirmsImprovementWhenLineHasNoFloor() {
+        MasterStrategyEntry first = rated(MasterStrategyEntry.Verdict.UNBEKANNT, -1);
+        ClusterCensus.ClusterLine fresh = new ClusterCensus.ClusterLine();
+        assertEquals(ProjectWorkflowEditorView.confirmsImprovement(first, false),
+                ClusterAutomation.confirmsLineImprovement(first, fresh, false));
+        assertEquals(ProjectWorkflowEditorView.confirmsImprovement(first, true),
+                ClusterAutomation.confirmsLineImprovement(first, fresh, true));
     }
 
     private static WorkflowTask completedTask(WorkflowTask.TaskType type) {

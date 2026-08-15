@@ -67,6 +67,70 @@ public class DatabankManagerTest {
     }
 
     @Test
+    public void preFilterEmptyUnclusteredStaysEmptyInsteadOfPromotingScoreLeader() {
+        DatabankManager manager = new DatabankManager();
+        CombinedPass leader = pass(7, 80.0);
+        CombinedPass weaker = pass(3, 10.0);
+        WorkflowTask filter = new WorkflowTask("01 Grid — Filter", WorkflowTask.TaskType.PRE_FILTER);
+        filter.setSourceDatabank("g01_raw");
+        filter.setTargetDatabank("g01_pick");
+        filter.setDeleteFailed(true);
+        filter.setFilterConditions(List.of(new FilterCondition(
+                FilterCondition.Metric.BT_PROFIT_FACTOR,
+                FilterCondition.Operator.GREATER_EQUAL, 9.0)));
+
+        List<CombinedPass> routed = manager.processTaskDatabanks(filter, List.of(leader, weaker));
+
+        assertTrue(routed.isEmpty());
+        assertTrue(manager.getDatabank("g01_pick").isEmpty());
+        assertTrue(DatabankManager.shouldHaltChainAfterPreFilter(filter, routed));
+        assertTrue(filter.getFilterRejectionNote(),
+                filter.getFilterRejectionNote().contains("Pass #7"));
+        assertTrue(filter.getFilterRejectionNote(),
+                filter.getFilterRejectionNote().contains("angehalten"));
+        assertFalse(filter.getFilterRejectionNote(),
+                filter.getFilterRejectionNote().contains("Kette läuft mit Score-Bestem"));
+    }
+
+    @Test
+    public void fullyEmptyClusteredPreFilterKeepsEachLinesLeader() {
+        DatabankManager manager = new DatabankManager();
+        CombinedPass b1 = pass(1, 10.0);
+        b1.setClusterId("B1");
+        CombinedPass b2 = pass(2, 20.0);
+        b2.setClusterId("B2");
+        WorkflowTask filter = new WorkflowTask("05 Filter", WorkflowTask.TaskType.PRE_FILTER);
+        filter.setSourceDatabank("g05_raw");
+        filter.setTargetDatabank("g05_pick");
+        filter.setDeleteFailed(true);
+        filter.setFilterConditions(List.of(new FilterCondition(
+                FilterCondition.Metric.BT_PROFIT_FACTOR,
+                FilterCondition.Operator.GREATER_EQUAL, 9.0)));
+
+        List<CombinedPass> routed = manager.processTaskDatabanks(filter, List.of(b1, b2));
+
+        assertEquals(2, routed.size());
+        assertEquals("B1", routed.get(0).getClusterId());
+        assertEquals("B2", routed.get(1).getClusterId());
+        assertFalse(DatabankManager.shouldHaltChainAfterPreFilter(filter, routed));
+    }
+
+    @Test
+    public void retesterEmptyOutputStaysEmpty() {
+        DatabankManager manager = new DatabankManager();
+        WorkflowTask retest = new WorkflowTask("Smoke-Kill", WorkflowTask.TaskType.RETESTER);
+        retest.setSourceDatabank("k12");
+        retest.setTargetDatabank("k13");
+        retest.setDeleteFailed(true);
+        retest.setFilterConditions(List.of(new FilterCondition(
+                FilterCondition.Metric.LT_NET_PROFIT,
+                FilterCondition.Operator.GREATER_THAN, 0)));
+
+        assertTrue(manager.processTaskDatabanks(retest, List.of(pass(1, -50.0))).isEmpty());
+        assertTrue(manager.getDatabank("k13").isEmpty());
+    }
+
+    @Test
     public void projectSwitchClearsCustomDatabanksAndSnapshotsAreIsolated() {
         DatabankManager manager = new DatabankManager();
         assertTrue(manager.createDatabank("data1"));
@@ -148,6 +212,136 @@ public class DatabankManagerTest {
     }
 
     @Test
+    public void preFilterEmptyingOneClusterDoesNotStealAnotherChampion() {
+        DatabankManager manager = new DatabankManager();
+        CombinedPass clusterB1 = pass(1, -20.0);
+        clusterB1.setClusterId("B1");
+        CombinedPass clusterB2 = pass(2, 80.0);
+        clusterB2.setClusterId("B2");
+
+        WorkflowTask filter = new WorkflowTask("09 Entry — Filter", WorkflowTask.TaskType.PRE_FILTER);
+        filter.setSourceDatabank("g09_raw");
+        filter.setTargetDatabank("g09_pick");
+        filter.setDeleteFailed(true);
+        filter.setFilterConditions(List.of(new FilterCondition(
+                FilterCondition.Metric.BT_NET_PROFIT,
+                FilterCondition.Operator.GREATER_THAN, 0.0)));
+
+        List<CombinedPass> routed = manager.processTaskDatabanks(filter, List.of(clusterB1, clusterB2));
+
+        assertEquals(1, routed.size());
+        assertEquals(2, routed.get(0).getPassNumber());
+        assertEquals("B2", routed.get(0).getClusterId());
+        assertEquals(1, manager.getDatabank("g09_pick").size());
+        assertEquals("B2", manager.getDatabank("g09_pick").get(0).getClusterId());
+    }
+
+    @Test
+    public void diversityAboveClusterCapDoesNotStampEvenWhenFlagDefaultsOn() {
+        DatabankManager manager = new DatabankManager();
+        List<CombinedPass> survivors = new java.util.ArrayList<>();
+        for (int i = 1; i <= 12; i++) {
+            survivors.add(pass(i, i * 10.0));
+        }
+        WorkflowTask shortlist = new WorkflowTask("Shortlist", WorkflowTask.TaskType.DIVERSITY_FILTER);
+        shortlist.setSourceDatabank("g01_grid_is_oos");
+        shortlist.setTargetDatabank("g01_grid_shortlist");
+        shortlist.setDiversityMaxStrategies(100);
+        shortlist.setDeleteFailed(true);
+
+        List<CombinedPass> routed = manager.processTaskDatabanks(shortlist, survivors);
+
+        assertEquals(12, routed.size());
+        assertTrue(routed.stream().allMatch(candidate -> candidate.getClusterId() == null
+                || candidate.getClusterId().isBlank()));
+    }
+
+    @Test
+    public void wideDiversityShortlistDoesNotStampClusterIds() {
+        DatabankManager manager = new DatabankManager();
+        List<CombinedPass> survivors = new java.util.ArrayList<>();
+        for (int i = 1; i <= 12; i++) {
+            survivors.add(pass(i, i * 10.0));
+        }
+        WorkflowTask shortlist = new WorkflowTask("01 Grid-Fundament — Diversität (Shortlist 100)",
+                WorkflowTask.TaskType.DIVERSITY_FILTER);
+        shortlist.setSourceDatabank("g01_grid_is_oos");
+        shortlist.setTargetDatabank("g01_grid_shortlist");
+        shortlist.setDiversityMaxStrategies(100);
+        shortlist.setDiversityStampClusterIds(false);
+        shortlist.setDeleteFailed(true);
+
+        List<CombinedPass> routed = manager.processTaskDatabanks(shortlist, survivors);
+
+        assertEquals(12, routed.size());
+        assertTrue(routed.stream().allMatch(candidate -> candidate.getClusterId() == null
+                || candidate.getClusterId().isBlank()));
+        assertEquals(12, manager.getDatabank("g01_grid_shortlist").size());
+    }
+
+    @Test
+    public void qualityPreFilterDoesNotCapOrStampBeforeFormDiversity() {
+        DatabankManager manager = new DatabankManager();
+        List<CombinedPass> survivors = new java.util.ArrayList<>();
+        for (int i = 1; i <= 12; i++) {
+            survivors.add(pass(i, i * 10.0));
+        }
+        WorkflowTask filter = new WorkflowTask("01 Grid-Fundament — Trade/Qualitätsfilter",
+                WorkflowTask.TaskType.PRE_FILTER);
+        filter.setSourceDatabank("g01_grid_raw");
+        filter.setTargetDatabank("g01_grid_quality");
+        filter.setDeleteFailed(true);
+        filter.setFilterConditions(List.of());
+
+        List<CombinedPass> routed = manager.processTaskDatabanks(filter, survivors);
+
+        assertEquals(12, routed.size());
+        assertTrue(routed.stream().allMatch(pass -> pass.getClusterId() == null
+                || pass.getClusterId().isBlank()));
+        assertEquals(12, manager.getDatabank("g01_grid_quality").size());
+    }
+
+    @Test
+    public void retesterCanMarkAClusterDeadWhenItIsEmptied() {
+        DatabankManager manager = new DatabankManager();
+        CombinedPass live = pass(1, 100.0);
+        live.setClusterId("B1");
+        CombinedPass dying = pass(2, -40.0);
+        dying.setClusterId("B2");
+        manager.setDatabankContent("k12", List.of(live, dying));
+
+        WorkflowTask retest = new WorkflowTask("Smoke-Kill", WorkflowTask.TaskType.RETESTER);
+        retest.setSourceDatabank("k12");
+        retest.setTargetDatabank("k13");
+        retest.setDeleteFailed(true);
+        retest.setFilterConditions(List.of(new FilterCondition(
+                FilterCondition.Metric.BT_NET_PROFIT,
+                FilterCondition.Operator.GREATER_THAN, 0.0)));
+
+        manager.processTaskDatabanks(retest, List.of(live, dying));
+
+        CustomProject project = new CustomProject("Tick-Kill", "EA.ex5", "GBPJPY", "M5");
+        project.addTask(retest);
+        manager.saveToProject(project, true);
+
+        ClusterCensus.ClusterLine dead = project.getClusterCensus().findLine("B2");
+        assertNotNull(dead);
+        assertEquals(ClusterCensus.ClusterStatus.DEAD, dead.getStatus());
+        assertEquals("Smoke-Kill", dead.getDiedAtStage());
+        ClusterCensus.ClusterStageSnapshot k13 = dead.getPerStage().stream()
+                .filter(snapshot -> "k13".equals(snapshot.getDatabankName()))
+                .findFirst()
+                .orElseThrow();
+        assertEquals(0, k13.getLiveCount());
+        assertEquals(-1, k13.getChampionPassNumber());
+        assertEquals(ClusterCensus.StageVerdict.DIED, k13.getVerdict());
+
+        ClusterCensus.ClusterLine stillLive = project.getClusterCensus().findLine("B1");
+        assertEquals(ClusterCensus.ClusterStatus.LIVE, stillLive.getStatus());
+        assertNull(stillLive.getDiedAtStage());
+    }
+
+    @Test
     public void structureCanPersistWithoutDatabankContents() {
         DatabankManager manager = new DatabankManager();
         manager.createDatabank("data1");
@@ -210,6 +404,35 @@ public class DatabankManagerTest {
         assertEquals(2, matches.get(0).getPassNumber());
         assertEquals(20.0, matches.get(0).getBtProfit(), 0.001);
         assertNotSame(second, matches.get(0));
+    }
+
+    @Test
+    public void sequentialClusterRunsKeepOverlappingPassNumbers() {
+        DatabankManager manager = new DatabankManager();
+        CombinedPass b1 = pass(5, 10.0);
+        b1.setStrategyName("Strat 5");
+        b1.setClusterId("B1");
+        CombinedPass b7 = pass(5, 99.0);
+        b7.setStrategyName("Strat 5");
+        b7.setClusterId("B7");
+
+        WorkflowTask task = new WorkflowTask("02 Optimizer", WorkflowTask.TaskType.OPTIMIZER);
+        task.setSourceDatabank("g01_pick");
+        task.setTargetDatabank("g02_pick");
+
+        List<CombinedPass> routed = manager.processTaskDatabanks(task, List.of(b1, b7));
+        assertEquals(2, routed.size());
+        assertEquals(2, manager.getDatabank("g02_pick").size());
+        assertEquals("B1", routed.get(0).getClusterId());
+        assertEquals("B7", routed.get(1).getClusterId());
+
+        CombinedPass refB1 = pass(5, 0.0);
+        refB1.setStrategyName("Strat 5");
+        refB1.setClusterId("B1");
+        List<CombinedPass> matches = manager.getDatabankMatches("g02_pick", List.of(refB1));
+        assertEquals(1, matches.size());
+        assertEquals("B1", matches.get(0).getClusterId());
+        assertEquals(10.0, matches.get(0).getBtProfit(), 0.001);
     }
 
     private static CombinedPass pass(int number, double profit) {

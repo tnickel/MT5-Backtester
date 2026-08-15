@@ -1,7 +1,10 @@
 package com.backtester.ui.javafx;
 
+import com.backtester.config.EaParameter;
 import com.backtester.database.DatabaseManager;
 import com.backtester.workflow.CustomProject;
+import com.backtester.workflow.ToTheMoon132GuidedWorkflowFactory;
+import com.backtester.workflow.ToTheMoon132TickKillWorkflowFactory;
 import javafx.collections.FXCollections;
 import javafx.collections.ObservableList;
 import javafx.geometry.Insets;
@@ -16,6 +19,7 @@ import javafx.stage.Modality;
 import javafx.stage.Stage;
 import javafx.stage.Window;
 
+import java.nio.file.Path;
 import java.util.Collections;
 import java.util.List;
 import java.util.function.Consumer;
@@ -420,26 +424,200 @@ public class CustomProjectsOverviewView {
     }
 
     private void createNewProject() {
-        TextInputDialog dialog = new TextInputDialog("Neues Custom Projekt " + (projectsList.size() + 1));
-        dialog.setTitle("Neues Projekt erstellen");
-        dialog.setHeaderText("Geben Sie einen Namen für das neue Projekt ein:");
-        dialog.setContentText("Name:");
+        Stage stage = new Stage();
+        stage.initModality(Modality.APPLICATION_MODAL);
+        Window owner = root.getScene() != null ? root.getScene().getWindow() : null;
+        if (owner != null) stage.initOwner(owner);
+        stage.setTitle("Neues Projekt erstellen");
 
-        dialog.getDialogPane().setStyle("-fx-background-color: #0b0d13;");
-        if (root.getScene() != null && !root.getScene().getStylesheets().isEmpty()) {
-            dialog.getDialogPane().getStylesheets().addAll(root.getScene().getStylesheets());
-        }
+        VBox rootBox = new VBox(15);
+        rootBox.setPadding(new Insets(20));
+        rootBox.setStyle("-fx-background-color: #0b0d13;");
+        rootBox.setPrefWidth(620);
 
-        dialog.showAndWait().ifPresent(name -> {
-            if (!name.trim().isEmpty()) {
-                CustomProject newProj = CustomProject.createDefaultTemplate(name.trim(), "", "EURUSD", "H1");
+        Label headerLbl = new Label("Neues Projekt");
+        headerLbl.setFont(Font.font("Segoe UI", FontWeight.BOLD, 18));
+        headerLbl.setTextFill(Color.web("#00e5ff"));
+
+        Label subLbl = new Label(
+                "Tick-Kill sucht auf M1-OHLC und tötet danach auf kurzen Every-Tick-Fenstern. "
+                        + "4 Jahre Tick sind nur noch Report.");
+        subLbl.setWrapText(true);
+        subLbl.setStyle("-fx-text-fill: #94a3b8; -fx-font-size: 12px;");
+
+        GridPane grid = new GridPane();
+        grid.setHgap(12);
+        grid.setVgap(14);
+
+        Label templateLbl = new Label("Vorlage:");
+        templateLbl.setStyle("-fx-text-fill: #e6e9f0; -fx-font-weight: bold;");
+        ComboBox<ProjectTemplate> templateCombo = new ComboBox<>(FXCollections.observableArrayList(
+                ProjectTemplate.TICK_KILL, ProjectTemplate.GUIDED, ProjectTemplate.STANDARD));
+        templateCombo.getSelectionModel().select(ProjectTemplate.TICK_KILL);
+        templateCombo.setMaxWidth(Double.MAX_VALUE);
+        GridPane.setHgrow(templateCombo, Priority.ALWAYS);
+
+        Label symbolLbl = new Label("Währungspaar / Symbol:");
+        symbolLbl.setStyle("-fx-text-fill: #e6e9f0; -fx-font-weight: bold;");
+        ComboBox<String> symbolCombo = new ComboBox<>(FXCollections.observableArrayList(
+                "EURUSD", "GBPUSD", "USDJPY", "AUDCAD", "AUDUSD", "NZDUSD", "USDCAD", "USDCHF",
+                "EURGBP", "EURJPY", "GBPJPY", "EURCAD", "EURAUD", "GBPAUD", "GBPCAD", "XAUUSD", "BTCUSD"
+        ));
+        symbolCombo.setEditable(true);
+        symbolCombo.getSelectionModel().select("GBPJPY");
+        symbolCombo.setMaxWidth(Double.MAX_VALUE);
+        GridPane.setHgrow(symbolCombo, Priority.ALWAYS);
+
+        Label periodLbl = new Label("Timeframe / Period:");
+        periodLbl.setStyle("-fx-text-fill: #e6e9f0; -fx-font-weight: bold;");
+        ComboBox<String> periodCombo = new ComboBox<>(FXCollections.observableArrayList(
+                "M1", "M5", "M15", "M30", "H1", "H2", "H4", "D1"
+        ));
+        periodCombo.setEditable(true);
+        periodCombo.getSelectionModel().select("M5");
+        periodCombo.setMaxWidth(Double.MAX_VALUE);
+        GridPane.setHgrow(periodCombo, Priority.ALWAYS);
+
+        Label nameLbl = new Label("Projektname:");
+        nameLbl.setStyle("-fx-text-fill: #e6e9f0; -fx-font-weight: bold;");
+        TextField nameField = new TextField();
+        nameField.setStyle("-fx-background-color: #141822; -fx-text-fill: #00e5ff; -fx-border-color: #232a3b; -fx-border-radius: 4;");
+        GridPane.setHgrow(nameField, Priority.ALWAYS);
+
+        Runnable refreshDefaultName = () -> {
+            ProjectTemplate template = templateCombo.getValue();
+            String symbol = comboValue(symbolCombo, "GBPJPY");
+            String period = comboValue(periodCombo, "M5");
+            if (template == ProjectTemplate.STANDARD) {
+                nameField.setText("Neues Custom Projekt " + (projectsList.size() + 1));
+            } else {
+                nameField.setText(template.defaultName(symbol, period));
+            }
+        };
+        templateCombo.valueProperty().addListener((obs, oldV, newV) -> {
+            if (newV == ProjectTemplate.GUIDED) {
+                symbolCombo.getSelectionModel().select("AUDCAD");
+                periodCombo.getSelectionModel().select("M5");
+            } else if (newV == ProjectTemplate.TICK_KILL) {
+                symbolCombo.getSelectionModel().select("GBPJPY");
+                periodCombo.getSelectionModel().select("M5");
+            } else {
+                symbolCombo.getSelectionModel().select("EURUSD");
+                periodCombo.getSelectionModel().select("H1");
+            }
+            refreshDefaultName.run();
+        });
+        symbolCombo.valueProperty().addListener((obs, oldV, newV) -> refreshDefaultName.run());
+        periodCombo.valueProperty().addListener((obs, oldV, newV) -> refreshDefaultName.run());
+        refreshDefaultName.run();
+
+        grid.add(templateLbl, 0, 0);
+        grid.add(templateCombo, 1, 0);
+        grid.add(symbolLbl, 0, 1);
+        grid.add(symbolCombo, 1, 1);
+        grid.add(periodLbl, 0, 2);
+        grid.add(periodCombo, 1, 2);
+        grid.add(nameLbl, 0, 3);
+        grid.add(nameField, 1, 3);
+
+        HBox buttonBar = new HBox(12);
+        buttonBar.setAlignment(Pos.CENTER_RIGHT);
+
+        Button createBtn = new Button("Projekt erstellen & öffnen");
+        createBtn.setStyle("-fx-background-color: #1e293b; -fx-text-fill: #00e5ff; -fx-border-color: #00e5ff; -fx-border-radius: 4; -fx-cursor: hand; -fx-font-weight: bold; -fx-padding: 6 14;");
+        createBtn.setOnAction(e -> {
+            String newName = nameField.getText() != null ? nameField.getText().trim() : "";
+            if (newName.isEmpty()) {
+                nameField.setStyle("-fx-border-color: #ff5252;");
+                return;
+            }
+            ProjectTemplate template = templateCombo.getValue() != null
+                    ? templateCombo.getValue() : ProjectTemplate.TICK_KILL;
+            String symbol = comboValue(symbolCombo, template == ProjectTemplate.STANDARD ? "EURUSD" : "GBPJPY");
+            String period = comboValue(periodCombo, template == ProjectTemplate.STANDARD ? "H1" : "M5");
+            try {
+                CustomProject newProj = buildProject(template, newName, symbol, period);
                 newProj.setSortOrder(projectsList.size());
                 DatabaseManager.getInstance().saveCustomProject(newProj);
+                stage.close();
                 reloadProjects();
                 if (onOpenProjectCallback != null) {
                     onOpenProjectCallback.accept(newProj);
                 }
+            } catch (RuntimeException ex) {
+                Alert alert = new Alert(Alert.AlertType.ERROR);
+                alert.setTitle("Projekt konnte nicht erstellt werden");
+                alert.setHeaderText(template.label);
+                alert.setContentText(ex.getMessage() != null ? ex.getMessage() : ex.toString());
+                alert.show();
             }
         });
+
+        Button cancelBtn = new Button("Abbrechen");
+        cancelBtn.setStyle("-fx-background-color: #2e3545; -fx-text-fill: white; -fx-cursor: hand; -fx-padding: 6 14;");
+        cancelBtn.setOnAction(e -> stage.close());
+        buttonBar.getChildren().addAll(createBtn, cancelBtn);
+
+        rootBox.getChildren().addAll(headerLbl, subLbl, grid, buttonBar);
+        Scene scene = new Scene(rootBox);
+        if (owner != null && owner.getScene() != null && !owner.getScene().getStylesheets().isEmpty()) {
+            scene.getStylesheets().addAll(owner.getScene().getStylesheets());
+        }
+        stage.setScene(scene);
+        stage.show();
+    }
+
+    private CustomProject buildProject(ProjectTemplate template, String name, String symbol, String period) {
+        if (template == ProjectTemplate.STANDARD) {
+            return CustomProject.createDefaultTemplate(name, "", symbol, period);
+        }
+        List<EaParameter> preset = ToTheMoon132GuidedWorkflowFactory.loadProvenPresetFromDisk("ToTheMoon_KI_v132");
+        if (preset == null || preset.isEmpty()) {
+            throw new IllegalStateException("Das ToTheMoon132-Preset fehlt. Ohne Preset kann die Suche nicht gebaut werden.");
+        }
+        Path reportsRoot = Path.of("backtest_reports", sanitizePathSegment(name));
+        if (template == ProjectTemplate.GUIDED) {
+            return ToTheMoon132GuidedWorkflowFactory.create(name, symbol, period, preset, reportsRoot);
+        }
+        return ToTheMoon132TickKillWorkflowFactory.create(name, symbol, period, preset, reportsRoot);
+    }
+
+    private static String comboValue(ComboBox<String> combo, String fallback) {
+        String value = combo.getValue();
+        if (value == null || value.isBlank()) return fallback;
+        return value.trim();
+    }
+
+    private static String sanitizePathSegment(String name) {
+        if (name == null || name.isBlank()) return "project";
+        String cleaned = name.trim().replaceAll("[\\\\/:*?\"<>|]", "_");
+        return cleaned.isBlank() ? "project" : cleaned;
+    }
+
+    private enum ProjectTemplate {
+        TICK_KILL("ToTheMoon132 Tick-Kill (OHLC-Suche → kurze Tick-Kills → 4J Report)"),
+        GUIDED("ToTheMoon132 Guided (OHLC-Suche → 3J Tick, ohne Smoke/1J-Kill)"),
+        STANDARD("Standard Custom Project");
+
+        private final String label;
+
+        ProjectTemplate(String label) {
+            this.label = label;
+        }
+
+        String defaultName(String symbol, String period) {
+            if (this == TICK_KILL) {
+                return "ToTheMoon132 Tick-Kill (" + symbol + " " + period + ")";
+            }
+            if (this == GUIDED) {
+                return "ToTheMoon132 Guided (" + symbol + " " + period + ")";
+            }
+            return "Neues Custom Projekt";
+        }
+
+        @Override
+        public String toString() {
+            return label;
+        }
     }
 }

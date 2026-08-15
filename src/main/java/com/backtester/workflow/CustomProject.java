@@ -96,6 +96,10 @@ public class CustomProject {
      * to {@code -1} (unknown).
      */
     private int confirmedMasterSequence = -1;
+    /**
+     * Live/dead B-cluster census across project databanks. Legacy JSON omits this.
+     */
+    private ClusterCensus clusterCensus = new ClusterCensus();
 
     public CustomProject() {
         this.id = UUID.randomUUID().toString();
@@ -310,6 +314,17 @@ public class CustomProject {
 
     public void setAutomaticModeEnabled(boolean automaticModeEnabled) {
         this.automaticModeEnabled = automaticModeEnabled;
+    }
+
+    public ClusterCensus getClusterCensus() {
+        if (clusterCensus == null) {
+            clusterCensus = new ClusterCensus();
+        }
+        return clusterCensus;
+    }
+
+    public void setClusterCensus(ClusterCensus clusterCensus) {
+        this.clusterCensus = clusterCensus != null ? clusterCensus : new ClusterCensus();
     }
 
     public Map<String, List<CombinedPass>> getDatabanks() {
@@ -644,6 +659,7 @@ public class CustomProject {
         } else {
             copy.setStrategyArchives(new LinkedHashMap<>());
         }
+        copy.setClusterCensus(getClusterCensus().copy());
         return copy;
     }
 

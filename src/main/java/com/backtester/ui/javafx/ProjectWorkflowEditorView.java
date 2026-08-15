@@ -12,6 +12,9 @@ import com.backtester.report.MasterStrategyLineageReportGenerator;
 import com.backtester.report.OptimizationResult.CombinedPass;
 import com.backtester.report.PassPresetResolver;
 import com.backtester.workflow.ChampionSearchSpaceAligner;
+import com.backtester.workflow.ClusterAutomation;
+import com.backtester.workflow.ClusterCensus;
+import com.backtester.workflow.ClusterIdentity;
 import com.backtester.workflow.CustomProject;
 import com.backtester.workflow.CustomProjectBackup;
 import com.backtester.workflow.DatabankManager;
@@ -1833,6 +1836,18 @@ public class ProjectWorkflowEditorView {
             }
 
             @Override
+            public void recordMasterReferenceCheckpoint(WorkflowTask checkpoint) {
+                ProjectWorkflowEditorView.this.recordMasterReferenceCheckpoint(checkpoint);
+            }
+
+            @Override
+            public List<CombinedPass> recordClusteredMasterReferences(WorkflowTask checkpoint,
+                                                                      List<CombinedPass> inputPasses) {
+                return ProjectWorkflowEditorView.this.recordClusteredMasterReferences(
+                        checkpoint, inputPasses);
+            }
+
+            @Override
             public Path optimizerOutputBaseDirectory(WorkflowTask task) {
                 return ProjectWorkflowEditorView.this.optimizerOutputBaseDirectory(task);
             }
@@ -2246,6 +2261,10 @@ public class ProjectWorkflowEditorView {
                     if (dataSubTab != null) fullSettingsSubTabPane.getTabs().add(dataSubTab);
                     if (rankingSubTab != null) fullSettingsSubTabPane.getTabs().add(rankingSubTab);
                     break;
+                case MASTER_REFERENCE:
+                    if (retestSubTab != null) fullSettingsSubTabPane.getTabs().add(retestSubTab);
+                    if (dataSubTab != null) fullSettingsSubTabPane.getTabs().add(dataSubTab);
+                    break;
                 case DIVERSITY_FILTER:
                     if (diversitySubTab != null) fullSettingsSubTabPane.getTabs().add(diversitySubTab);
                     if (retestSubTab != null) fullSettingsSubTabPane.getTabs().add(retestSubTab);
@@ -2634,6 +2653,12 @@ public class ProjectWorkflowEditorView {
     private void adoptBestPassAutomatically(WorkflowTask nextOptimizer) {
         String sourceDatabank = nextOptimizer != null ? nextOptimizer.getSourceDatabank() : "";
         List<CombinedPass> candidates = databankManager.getDatabank(sourceDatabank);
+        if (ClusterAutomation.usesClusteredAutomatik(project, candidates)) {
+            candidates = ClusterAutomation.liveChampions(project, candidates);
+            if (candidates.isEmpty()) {
+                throw new WorkflowPauseException(ClusterAutomation.zeroLiveClustersMessage(nextOptimizer));
+            }
+        }
         // A master measured on another symbol, period or expert proves nothing here, and
         // its floor would reject every candidate before one has been measured under the
         // new conditions. Dropping both re-opens the chain for a fresh baseline.
@@ -2644,6 +2669,14 @@ public class ProjectWorkflowEditorView {
                     + "mehr. Die nächste Messung legt die neue Basis fest.");
         }
         double championRatio = project != null ? project.getMasterSelectionRatio() : Double.NaN;
+        if (candidates.size() == 1 && ClusterAutomation.hasAnyClusterId(candidates)) {
+            ClusterCensus.ClusterLine line = project != null && project.getClusterCensus() != null
+                    ? project.getClusterCensus().findLine(ClusterIdentity.normalize(candidates.get(0)))
+                    : null;
+            if (line != null && Double.isFinite(line.getLastReferenceRatio())) {
+                championRatio = line.getLastReferenceRatio();
+            }
+        }
         GuidedOptimizationService.AdoptionChoice choice = GuidedOptimizationService.chooseAdoptionPass(
                 candidates, GuidedOptimizationService.ADOPTION_SHORTLIST, championRatio);
         if (choice.isBlockedByMasterFloor()) {
@@ -2741,6 +2774,182 @@ public class ProjectWorkflowEditorView {
         logAdoptedParameterChanges(summary);
         runReferenceBacktestBlocking(nextOptimizer, sourceDatabank, result.getPassNumber(),
                 effectiveBasis, summary, rollback);
+    }
+
+    /**
+     * Visible checkpoint after a stage pick. Fills the master lineage the same way
+     * Automatik / Hand-Pick do: adopt into the next optimizer when needed, then
+     * run the frozen-condition reference backtest.
+     */
+    private void recordMasterReferenceCheckpoint(WorkflowTask checkpoint) {
+        if (project == null || checkpoint == null) return;
+        if (!project.isReferenceBacktestEnabled()) {
+            logToConsole("MASTER-VERLAUF", "Referenz-Backtest ist abgeschaltet: Checkpoint '"
+                    + checkpoint.getName() + "' schreibt keinen Messpunkt.");
+            return;
+        }
+        String sourceDatabank = checkpoint.getSourceDatabank();
+        Optional<WorkflowTask> nextOptimizer = GuidedOptimizationService
+                .findNextActiveOptimizer(project, sourceDatabank);
+        if (nextOptimizer.isPresent()) {
+            WorkflowTask consumer = nextOptimizer.get();
+            if (consumer.isOptimizerParameterBasisAdopted()) {
+                measureAlreadyAdoptedBasis(consumer, sourceDatabank);
+            } else {
+                adoptBestPassAutomatically(consumer);
+            }
+            return;
+        }
+        measurePickWithoutNextOptimizer(checkpoint, sourceDatabank);
+    }
+
+    /**
+     * One MASTER_REFERENCE task, one terminal: measure each live cluster champion
+     * under frozen OHLC conditions. This is not an improve-or-die gate; lines stay
+     * live even when the 3Y ratio differs from the genetic optimizer score.
+     */
+    private List<CombinedPass> recordClusteredMasterReferences(WorkflowTask checkpoint,
+                                                               List<CombinedPass> inputPasses) {
+        if (project == null || checkpoint == null) {
+            return List.of();
+        }
+        List<CombinedPass> live = ClusterAutomation.liveChampions(project, inputPasses);
+        if (live.isEmpty()) {
+            throw new WorkflowPauseException(ClusterAutomation.zeroLiveClustersMessage(checkpoint));
+        }
+        if (!project.isReferenceBacktestEnabled()) {
+            logToConsole("MASTER-VERLAUF", "Referenz-Backtest ist abgeschaltet: Cluster-Checkpoint '"
+                    + checkpoint.getName() + "' lässt alle lebenden Linien ungeprüft weiter.");
+            return live;
+        }
+        if (project.getClusterCensus() == null) {
+            project.setClusterCensus(new ClusterCensus());
+        }
+        String databank = checkpoint.getTargetDatabank() != null && !checkpoint.getTargetDatabank().isBlank()
+                ? checkpoint.getTargetDatabank()
+                : checkpoint.getSourceDatabank();
+        for (CombinedPass champion : live) {
+            String clusterId = ClusterIdentity.normalize(champion);
+            ClusterCensus.ClusterLine line = project.getClusterCensus().findLine(clusterId);
+            logToConsole("CLUSTER", "Referenz für Linie " + clusterId + " (Pass #"
+                    + champion.getPassNumber() + ").");
+            PassPresetResolver.Resolution resolution = PassPresetResolver.resolve(
+                    champion, project.getExpert() != null ? project.getExpert() : engine.getExpert());
+            if (resolution.fidelity() == PassPresetResolver.Fidelity.CURRENT_CONFIG) {
+                logToConsole("CLUSTER", "Linie " + clusterId
+                        + " bleibt LIVE: kein archiviertes Lauf-Preset, Messung übersprungen.");
+                ClusterAutomation.markMeasured(project.getClusterCensus(), clusterId, databank,
+                        champion, null);
+                continue;
+            }
+            BacktestRunner runner = new BacktestRunner();
+            activeReferenceRunner = runner;
+            try {
+                ReferenceMeasurement measurement = measureReferenceBacktest(project, checkpoint,
+                        checkpoint.getSourceDatabank(), champion.getPassNumber(),
+                        resolution.parameters(), null, runner);
+                if (measurement == null || measurement.entry == null) {
+                    logToConsole("CLUSTER", "Linie " + clusterId
+                            + " bleibt LIVE: Referenz-Messung lieferte kein Ergebnis.");
+                    ClusterAutomation.markMeasured(project.getClusterCensus(), clusterId, databank,
+                            champion, null);
+                    continue;
+                }
+                if (measurement.freshlyMeasured) {
+                    publishReferenceResult(project, measurement.entry);
+                }
+                boolean lineHasFloor = line != null && Double.isFinite(line.getLastReferenceRatio());
+                boolean improved = ClusterAutomation.confirmsLineImprovement(
+                        measurement.entry, line, project.hasProvenMaster());
+                ClusterAutomation.markMeasured(project.getClusterCensus(), clusterId, databank,
+                        champion, measurement.entry);
+                if (improved) {
+                    ClusterAutomation.markImproved(project.getClusterCensus(), clusterId, databank,
+                            champion, measurement.entry);
+                    if (!project.hasProvenMaster()
+                            || measurement.entry.getReturnToDrawdown() >= project.getMasterSelectionRatio()) {
+                        commitProvenMaster(checkpoint, resolution.parameters(), measurement.entry);
+                    }
+                    logToConsole("CLUSTER", "Linie " + clusterId + " gemessen"
+                            + (lineHasFloor ? " (besser als Linien-Floor)." : " (IMPROVED)."));
+                } else {
+                    logToConsole("CLUSTER", "Linie " + clusterId
+                            + " gemessen — OHLC-Ratio weicht von der Optimizer-Basis ab, Linie bleibt LIVE.");
+                }
+            } finally {
+                activeReferenceRunner = null;
+            }
+        }
+        saveProject();
+        return live;
+    }
+
+    private void measureAlreadyAdoptedBasis(WorkflowTask consumer, String sourceDatabank) {
+        List<EaParameter> parameters = consumer.getOptimizerParameterSnapshot();
+        if (parameters == null || parameters.isEmpty()) {
+            throw new IllegalStateException("Checkpoint: Die übernommene Basis von '"
+                    + consumer.getName() + "' hat keinen Parameter-Snapshot.");
+        }
+        logToConsole("MASTER-VERLAUF", "Messe bereits übernommene Basis von '"
+                + consumer.getName() + "' (Pass #"
+                + consumer.getOptimizerParameterBasisPassNumber() + ").");
+        BacktestRunner runner = new BacktestRunner();
+        activeReferenceRunner = runner;
+        try {
+            ReferenceMeasurement measurement = measureReferenceBacktest(project, consumer,
+                    sourceDatabank, consumer.getOptimizerParameterBasisPassNumber(),
+                    parameters, null, runner);
+            if (measurement == null) return;
+            if (measurement.freshlyMeasured) {
+                publishReferenceResult(project, measurement.entry);
+            }
+            if (confirmsImprovement(measurement.entry, project.hasProvenMaster())) {
+                commitProvenMaster(consumer, parameters, measurement.entry);
+            }
+        } finally {
+            activeReferenceRunner = null;
+        }
+    }
+
+    private void measurePickWithoutNextOptimizer(WorkflowTask checkpoint, String sourceDatabank) {
+        List<CombinedPass> candidates = databankManager.getDatabank(sourceDatabank);
+        double championRatio = project.getMasterSelectionRatio();
+        GuidedOptimizationService.AdoptionChoice choice = GuidedOptimizationService.chooseAdoptionPass(
+                candidates, GuidedOptimizationService.ADOPTION_SHORTLIST, championRatio);
+        if (choice.isBlockedByMasterFloor()) {
+            logToConsole("MASTER-VERLAUF", "Checkpoint '" + checkpoint.getName()
+                    + "': kein Kandidat liegt über der Master-Basis. Kein neuer Messpunkt.");
+            return;
+        }
+        CombinedPass bestPass = choice.getSelected().orElse(null);
+        if (bestPass == null) {
+            throw new IllegalStateException("Checkpoint '" + checkpoint.getName()
+                    + "': In Databank '" + sourceDatabank
+                    + "' existiert keine Strategie mit einem endlichen Score.");
+        }
+        PassPresetResolver.Resolution resolution = PassPresetResolver.resolve(
+                bestPass, project.getExpert() != null ? project.getExpert() : engine.getExpert());
+        if (resolution.fidelity() == PassPresetResolver.Fidelity.CURRENT_CONFIG) {
+            throw new IllegalStateException("Checkpoint '" + checkpoint.getName()
+                    + "': Pass #" + bestPass.getPassNumber()
+                    + " hat kein archiviertes Lauf-Preset.");
+        }
+        List<EaParameter> parameters = resolution.parameters();
+        BacktestRunner runner = new BacktestRunner();
+        activeReferenceRunner = runner;
+        try {
+            ReferenceMeasurement measurement = measureReferenceBacktest(project, checkpoint,
+                    sourceDatabank, bestPass.getPassNumber(), parameters, null, runner);
+            if (measurement == null) return;
+            if (measurement.freshlyMeasured) {
+                publishReferenceResult(project, measurement.entry);
+            }
+            if (confirmsImprovement(measurement.entry, project.hasProvenMaster())) {
+                commitProvenMaster(checkpoint, parameters, measurement.entry);
+            }
+        } finally {
+            activeReferenceRunner = null;
+        }
     }
 
     /**

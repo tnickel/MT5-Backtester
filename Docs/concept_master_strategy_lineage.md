@@ -1,7 +1,8 @@
 # Konzept: Master-Strategie-Verlauf (Lineage-Monitoring)
 
 Status: umgesetzt (Phasen 1–6)
-Bezug: `Docs/concept_interactive_multistage_workflow.md`, Guided-Workflow ToTheMoon132
+Bezug: `Docs/concept_interactive_multistage_workflow.md`, Guided-Workflow ToTheMoon132,
+`Docs/concept_b_cluster_linienbaum.md` (mehrere Cluster-Linien B1–B10; dieses Dokument misst die Master-Linie)
 
 ---
 

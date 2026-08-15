@@ -5,6 +5,8 @@ import com.backtester.database.DatabaseManager;
 import com.backtester.report.DatabankHtmlViewerGenerator;
 import com.backtester.report.OptimizationResult.CombinedPass;
 import com.backtester.report.OptimizationResult.Pass;
+import com.backtester.workflow.ClusterFlowTreeModel;
+import com.backtester.workflow.ClusterIdentity;
 import com.backtester.workflow.CustomProject;
 import com.backtester.workflow.DatabankManager;
 
@@ -69,6 +71,8 @@ public class DatabankEquityGalleryDialog {
     private final LinkedHashMap<String, CombinedPass> selectedPasses = new LinkedHashMap<>();
     private final Runnable onDatabankChanged;
     private final CustomProjectSaveCoordinator saveCoordinator;
+    /** Normalized B1…Bn filter; null means show the whole databank. */
+    private final String clusterIdFilter;
 
     public static void show(Window owner, DatabankManager databankManager, String initialDbName, CustomProject project) {
         show(owner, databankManager, initialDbName, project, null);
@@ -76,8 +80,17 @@ public class DatabankEquityGalleryDialog {
 
     public static void show(Window owner, DatabankManager databankManager, String initialDbName,
                             CustomProject project, Runnable onDatabankChanged) {
+        show(owner, databankManager, initialDbName, project, onDatabankChanged, null);
+    }
+
+    /**
+     * Opens the gallery for {@code initialDbName} without mutating the live databank.
+     * When {@code clusterId} is a valid B-id, only matching passes are shown.
+     */
+    public static void show(Window owner, DatabankManager databankManager, String initialDbName,
+                            CustomProject project, Runnable onDatabankChanged, String clusterId) {
         DatabankEquityGalleryDialog dialog = new DatabankEquityGalleryDialog(
-                owner, databankManager, initialDbName, project, onDatabankChanged);
+                owner, databankManager, initialDbName, project, onDatabankChanged, clusterId);
         dialog.stage.show();
     }
 
@@ -87,15 +100,23 @@ public class DatabankEquityGalleryDialog {
 
     public DatabankEquityGalleryDialog(Window owner, DatabankManager databankManager, String initialDbName,
                                        CustomProject project, Runnable onDatabankChanged) {
+        this(owner, databankManager, initialDbName, project, onDatabankChanged, null);
+    }
+
+    public DatabankEquityGalleryDialog(Window owner, DatabankManager databankManager, String initialDbName,
+                                       CustomProject project, Runnable onDatabankChanged, String clusterId) {
         this.databankManager = databankManager;
         this.project = project;
         this.onDatabankChanged = onDatabankChanged;
+        this.clusterIdFilter = ClusterIdentity.normalize(clusterId);
         this.saveCoordinator = new CustomProjectSaveCoordinator(
                 DatabaseManager.getInstance(), 0,
                 message -> log.warn("Gallery project save: {}", message));
         this.stage = new Stage();
 
-        stage.setTitle("📸 MetaTrader Backtest-Grafiken Übersicht");
+        stage.setTitle(clusterIdFilter != null
+                ? "📸 Equity-Galerie · " + clusterIdFilter
+                : "📸 MetaTrader Backtest-Grafiken Übersicht");
         stage.initModality(Modality.NONE);
         if (owner != null) stage.initOwner(owner);
         stage.setOnHidden(e -> {
@@ -356,13 +377,19 @@ public class DatabankEquityGalleryDialog {
             return;
         }
 
-        List<CombinedPass> passes = databankManager.getDatabank(selectedDb);
+        List<CombinedPass> passes = visiblePasses(selectedDb);
         if (passes == null || passes.isEmpty()) {
-            Label emptyLbl = new Label("ℹ️ Databank '" + selectedDb + "' enthält keine Strategien.");
+            String emptyMsg = clusterIdFilter != null
+                    ? "ℹ️ Keine lebenden Strategien in " + clusterIdFilter
+                    + " (Databank '" + selectedDb + "')."
+                    : "ℹ️ Databank '" + selectedDb + "' enthält keine Strategien.";
+            Label emptyLbl = new Label(emptyMsg);
             emptyLbl.setFont(Font.font("Segoe UI", FontWeight.BOLD, 14));
             emptyLbl.setTextFill(Color.web("#ffab40"));
             galleryContainer.getChildren().add(emptyLbl);
-            statsSummaryLabel.setText("0 Strategien in '" + selectedDb + "'");
+            statsSummaryLabel.setText(clusterIdFilter != null
+                    ? "0 Strategien in " + clusterIdFilter + " / '" + selectedDb + "'"
+                    : "0 Strategien in '" + selectedDb + "'");
             return;
         }
 
@@ -391,7 +418,8 @@ public class DatabankEquityGalleryDialog {
         }
 
         double totalLtProfit = filtered.stream().mapToDouble(p -> p.getLongtermPass() != null ? p.getLongtermPass().getProfit() : p.getBtProfit()).sum();
-        statsSummaryLabel.setText(String.format(Locale.US, "%d Strategien in '%s' | Gesamt Profit: $%.2f", filtered.size(), selectedDb, totalLtProfit));
+        String dbLabel = clusterIdFilter != null ? selectedDb + " · " + clusterIdFilter : selectedDb;
+        statsSummaryLabel.setText(String.format(Locale.US, "%d Strategien in '%s' | Gesamt Profit: $%.2f", filtered.size(), dbLabel, totalLtProfit));
 
         boolean showLineCharts = showLineChartCheckBox.isSelected();
 
@@ -409,7 +437,7 @@ public class DatabankEquityGalleryDialog {
         HBox cardHeader = new HBox(12);
         cardHeader.setAlignment(Pos.CENTER_LEFT);
 
-        String identity = passIdentity(pass);
+        String identity = DatabankManager.passIdentity(pass);
         CheckBox selectBox = new CheckBox();
         selectBox.setSelected(selectedPasses.containsKey(identity));
         selectBox.setStyle("-fx-cursor: hand;");
@@ -574,6 +602,17 @@ public class DatabankEquityGalleryDialog {
         return card;
     }
 
+    /**
+     * Live databank is never replaced; cluster filter is a view copy.
+     */
+    private List<CombinedPass> visiblePasses(String selectedDb) {
+        List<CombinedPass> passes = databankManager.getDatabank(selectedDb);
+        if (clusterIdFilter == null) {
+            return passes;
+        }
+        return ClusterFlowTreeModel.filterByCluster(passes, clusterIdFilter);
+    }
+
     private Path lookupScreenshotImage(CombinedPass pass) {
         if (pass != null) {
             String reportDirStr = pass.getReportDirectory();
@@ -697,7 +736,7 @@ public class DatabankEquityGalleryDialog {
 
         databankManager.removePassesFromDatabank(selectedDb, toDelete);
         for (CombinedPass pass : toDelete) {
-            selectedPasses.remove(passIdentity(pass));
+            selectedPasses.remove(DatabankManager.passIdentity(pass));
         }
         persistProjectAfterDelete();
         updateSelectionUi();
@@ -731,11 +770,6 @@ public class DatabankEquityGalleryDialog {
         }
     }
 
-    private static String passIdentity(CombinedPass pass) {
-        if (pass == null) return "<null>";
-        return pass.getPassNumber() + "\u0000" + pass.getStrategyName();
-    }
-
     private void showEnlargedImage(Path imagePath, String title) {
         Stage imgStage = new Stage();
         imgStage.initModality(Modality.APPLICATION_MODAL);
@@ -757,9 +791,12 @@ public class DatabankEquityGalleryDialog {
     private void openHtmlViewerInBrowser() {
         String selectedDb = dbSelectionCombo.getValue();
         if (selectedDb == null || databankManager == null) return;
-        List<CombinedPass> passes = databankManager.getDatabank(selectedDb);
+        List<CombinedPass> passes = visiblePasses(selectedDb);
         if (passes == null || passes.isEmpty()) {
-            Alert alert = new Alert(Alert.AlertType.WARNING, "Databank '" + selectedDb + "' ist leer.", ButtonType.OK);
+            String msg = clusterIdFilter != null
+                    ? "Keine lebenden Strategien in " + clusterIdFilter + "."
+                    : "Databank '" + selectedDb + "' ist leer.";
+            Alert alert = new Alert(Alert.AlertType.WARNING, msg, ButtonType.OK);
             alert.initOwner(stage);
             alert.showAndWait();
             return;
