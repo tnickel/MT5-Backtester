@@ -23,8 +23,10 @@ import com.backtester.workflow.FilterGateAnalysisService;
 import com.backtester.workflow.GuidedOptimizationService;
 import com.backtester.workflow.MasterStrategyEntry;
 import com.backtester.workflow.MasterStrategyLineageService;
+import com.backtester.workflow.WorkflowDownstreamInvalidation;
 import com.backtester.workflow.WorkflowPauseException;
 import com.backtester.workflow.WorkflowTask;
+import java.util.Objects;
 import java.util.Set;
 import java.util.LinkedHashSet;
 import javafx.application.Platform;
@@ -106,6 +108,7 @@ public class ProjectWorkflowEditorView {
     private VBox taskChainListBox;
     private Button addTaskBtn;
     private WorkflowTask selectedTask;
+    private String selectedTaskExecutionSignature;
     private OptimizerSettingsHighlightDialog optimizerSettingsHighlightDialog;
     private MasterStrategyLineageWindow masterStrategyLineageWindow;
     /** Serial queue: a pick during a running measurement is measured afterwards. */
@@ -2131,6 +2134,7 @@ public class ProjectWorkflowEditorView {
             saveOptimizerOutputDirectory();
         }
         this.selectedTask = task;
+        selectedTaskExecutionSignature = WorkflowDownstreamInvalidation.executionSignature(task);
         refreshTaskChain();
         if (databankPanel != null) databankPanel.updateDatabankComboBoxes();
         if (task != null) {
@@ -2793,10 +2797,22 @@ public class ProjectWorkflowEditorView {
                 .findNextActiveOptimizer(project, sourceDatabank);
         if (nextOptimizer.isPresent()) {
             WorkflowTask consumer = nextOptimizer.get();
-            if (consumer.isOptimizerParameterBasisAdopted()) {
-                measureAlreadyAdoptedBasis(consumer, sourceDatabank);
+            if (project.isAutomaticModeEnabled()) {
+                if (consumer.isOptimizerParameterBasisAdopted()) {
+                    measureAlreadyAdoptedBasis(consumer, sourceDatabank);
+                } else {
+                    adoptBestPassAutomatically(consumer);
+                }
             } else {
-                adoptBestPassAutomatically(consumer);
+                logToConsole("MASTER-VERLAUF", "Manueller Modus: Checkpoint '" + checkpoint.getName()
+                        + "' misst Referenz — keine automatische Übernahme in '"
+                        + consumer.getName() + "'.");
+                List<CombinedPass> candidates = databankManager.getDatabank(sourceDatabank);
+                if (ClusterAutomation.usesClusteredAutomatik(project, candidates)) {
+                    recordClusteredMasterReferences(checkpoint, candidates);
+                } else {
+                    measurePickWithoutNextOptimizer(checkpoint, sourceDatabank);
+                }
             }
             return;
         }
@@ -3778,11 +3794,37 @@ public class ProjectWorkflowEditorView {
             }
             recalculateForwardDate();
         }
+        invalidateDownstreamIfSelectedTaskChanged();
     }
 
     private void saveProject() {
+        invalidateDownstreamIfSelectedTaskChanged();
         if (project != null) {
             projectSaveCoordinator.requestSave(project, databankManager);
+        }
+    }
+
+    private void invalidateDownstreamIfSelectedTaskChanged() {
+        if (selectedTask == null || project == null) {
+            return;
+        }
+        String current = WorkflowDownstreamInvalidation.executionSignature(selectedTask);
+        if (selectedTaskExecutionSignature == null) {
+            selectedTaskExecutionSignature = current;
+            return;
+        }
+        if (!Objects.equals(current, selectedTaskExecutionSignature)) {
+            int cleared = WorkflowDownstreamInvalidation.invalidateFromTask(
+                    project, databankManager, selectedTask);
+            if (cleared > 0) {
+                logToConsole("WORKFLOW", "Task-Einstellungen geändert: "
+                        + cleared + " nachfolgende Databank(en) geleert.");
+                refreshTaskChain();
+                if (databankPanel != null) {
+                    databankPanel.refreshDatabanksUI();
+                }
+            }
+            selectedTaskExecutionSignature = current;
         }
     }
 

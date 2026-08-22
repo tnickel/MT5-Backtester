@@ -111,7 +111,7 @@ public class WorkflowHandoffAuditServiceTest {
         manager.loadFromProject(project);
 
         assertTrue(consumer.isAdoptedFilterGateForced());
-        HandoffTransition handoff = WorkflowHandoffAuditService.buildOne(2, producer, null, consumer, manager);
+        HandoffTransition handoff = WorkflowHandoffAuditService.buildOne(2, producer, null, consumer, manager, "AUDCAD");
         assertTrue("Gate-Force Audit muss am Übergang hängen", handoff.isGateForced());
         assertEquals(MatchStatus.MISMATCH, find(handoff, "Inp_Use_X").getMatchStatus());
         assertTrue(handoff.getMismatchCount() >= 1);

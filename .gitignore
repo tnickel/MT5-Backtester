@@ -35,3 +35,8 @@ stderr.txt
 doc/tests/*.pdf
 DbReader.java
 _tmp_*
+
+# One-off recovery exports & stray SQLite files
+*_backup.json
+backtester.db
+data/backtester.db

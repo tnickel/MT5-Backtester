@@ -562,11 +562,9 @@ public class ProjectWorkflowPipelineRunner {
                         break;
                     case MASTER_REFERENCE:
                         if (inputPasses == null || inputPasses.isEmpty()) {
-                            host.logToConsole("MASTER-VERLAUF", "Checkpoint '" + task.getName()
-                                    + "' übersprungen: Die Quell-Databank '" + task.getSourceDatabank()
-                                    + "' ist leer.");
-                            outputPasses = new ArrayList<>();
-                            break;
+                            throw new WorkflowPauseException("Checkpoint '" + task.getName()
+                                    + "' kann nicht starten: Die Quell-Databank '"
+                                    + task.getSourceDatabank() + "' ist leer.");
                         }
                         try {
                             outputPasses = runMasterReference(task, project, inputPasses);
@@ -801,11 +799,11 @@ public class ProjectWorkflowPipelineRunner {
                                 break;
                             case MASTER_REFERENCE:
                                 if (inputPasses == null || inputPasses.isEmpty()) {
-                                    host.logToConsole("MASTER-VERLAUF", "Checkpoint '" + task.getName()
-                                            + "' übersprungen: Die Quell-Databank '" + task.getSourceDatabank()
-                                            + "' ist leer.");
-                                    currentPipelinePasses = new ArrayList<>();
-                                    break;
+                                    pauseChain(task, "Checkpoint '" + task.getName()
+                                            + "' kann nicht starten: Die Quell-Databank '"
+                                            + task.getSourceDatabank() + "' ist leer.",
+                                            (double) i / total);
+                                    return null;
                                 }
                                 try {
                                     currentPipelinePasses = runMasterReference(task, project, inputPasses);

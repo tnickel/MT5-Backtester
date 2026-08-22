@@ -197,7 +197,8 @@ public final class ClusterAutomation {
                 continue;
             }
             CombinedPass next = newByCluster.get(id);
-            if (next != null && Double.isFinite(next.getScore()) && next.getScore() > prior.getScore()) {
+            if (next != null && Double.isFinite(next.getScore()) && Double.isFinite(prior.getScore())
+                    && next.getScore() >= prior.getScore()) {
                 markImproved(census, id, databankName, next, null);
             } else {
                 markDied(census, id, stageName, databankName);

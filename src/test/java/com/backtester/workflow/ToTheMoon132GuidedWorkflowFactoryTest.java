@@ -23,6 +23,8 @@ public class ToTheMoon132GuidedWorkflowFactoryTest {
         assertEquals("ToTheMoon_KI_v132", project.getExpert());
         assertEquals("AUDCAD", project.getSymbol());
         assertEquals("M5", project.getPeriod());
+        assertEquals("2024-02-01", ToTheMoon132GuidedWorkflowFactory.FORWARD_FROM);
+        assertEquals("2024-08-01", ToTheMoon132GuidedWorkflowFactory.GRID_TICK_FROM);
         assertEquals(32, project.getTasks().size());
         assertEquals(WorkflowTask.TaskType.STRATEGY_SELECTION, project.getTasks().get(0).getType());
 
@@ -86,10 +88,12 @@ public class ToTheMoon132GuidedWorkflowFactoryTest {
         WorkflowTask tickGate = findByTarget(project, ToTheMoon132GuidedWorkflowFactory.GRID_TICK_DATABANK);
         assertEquals(WorkflowTask.TaskType.RETESTER, tickGate.getType());
         assertEquals(ToTheMoon132GuidedWorkflowFactory.GRID_SHORTLIST_DATABANK, tickGate.getSourceDatabank());
+        assertEquals(ToTheMoon132GuidedWorkflowFactory.GRID_TICK_FROM, tickGate.getStartDate());
+        assertEquals(ToTheMoon132GuidedWorkflowFactory.DEVELOPMENT_TO, tickGate.getEndDate());
         assertEquals(WorkflowTask.MODE_EVERY_TICK, tickGate.getExecutionMode());
         assertTrue(tickGate.hasExplicitForwardSplit());
         assertEquals(1, tickGate.getOptimizerForwardMode());
-        assertEquals("2024-02-01", tickGate.getOptimizerForwardDate());
+        assertEquals("2025-01-31", tickGate.getOptimizerForwardDate());
         assertEquals(2, tickGate.getFilterConditions().size());
         assertTrue(tickGate.getFilterConditions().stream()
                 .anyMatch(c -> c.getMetric() == FilterCondition.Metric.LT_NET_PROFIT

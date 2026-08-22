@@ -245,6 +245,21 @@ public class ClusterAutomationTest {
     }
 
     @Test
+    public void optimizerImproveOrDieKeepsLineOnTiedScore() {
+        ClusterCensus census = new ClusterCensus();
+        CombinedPass b7Prev = clustered(2, 50.0, "B7");
+        CombinedPass b7Same = clustered(22, 50.0, "B7");
+
+        List<CombinedPass> kept = ClusterAutomation.applyOptimizerImproveOrDie(
+                census, "02 Optimizer", "g02_cadence_raw",
+                List.of(b7Prev), List.of(b7Same));
+
+        assertEquals(1, kept.size());
+        assertEquals("B7", kept.get(0).getClusterId());
+        assertEquals(ClusterCensus.ClusterStatus.LIVE, census.findLine("B7").getStatus());
+    }
+
+    @Test
     public void stampFixedClusterIdDoesNotCrossOntoAnotherId() {
         CombinedPass a = clustered(1, 1.0, "B1");
         CombinedPass b = clustered(2, 1.0, "B9");

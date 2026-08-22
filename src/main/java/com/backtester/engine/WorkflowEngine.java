@@ -494,22 +494,30 @@ public class WorkflowEngine {
 
             com.google.gson.Gson gson = buildGson();
 
-            this.expert = (String) data[0];
+            this.expert = (String) data[DatabaseManager.WorkflowStateIndex.EXPERT_NAME];
             if (this.expert != null && !this.expert.isEmpty()) {
                 loadStrategyConfig(this.expert);
             }
 
-            this.symbol = (String) data[1];
-            this.period = (String) data[2];
-            if (data[3] != null) this.fromDate = LocalDate.parse((String) data[3]);
-            if (data[4] != null) this.toDate = LocalDate.parse((String) data[4]);
-            if (data[5] != null) this.deposit = (Integer) data[5];
-            this.currency = (String) data[6];
-            this.leverage = (String) data[7];
-            if (data[8] != null) this.tickModel = (Integer) data[8];
+            this.symbol = (String) data[DatabaseManager.WorkflowStateIndex.SYMBOL];
+            this.period = (String) data[DatabaseManager.WorkflowStateIndex.PERIOD];
+            if (data[DatabaseManager.WorkflowStateIndex.FROM_DATE] != null) {
+                this.fromDate = LocalDate.parse((String) data[DatabaseManager.WorkflowStateIndex.FROM_DATE]);
+            }
+            if (data[DatabaseManager.WorkflowStateIndex.TO_DATE] != null) {
+                this.toDate = LocalDate.parse((String) data[DatabaseManager.WorkflowStateIndex.TO_DATE]);
+            }
+            if (data[DatabaseManager.WorkflowStateIndex.DEPOSIT] != null) {
+                this.deposit = (Integer) data[DatabaseManager.WorkflowStateIndex.DEPOSIT];
+            }
+            this.currency = (String) data[DatabaseManager.WorkflowStateIndex.CURRENCY];
+            this.leverage = (String) data[DatabaseManager.WorkflowStateIndex.LEVERAGE];
+            if (data[DatabaseManager.WorkflowStateIndex.TICK_MODEL] != null) {
+                this.tickModel = (Integer) data[DatabaseManager.WorkflowStateIndex.TICK_MODEL];
+            }
 
             java.lang.reflect.Type paramType = new com.google.gson.reflect.TypeToken<List<EaParameter>>(){}.getType();
-            String eaParamsJson = (String) data[9];
+            String eaParamsJson = (String) data[DatabaseManager.WorkflowStateIndex.EA_PARAMETERS_JSON];
             if (eaParamsJson != null && !eaParamsJson.isEmpty()) {
                 this.eaParameters = gson.fromJson(eaParamsJson, paramType);
                 if (this.eaParameters != null) {
@@ -517,40 +525,42 @@ public class WorkflowEngine {
                 }
             }
 
-            String optResultJson = (String) data[10];
+            String optResultJson = (String) data[DatabaseManager.WorkflowStateIndex.OPT_RESULT_JSON];
             if (optResultJson != null && !optResultJson.isEmpty()) {
                 this.optResult = gson.fromJson(optResultJson, OptimizationResult.class);
             }
 
             java.lang.reflect.Type passType = new com.google.gson.reflect.TypeToken<List<CombinedPass>>(){}.getType();
-            String selectedDiverseJson = (String) data[11];
+            String selectedDiverseJson = (String) data[DatabaseManager.WorkflowStateIndex.SELECTED_DIVERSE_PASSES_JSON];
             if (selectedDiverseJson != null && !selectedDiverseJson.isEmpty()) {
                 this.selectedDiversePasses = gson.fromJson(selectedDiverseJson, passType);
             }
 
             java.lang.reflect.Type sensitivityType = new com.google.gson.reflect.TypeToken<List<SensitivityResult>>(){}.getType();
-            String sensitivityJson = (String) data[12];
+            String sensitivityJson = (String) data[DatabaseManager.WorkflowStateIndex.SENSITIVITY_RESULTS_JSON];
             if (sensitivityJson != null && !sensitivityJson.isEmpty()) {
                 this.sensitivityResults = gson.fromJson(sensitivityJson, sensitivityType);
                 this.sensitivityRunTimestamp = sensitivityTimestampFrom(this.sensitivityResults);
             }
 
-            this.kiReportText = (String) data[13];
+            this.kiReportText = (String) data[DatabaseManager.WorkflowStateIndex.KI_REPORT_TEXT];
 
-            String finalSelectedJson = (String) data[14];
+            String finalSelectedJson = (String) data[DatabaseManager.WorkflowStateIndex.FINAL_SELECTED_PASSES_JSON];
             if (finalSelectedJson != null && !finalSelectedJson.isEmpty()) {
                 this.finalSelectedPasses = gson.fromJson(finalSelectedJson, passType);
             }
 
-            if (data[15] != null) {
-                this.lastActiveStep = (Integer) data[15];
+            if (data[DatabaseManager.WorkflowStateIndex.LAST_ACTIVE_STEP] != null) {
+                this.lastActiveStep = (Integer) data[DatabaseManager.WorkflowStateIndex.LAST_ACTIVE_STEP];
             }
 
-            if (data.length > 16) {
-                this.validationResults = parseValidationResults(gson, (String) data[16]);
+            if (data.length > DatabaseManager.WorkflowStateIndex.VALIDATION_RESULTS_JSON) {
+                this.validationResults = parseValidationResults(gson,
+                        (String) data[DatabaseManager.WorkflowStateIndex.VALIDATION_RESULTS_JSON]);
             }
-            if (data.length > 17 && data[17] instanceof Boolean) {
-                this.kiGateBypassed = (Boolean) data[17];
+            if (data.length > DatabaseManager.WorkflowStateIndex.KI_GATE_BYPASSED
+                    && data[DatabaseManager.WorkflowStateIndex.KI_GATE_BYPASSED] instanceof Boolean) {
+                this.kiGateBypassed = (Boolean) data[DatabaseManager.WorkflowStateIndex.KI_GATE_BYPASSED];
             }
             log.info("Loaded workflow state from database. Last active step: {}", lastActiveStep);
         } catch (Exception e) {

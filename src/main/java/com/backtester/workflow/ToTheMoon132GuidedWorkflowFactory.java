@@ -17,7 +17,8 @@ public final class ToTheMoon132GuidedWorkflowFactory {
 
     public static final String DEVELOPMENT_FROM = "2022-08-01";
     public static final String DEVELOPMENT_TO = "2025-08-01";
-    public static final String FORWARD_FROM = "2024-08-01";
+    public static final String FORWARD_FROM = developmentForwardStart();
+    public static final String GRID_TICK_FROM = java.time.LocalDate.parse(DEVELOPMENT_TO).minusYears(1).toString();
     public static final String OOS_FROM = "2025-08-02";
     public static final String FINAL_TO = "2026-08-01";
     public static final String DEVELOPMENT_TOP20_DATABANK = "g11_dev_top20";
@@ -29,8 +30,8 @@ public final class ToTheMoon132GuidedWorkflowFactory {
     public static final int GRID_SHORTLIST_MAX_STRATEGIES = 100;
     public static final int GRID_HALF_MIN_TRADES = 500;
     public static final double GRID_HALF_MIN_PROFIT = 600;
-    public static final int GRID_TICK_MIN_TRADES = 400;
-    public static final double GRID_TICK_MIN_PROFIT = 200;
+    public static final int GRID_TICK_MIN_TRADES = 300;
+    public static final double GRID_TICK_MIN_PROFIT = 100;
     private static final int DEVELOPMENT_TOP20_MIN_DIFFERENT_PARAMS = 2;
     private static final int GRID_CLUSTER_MIN_DIFFERENT_PARAMS = 1;
 
@@ -444,14 +445,14 @@ public final class ToTheMoon132GuidedWorkflowFactory {
                                                        String symbol,
                                                        String period) {
         WorkflowTask task = new WorkflowTask(
-                "01 Grid-Fundament — Tick-Gate (Every Tick, 1:1)",
+                "01 Grid-Fundament — Tick-Gate (Every Tick, 1J, 1:1)",
                 WorkflowTask.TaskType.RETESTER);
-        configureMarket(task, symbol, period, DEVELOPMENT_FROM, DEVELOPMENT_TO, WorkflowTask.MODE_EVERY_TICK);
+        configureMarket(task, symbol, period, GRID_TICK_FROM, DEVELOPMENT_TO, WorkflowTask.MODE_EVERY_TICK);
         task.setSourceDatabank(GRID_SHORTLIST_DATABANK);
         task.setTargetDatabank(GRID_TICK_DATABANK);
         task.setOptimizerForwardMode(1);
         java.time.LocalDate fwdStart = com.backtester.engine.ForwardSplit.computeForwardStartDate(
-                java.time.LocalDate.parse(DEVELOPMENT_FROM), java.time.LocalDate.parse(DEVELOPMENT_TO), 1, null);
+                java.time.LocalDate.parse(GRID_TICK_FROM), java.time.LocalDate.parse(DEVELOPMENT_TO), 1, null);
         task.setOptimizerForwardDate(fwdStart != null
                 ? fwdStart.toString()
                 : (gridOptimizer != null ? gridOptimizer.getOptimizerForwardDate() : FORWARD_FROM));
@@ -558,6 +559,10 @@ public final class ToTheMoon132GuidedWorkflowFactory {
      * such as {@code 04 Envelopes unten — Optimizer}.
      */
     public static Optional<List<String>> resolveStageTargetsForTaskName(String taskName) {
+        return resolveStageTargetsForTaskName(taskName, "");
+    }
+
+    public static Optional<List<String>> resolveStageTargetsForTaskName(String taskName, String symbol) {
         if (taskName == null || taskName.isBlank()) return Optional.empty();
         String normalized = taskName.trim();
         int sep = normalized.indexOf(" — ");
@@ -567,7 +572,7 @@ public final class ToTheMoon132GuidedWorkflowFactory {
             stageKey = stageKey.substring(0, stageKey.length() - " optimizer".length()).trim();
         }
 
-        Map<String, List<String>> byStage = stageTargetParameters();
+        Map<String, List<String>> byStage = stageTargetParameters(symbol);
         List<String> exact = byStage.get(stageKey);
         if (exact != null && !exact.isEmpty()) {
             return Optional.of(List.copyOf(exact));
@@ -733,6 +738,15 @@ public final class ToTheMoon132GuidedWorkflowFactory {
 
     private static boolean isJpyPair(String symbol) {
         return symbol != null && symbol.toUpperCase(Locale.ROOT).contains("JPY");
+    }
+
+    private static String developmentForwardStart() {
+        java.time.LocalDate forwardStart = com.backtester.engine.ForwardSplit.computeForwardStartDate(
+                java.time.LocalDate.parse(DEVELOPMENT_FROM),
+                java.time.LocalDate.parse(DEVELOPMENT_TO),
+                1,
+                null);
+        return forwardStart != null ? forwardStart.toString() : "2024-02-01";
     }
 
     private static void setFixed(Map<String, EaParameter> byName, String name, String value) {

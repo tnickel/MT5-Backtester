@@ -316,7 +316,7 @@ public final class WorkflowHandoffAuditService {
                         .findPreviousEnabledOptimizer(project, task).orElse(null);
                 WorkflowTask viaFilter = findFilterBetween(tasks, producer, task);
                 HandoffTransition handoff = buildOne(
-                        workflowNumber, producer, viaFilter, task, databankManager);
+                        workflowNumber, producer, viaFilter, task, databankManager, project.getSymbol());
                 nodes.add(new FlowNode(
                         workflowNumber,
                         task.getName(),
@@ -386,7 +386,8 @@ public final class WorkflowHandoffAuditService {
                                       WorkflowTask producer,
                                       WorkflowTask viaFilter,
                                       WorkflowTask consumer,
-                                      DatabankManager databankManager) {
+                                      DatabankManager databankManager,
+                                      String projectSymbol) {
         boolean adopted = consumer != null && consumer.isOptimizerParameterBasisAdopted();
         int passNumber = -1;
         String databank = "";
@@ -406,8 +407,8 @@ public final class WorkflowHandoffAuditService {
             }
         }
 
-        List<String> fromTargets = resolveTargets(producer);
-        List<String> toTargets = resolveTargets(consumer);
+        List<String> fromTargets = resolveTargets(producer, projectSymbol);
+        List<String> toTargets = resolveTargets(consumer, projectSymbol);
 
         Map<String, String> passParams = parameterMap(adoptedPass);
         Map<String, EaParameter> snapshot = indexSnapshot(
@@ -623,12 +624,16 @@ public final class WorkflowHandoffAuditService {
 
     /** Stored targets, or Guided stage targets resolved from the task name. */
     static List<String> resolveTargets(WorkflowTask task) {
+        return resolveTargets(task, "");
+    }
+
+    static List<String> resolveTargets(WorkflowTask task, String projectSymbol) {
         if (task == null) return List.of();
         List<String> stored = task.getOptimizerTargetParameters();
         if (stored != null && !stored.isEmpty()) {
             return new ArrayList<>(stored);
         }
-        return ToTheMoon132GuidedWorkflowFactory.resolveStageTargetsForTaskName(task.getName())
+        return ToTheMoon132GuidedWorkflowFactory.resolveStageTargetsForTaskName(task.getName(), projectSymbol)
                 .map(ArrayList::new)
                 .orElseGet(ArrayList::new);
     }

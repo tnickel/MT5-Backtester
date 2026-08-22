@@ -917,6 +917,33 @@ public class DatabaseManager {
         }
     }
 
+    /**
+     * Column order returned by {@link #getWorkflowState()} — keep in sync with that method.
+     */
+    public static final class WorkflowStateIndex {
+        public static final int EXPERT_NAME = 0;
+        public static final int SYMBOL = 1;
+        public static final int PERIOD = 2;
+        public static final int FROM_DATE = 3;
+        public static final int TO_DATE = 4;
+        public static final int DEPOSIT = 5;
+        public static final int CURRENCY = 6;
+        public static final int LEVERAGE = 7;
+        public static final int TICK_MODEL = 8;
+        public static final int EA_PARAMETERS_JSON = 9;
+        public static final int OPT_RESULT_JSON = 10;
+        public static final int SELECTED_DIVERSE_PASSES_JSON = 11;
+        public static final int SENSITIVITY_RESULTS_JSON = 12;
+        public static final int KI_REPORT_TEXT = 13;
+        public static final int FINAL_SELECTED_PASSES_JSON = 14;
+        public static final int LAST_ACTIVE_STEP = 15;
+        public static final int VALIDATION_RESULTS_JSON = 16;
+        public static final int KI_GATE_BYPASSED = 17;
+
+        private WorkflowStateIndex() {
+        }
+    }
+
     public void saveWorkflowState(
             String expertName, String symbol, String period,
             String fromDate, String toDate, int deposit,

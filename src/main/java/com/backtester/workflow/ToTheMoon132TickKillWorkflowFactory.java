@@ -15,7 +15,7 @@ import java.util.List;
  *
  * <ol>
  *   <li>M1-OHLC search on 3 years development, forward split, staged filters</li>
- *   <li>g01: IS/OOS both green, ~100 diverse OHLC survivors, 1:1 every-tick gate,
+   *   <li>g01: IS/OOS both green, ~100 diverse OHLC survivors, 1J every-tick gate (1:1),
  *       then B1–B10; k12 re-clusters later survivors and keeps those ids</li>
  *   <li>3-month every-tick smoke: blow-up kill only, not a rank</li>
  *   <li>1-year every-tick kill: pass/fail on the last development year</li>

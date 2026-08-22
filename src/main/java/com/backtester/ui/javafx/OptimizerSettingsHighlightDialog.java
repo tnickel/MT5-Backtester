@@ -343,8 +343,9 @@ public final class OptimizerSettingsHighlightDialog {
         titleLabel.setText(task.getName());
         stage.setTitle("Optimizer-Setting — " + task.getName());
 
-        List<EaParameter> display = resolveDisplayParameters(task, fallbackEaParameters);
-        Set<String> targets = resolveHighlightNames(task, display);
+        String symbol = project != null ? project.getSymbol() : "";
+        List<EaParameter> display = resolveDisplayParameters(task, fallbackEaParameters, symbol);
+        Set<String> targets = resolveHighlightNames(task, display, symbol);
         highlightNames.addAll(targets);
         ChangeHighlights changes = resolveChangeHighlights(project, task, targets);
         latestChangedNames.addAll(changes.latest());
@@ -504,7 +505,13 @@ public final class OptimizerSettingsHighlightDialog {
 
     static List<EaParameter> resolveDisplayParameters(WorkflowTask task,
                                                       List<EaParameter> fallbackEaParameters) {
-        Set<String> highlightTargets = resolveHighlightNames(task, null);
+        return resolveDisplayParameters(task, fallbackEaParameters, "");
+    }
+
+    static List<EaParameter> resolveDisplayParameters(WorkflowTask task,
+                                                      List<EaParameter> fallbackEaParameters,
+                                                      String projectSymbol) {
+        Set<String> highlightTargets = resolveHighlightNames(task, null, projectSymbol);
         List<EaParameter> snapshot = task != null ? task.getOptimizerParameterSnapshot() : List.of();
         if (snapshot != null && !snapshot.isEmpty()) {
             List<EaParameter> copy = new ArrayList<>(snapshot.size());
@@ -537,6 +544,12 @@ public final class OptimizerSettingsHighlightDialog {
      * last optimized stage. Non-guided optimizers still use stored targets.
      */
     static Set<String> resolveHighlightNames(WorkflowTask task, List<EaParameter> displayIgnored) {
+        return resolveHighlightNames(task, displayIgnored, "");
+    }
+
+    static Set<String> resolveHighlightNames(WorkflowTask task,
+                                             List<EaParameter> displayIgnored,
+                                             String projectSymbol) {
         LinkedHashSet<String> names = new LinkedHashSet<>();
         if (task == null || task.getType() != WorkflowTask.TaskType.OPTIMIZER) {
             return names;
@@ -549,7 +562,7 @@ public final class OptimizerSettingsHighlightDialog {
             return names;
         }
         Optional<List<String>> guided = ToTheMoon132GuidedWorkflowFactory
-                .resolveStageTargetsForTaskName(task.getName());
+                .resolveStageTargetsForTaskName(task.getName(), projectSymbol);
         if (guided.isPresent() && !guided.get().isEmpty()) {
             names.addAll(guided.get());
             return names;
@@ -582,7 +595,7 @@ public final class OptimizerSettingsHighlightDialog {
                     || candidate.getType() != WorkflowTask.TaskType.OPTIMIZER) {
                 continue;
             }
-            Set<String> stageTargets = resolveHighlightNames(candidate, null);
+            Set<String> stageTargets = resolveHighlightNames(candidate, null, project.getSymbol());
             if (producer != null && candidate == producer) {
                 latest.addAll(stageTargets);
             } else {
