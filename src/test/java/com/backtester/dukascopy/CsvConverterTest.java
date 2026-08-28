@@ -9,6 +9,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -25,7 +26,7 @@ public class CsvConverterTest {
         assertEquals(3, CsvConverter.getDigits("USDJPY"));
         assertEquals(3, CsvConverter.getDigits("EURJPY"));
         assertEquals(3, CsvConverter.getDigits("xtiusd"));
-        assertEquals(2, CsvConverter.getDigits("XAUUSD"));
+        assertEquals(3, CsvConverter.getDigits("XAUUSD"));
         assertEquals(5, CsvConverter.getDigits("XAGUSD"));
         assertEquals(5, CsvConverter.getDigits("EURUSD"));
         assertEquals(5, CsvConverter.getDigits("GBPUSD"));
@@ -81,6 +82,7 @@ public class CsvConverterTest {
         assertEquals(1.09980, bar1.close, 0.00001);
         assertEquals(3, bar1.tickVolume);
         assertEquals(0, bar1.volume);
+        assertEquals(10, bar1.spread);
 
         // Second bar: 12:01
         CsvConverter.M1Bar bar2 = bars.get(1);
@@ -90,6 +92,50 @@ public class CsvConverterTest {
         assertEquals(1.10000, bar2.low, 0.00001);
         assertEquals(1.10000, bar2.close, 0.00001);
         assertEquals(1, bar2.tickVolume);
+        assertEquals(10, bar2.spread);
+    }
+
+    @Test
+    public void zoneBasedConversionHonorsDst() {
+        CsvConverter converter = new CsvConverter(ZoneId.of("Europe/Helsinki"));
+
+        // Identical UTC time-of-day, one winter (EET, UTC+2) and one summer instant (EEST, UTC+3)
+        List<Bi5Decoder.Tick> ticks = new ArrayList<>(List.of(
+                new Bi5Decoder.Tick(LocalDateTime.of(2024, 1, 2, 10, 0, 5), 1.10020, 1.10000, 1.0f, 1.0f),
+                new Bi5Decoder.Tick(LocalDateTime.of(2024, 7, 2, 10, 0, 5), 1.10020, 1.10000, 1.0f, 1.0f)));
+
+        List<CsvConverter.M1Bar> bars = converter.aggregateToM1(ticks, "EURUSD");
+
+        assertEquals(2, bars.size());
+        // Winter: 10:00 UTC -> 12:00 Helsinki (EET)
+        assertEquals(LocalDateTime.of(2024, 1, 2, 12, 0), bars.get(0).dateTime);
+        // Summer: 10:00 UTC -> 13:00 Helsinki (EEST) — 1h later than a fixed +2 offset would give
+        assertEquals(LocalDateTime.of(2024, 7, 2, 13, 0), bars.get(1).dateTime);
+
+        // Contrast: the legacy fixed +2 offset maps BOTH instants to 12:00, wrong by 1h in summer
+        CsvConverter legacy = new CsvConverter(2);
+        List<CsvConverter.M1Bar> legacyBars = legacy.aggregateToM1(
+                new ArrayList<>(List.of(
+                        new Bi5Decoder.Tick(LocalDateTime.of(2024, 1, 2, 10, 0, 5), 1.10020, 1.10000, 1.0f, 1.0f),
+                        new Bi5Decoder.Tick(LocalDateTime.of(2024, 7, 2, 10, 0, 5), 1.10020, 1.10000, 1.0f, 1.0f))),
+                "EURUSD");
+        assertEquals(LocalDateTime.of(2024, 1, 2, 12, 0), legacyBars.get(0).dateTime);
+        assertEquals(LocalDateTime.of(2024, 7, 2, 12, 0), legacyBars.get(1).dateTime);
+    }
+
+    @Test
+    public void spreadUsesLastTickOfBarAndInstrumentPointSize() {
+        CsvConverter converter = new CsvConverter();
+        List<Bi5Decoder.Tick> ticks = List.of(
+                new Bi5Decoder.Tick(LocalDateTime.of(2024, 1, 2, 10, 0, 5),
+                        2030.300, 2030.000, 1.0f, 1.0f),
+                new Bi5Decoder.Tick(LocalDateTime.of(2024, 1, 2, 10, 0, 55),
+                        2030.450, 2030.250, 1.0f, 1.0f));
+
+        List<CsvConverter.M1Bar> bars = converter.aggregateToM1(new ArrayList<>(ticks), "XAUUSD");
+
+        assertEquals(1, bars.size());
+        assertEquals(200, bars.get(0).spread);
     }
 
     @Test

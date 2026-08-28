@@ -108,7 +108,7 @@ public class CustomProjectsOverviewView {
         if (loaded.isEmpty()) {
             // Seed a default project template if DB is empty
             CustomProject defaultProj = CustomProject.createDefaultTemplate("EURUSD Breakout H1 - StrategyQuant Flow", "", "EURUSD", "H1");
-            DatabaseManager.getInstance().saveCustomProject(defaultProj);
+            persistProject(defaultProj);
             loaded.add(defaultProj);
         }
 
@@ -259,11 +259,37 @@ public class CustomProjectsOverviewView {
     }
 
     private void saveAllProjectsOrder() {
+        boolean allSaved = true;
         for (int i = 0; i < projectsList.size(); i++) {
             CustomProject p = projectsList.get(i);
             p.setSortOrder(i);
-            DatabaseManager.getInstance().saveCustomProject(p);
+            allSaved &= DatabaseManager.getInstance().saveCustomProject(p);
         }
+        if (!allSaved) {
+            Alert alert = new Alert(Alert.AlertType.ERROR,
+                    "Die neue Reihenfolge konnte nicht vollständig in der Datenbank "
+                            + "gespeichert werden (Datenbankfehler). Sie geht beim nächsten "
+                            + "Start verloren.", ButtonType.OK);
+            alert.setHeaderText("Speichern fehlgeschlagen");
+            alert.showAndWait();
+        }
+    }
+
+    /**
+     * Persists the project and surfaces database write failures — a silently
+     * unsaved project would be lost on restart.
+     */
+    private boolean persistProject(CustomProject proj) {
+        boolean saved = DatabaseManager.getInstance().saveCustomProject(proj);
+        if (!saved) {
+            Alert alert = new Alert(Alert.AlertType.ERROR,
+                    "Das Projekt \"" + proj.getName() + "\" konnte nicht in der Datenbank "
+                            + "gespeichert werden (Datenbankfehler). Änderungen gehen beim "
+                            + "nächsten Start verloren.", ButtonType.OK);
+            alert.setHeaderText("Speichern fehlgeschlagen");
+            alert.showAndWait();
+        }
+        return saved;
     }
 
     private void renameProject(CustomProject proj) {
@@ -280,8 +306,9 @@ public class CustomProjectsOverviewView {
         dialog.showAndWait().ifPresent(newName -> {
             if (!newName.trim().isEmpty() && !newName.trim().equals(proj.getName())) {
                 proj.setName(newName.trim());
-                DatabaseManager.getInstance().saveCustomProject(proj);
-                reloadProjects();
+                if (persistProject(proj)) {
+                    reloadProjects();
+                }
             }
         });
     }
@@ -379,7 +406,9 @@ public class CustomProjectsOverviewView {
             }
 
             CustomProject clonedProj = sourceProj.cloneProject(newName, newSymbol, newPeriod);
-            DatabaseManager.getInstance().saveCustomProject(clonedProj);
+            if (!persistProject(clonedProj)) {
+                return;
+            }
             stage.close();
             reloadProjects();
 
@@ -440,7 +469,7 @@ public class CustomProjectsOverviewView {
         headerLbl.setTextFill(Color.web("#00e5ff"));
 
         Label subLbl = new Label(
-                "Tick-Kill sucht auf M1-OHLC und tötet danach auf kurzen Every-Tick-Fenstern. "
+                "Tick-Kill sucht ein Jahr auf M1-OHLC mit 1:1-Forward und tötet danach auf kurzen Every-Tick-Fenstern. "
                         + "4 Jahre Tick sind nur noch Report.");
         subLbl.setWrapText(true);
         subLbl.setStyle("-fx-text-fill: #94a3b8; -fx-font-size: 12px;");
@@ -538,7 +567,9 @@ public class CustomProjectsOverviewView {
             try {
                 CustomProject newProj = buildProject(template, newName, symbol, period);
                 newProj.setSortOrder(projectsList.size());
-                DatabaseManager.getInstance().saveCustomProject(newProj);
+                if (!persistProject(newProj)) {
+                    return;
+                }
                 stage.close();
                 reloadProjects();
                 if (onOpenProjectCallback != null) {
@@ -595,8 +626,8 @@ public class CustomProjectsOverviewView {
     }
 
     private enum ProjectTemplate {
-        TICK_KILL("ToTheMoon132 Tick-Kill (OHLC-Suche → kurze Tick-Kills → 4J Report)"),
-        GUIDED("ToTheMoon132 Guided (OHLC-Suche → 3J Tick, ohne Smoke/1J-Kill)"),
+        TICK_KILL("ToTheMoon132 Tick-Kill (1J OHLC 1:1 → kurze Tick-Kills → 4J Report)"),
+        GUIDED("ToTheMoon132 Guided (1J OHLC 1:1 → 3J Tick, ohne Smoke/1J-Kill)"),
         STANDARD("Standard Custom Project");
 
         private final String label;

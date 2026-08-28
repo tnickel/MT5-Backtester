@@ -21,7 +21,7 @@ public class SensitivityRunner {
     private Consumer<String> logCallback;
     private Consumer<Integer> progressCallback;
     private Consumer<SensitivityResult> resultUpdateCallback;
-    private OptimizationRunner currentOptRunner = null;
+    private volatile OptimizationRunner currentOptRunner = null;
     private volatile boolean cancelled = false;
     private long lastRunTimestamp;
 
@@ -273,6 +273,19 @@ public class SensitivityRunner {
 
             OptimizationResult.Pass pass = target.getOriginalPass().getBacktestPass();
             Map<String, String> optimizedValues = pass.getParameterValues();
+
+            com.backtester.report.PassPresetResolver.Resolution passResolution =
+                    com.backtester.report.PassPresetResolver.resolveForExecutionWithFallback(
+                            target.getOriginalPass(), baseConfig.getExpert(), allEaParams);
+            if (passResolution.warning() != null) {
+                logMessage("⚠ Pass " + pass.getPassNumber() + ": " + passResolution.warning());
+            }
+            List<EaParameter> passBaseParams = passResolution.parameters();
+            if (passBaseParams == null || passBaseParams.isEmpty()) {
+                target.setStatus("Skipped (No pass parameters)");
+                if (resultUpdateCallback != null) resultUpdateCallback.accept(target);
+                continue;
+            }
             
             List<String> optimizedParamNames = new ArrayList<>(optimizedValues.keySet());
             if (optimizedParamNames.isEmpty()) {
@@ -289,10 +302,15 @@ public class SensitivityRunner {
                     continue;
                 }
 
-                // ----- Find the matching EaParameter definition -----
+                // ----- Find the matching EaParameter definition (ranges from engine, values from pass) -----
                 EaParameter originalParam = null;
                 for (EaParameter p : allEaParams) {
                     if (p.getName().equals(paramName)) { originalParam = p; break; }
+                }
+                if (originalParam == null) {
+                    for (EaParameter p : passBaseParams) {
+                        if (p.getName().equals(paramName)) { originalParam = p; break; }
+                    }
                 }
 
                 // Skip string/enum parameters
@@ -341,19 +359,14 @@ public class SensitivityRunner {
 
                 logMessage("Pass " + pass.getPassNumber() + ": Sweeping parameter " + paramName);
 
-                // Prepare specialized parameters
+                // Prepare specialized parameters from the pass-specific setfile base
                 List<EaParameter> isolatedParams = new ArrayList<>();
                 String sweepStartStr = null, sweepStepStr = null, sweepEndStr = null;
-                for (EaParameter p : allEaParams) {
+                for (EaParameter p : passBaseParams) {
                     EaParameter copy = new EaParameter();
                     copy.setName(p.getName());
                     copy.setStringType(p.isStringType());
-                    
-                    if (optimizedValues.containsKey(p.getName())) {
-                        copy.setValue(optimizedValues.get(p.getName()));
-                    } else {
-                        copy.setValue(p.getValue());
-                    }
+                    copy.setValue(p.getValue());
                     // Crucial: Only the target paramName being swept must be optimizeEnabled = true in MT5 preset!
                     copy.setOptimizeEnabled(false);
 
@@ -362,15 +375,19 @@ public class SensitivityRunner {
                             double baseVal = Double.parseDouble(copy.getValue());
                             if (baseVal == 0.0) baseVal = 0.0001;
 
-                            boolean isInteger = p.getOptimizeStep() != null && !p.getOptimizeStep().contains(".");
+                            EaParameter rangeSource = originalParam != null ? originalParam : p;
+                            boolean isInteger = rangeSource.getOptimizeStep() != null
+                                    && !rangeSource.getOptimizeStep().contains(".");
 
                             double origStep = 0, origStart = 0, origEnd = 0;
                             boolean hasOrigRange = false;
                             try {
-                                if (p.getOptimizeStep() != null && p.getOptimizeStart() != null && p.getOptimizeEnd() != null) {
-                                    origStep  = Double.parseDouble(p.getOptimizeStep());
-                                    origStart = Double.parseDouble(p.getOptimizeStart());
-                                    origEnd   = Double.parseDouble(p.getOptimizeEnd());
+                                if (rangeSource.getOptimizeStep() != null
+                                        && rangeSource.getOptimizeStart() != null
+                                        && rangeSource.getOptimizeEnd() != null) {
+                                    origStep  = Double.parseDouble(rangeSource.getOptimizeStep());
+                                    origStart = Double.parseDouble(rangeSource.getOptimizeStart());
+                                    origEnd   = Double.parseDouble(rangeSource.getOptimizeEnd());
                                     hasOrigRange = origStep > 0;
                                 }
                             } catch (Exception ignored) {}
@@ -442,31 +459,45 @@ public class SensitivityRunner {
                 Path presetFile = testerDir.resolve(presetBaseName);
 
                 try {
+                    java.nio.file.Files.deleteIfExists(presetFile);
                     eaParamManager.writeSetFile(presetFile, isolatedParams, baseConfig.getExpert());
+                    com.backtester.workflow.MasterStrategyLineageService
+                            .verifyPresetWritten(presetFile, isolatedParams);
                 } catch (Exception e) {
                     logMessage("ERROR creating specialized preset for " + paramName + ": " + e.getMessage());
                     continue;
                 }
 
                 // ---- Backtest period sweep (in-sample) ----
-                java.time.LocalDate btFrom = baseConfig.getFromDate();
-                java.time.LocalDate btTo = computeBacktestEndDate(baseConfig);
-                runSweepForPeriod(target, paramName, presetBaseName, baseConfig,
-                        btFrom, btTo, "BT", false,
-                        runTimestamp, sweepStartStr, sweepStepStr, sweepEndStr);
-
-                if (cancelled) break;
-
-                // ---- Forward period sweep (out-of-sample) ----
-                java.time.LocalDate fwFrom = computeForwardStartDate(baseConfig);
-                java.time.LocalDate fwTo = baseConfig.getToDate();
-                if (fwFrom != null && fwTo != null && fwFrom.isBefore(fwTo)) {
+                try {
+                    java.time.LocalDate btFrom = baseConfig.getFromDate();
+                    java.time.LocalDate btTo = computeBacktestEndDate(baseConfig);
                     runSweepForPeriod(target, paramName, presetBaseName, baseConfig,
-                            fwFrom, fwTo, "FW", true,
+                            btFrom, btTo, "BT", false,
                             runTimestamp, sweepStartStr, sweepStepStr, sweepEndStr);
-                } else {
-                    logMessage("Pass " + pass.getPassNumber() + " has no forward period - skipping FW sweep for " + paramName);
+
+                    if (!cancelled) {
+                        // ---- Forward period sweep (out-of-sample) ----
+                        java.time.LocalDate fwFrom = computeForwardStartDate(baseConfig);
+                        java.time.LocalDate fwTo = baseConfig.getToDate();
+                        if (fwFrom != null && fwTo != null && fwFrom.isBefore(fwTo)) {
+                            runSweepForPeriod(target, paramName, presetBaseName, baseConfig,
+                                    fwFrom, fwTo, "FW", true,
+                                    runTimestamp, sweepStartStr, sweepStepStr, sweepEndStr);
+                        } else {
+                            logMessage("Pass " + pass.getPassNumber() + " has no forward period - skipping FW sweep for " + paramName);
+                        }
+                    }
+                } finally {
+                    // The sweep preset is an execution input of the sweeps above only;
+                    // deleting it right after keeps the tester profile dir from
+                    // growing without bound across runs.
+                    try {
+                        java.nio.file.Files.deleteIfExists(presetFile);
+                    } catch (Exception ignored) {
+                    }
                 }
+                if (cancelled) break;
             } // end parameter loop
 
             if (cancelled) break;

@@ -71,4 +71,16 @@ public class Mt5LogTailerTest {
         tailer.processNewLines("AutoTesting processing 23 %", "[Tester] ");
         assertEquals(23, lastProgress.get());
     }
+
+    @Test
+    public void boundedReadSizeCapsHugeLogsWithoutIntegerOverflow() {
+        assertEquals(Mt5LogTailer.MAX_LOG_READ_BYTES,
+                Mt5LogTailer.boundedReadSize((long) Integer.MAX_VALUE + 10_000L, false));
+    }
+
+    @Test
+    public void boundedReadSizeLeavesIncompleteUtf16ByteForNextPoll() {
+        assertEquals(10, Mt5LogTailer.boundedReadSize(11, true));
+        assertEquals(0, Mt5LogTailer.boundedReadSize(1, true));
+    }
 }

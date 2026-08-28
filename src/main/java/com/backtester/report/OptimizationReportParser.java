@@ -31,10 +31,7 @@ public class OptimizationReportParser {
     public void parseHtml(Path htmlFile, OptimizationResult result) throws Exception {
         log.info("Parsing MT4 HTML optimization report: {}", htmlFile);
         byte[] bytes = Files.readAllBytes(htmlFile);
-        String content = new String(bytes, java.nio.charset.StandardCharsets.UTF_8);
-        if (content.contains("\uFFFD")) {
-            content = new String(bytes, java.nio.charset.Charset.forName("windows-1252"));
-        }
+        String content = decodeHtml(bytes);
 
         // Normalize spaces and newlines to simplify regex matching
         content = content.replaceAll("\\s+", " ");
@@ -307,5 +304,39 @@ public class OptimizationReportParser {
         } catch (NumberFormatException e) {
             return 0.0;
         }
+    }
+
+    private static String decodeHtml(byte[] bytes) {
+        if (bytes.length >= 2) {
+            int first = bytes[0] & 0xFF;
+            int second = bytes[1] & 0xFF;
+            if (first == 0xFF && second == 0xFE) {
+                return new String(bytes, java.nio.charset.StandardCharsets.UTF_16LE);
+            }
+            if (first == 0xFE && second == 0xFF) {
+                return new String(bytes, java.nio.charset.StandardCharsets.UTF_16BE);
+            }
+        }
+
+        int evenNuls = 0;
+        int oddNuls = 0;
+        int sampleLength = Math.min(bytes.length, 4096);
+        for (int i = 0; i < sampleLength; i++) {
+            if (bytes[i] == 0) {
+                if ((i & 1) == 0) evenNuls++;
+                else oddNuls++;
+            }
+        }
+        if (oddNuls > sampleLength / 8 && oddNuls > evenNuls * 2) {
+            return new String(bytes, java.nio.charset.StandardCharsets.UTF_16LE);
+        }
+        if (evenNuls > sampleLength / 8 && evenNuls > oddNuls * 2) {
+            return new String(bytes, java.nio.charset.StandardCharsets.UTF_16BE);
+        }
+
+        String utf8 = new String(bytes, java.nio.charset.StandardCharsets.UTF_8);
+        return utf8.contains("\uFFFD")
+                ? new String(bytes, java.nio.charset.Charset.forName("windows-1252"))
+                : utf8;
     }
 }

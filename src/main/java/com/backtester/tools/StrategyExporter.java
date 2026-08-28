@@ -353,41 +353,28 @@ public class StrategyExporter {
                 String symbol = entry.getKey();
                 StrategyCandidate sc = entry.getValue();
 
-                String eaName = EaParameterManager.extractEaBaseName(sc.expert);
-                String tf = sc.period.replaceAll("[^a-zA-Z0-9_.-]", "_");
-                String sym = sc.symbol.replaceAll("[^a-zA-Z0-9_.-]", "_");
+                String eaName = sanitizeFilenameComponent(EaParameterManager.extractEaBaseName(sc.expert));
+                String tf = sanitizeFilenameComponent(sc.period);
+                String sym = sanitizeFilenameComponent(sc.symbol);
                 double ddVal = (sc.res2y != null) ? sc.res2y.getMaxDrawdown() : sc.combinedPass.getBtDd();
                 int ddPct = Double.isNaN(ddVal) ? 0 : (int) Math.round(ddVal);
                 String filename = String.format("%s_%s_%s_%dproz_Pass%d.set", eaName, sym, tf, ddPct, sc.combinedPass.getPassNumber());
                 Path destPath = exportDir.resolve(filename);
 
-                // Reconstruct full parameters
-                List<EaParameter> finalParams = new ArrayList<>();
-                for (EaParameter base : sc.baseParameters) {
-                    EaParameter p = new EaParameter();
-                    p.setName(base.getName());
-                    p.setStringType(base.isStringType());
-                    p.setSection(base.getSection());
-                    
-                    String passVal = sc.combinedPass.getBacktestPass().getParameter(base.getName());
-                    if (passVal != null && !passVal.isEmpty()) {
-                        p.setValue(passVal);
-                    } else {
-                        // An optimized parameter without a report column was held constant
-                        // at its optimize start; MT5 never read the value field for it.
-                        p.setValue(com.backtester.report.PassPresetResolver.effectiveBaseValue(base));
-                    }
-                    if (isMagicNumberParameter(p.getName())) {
-                        p.setValue(String.valueOf(sc.combinedPass.getPassNumber()));
-                    }
-                    if (isOrderCommentParameter(p.getName())) {
-                        p.setValue(String.format("%dproz_Pass%d", ddPct, sc.combinedPass.getPassNumber()));
-                    }
-                    p.setOptimizeEnabled(false);
-                    finalParams.add(p);
+                // Reconstruct full parameters from embedded/archived pass preset
+                com.backtester.report.PassPresetResolver.Resolution resolution =
+                        com.backtester.report.PassPresetResolver.resolveForExecutionWithFallback(
+                                sc.combinedPass, sc.expert, sc.baseParameters);
+                List<EaParameter> finalParams = new ArrayList<>(resolution.parameters());
+                if (resolution.warning() != null) {
+                    System.out.printf("  WARNING Pass %d: %s%n",
+                            sc.combinedPass.getPassNumber(), resolution.warning());
                 }
 
+                Files.deleteIfExists(destPath);
                 eaParamManager.writeSetFile(destPath, finalParams, eaName);
+                com.backtester.workflow.MasterStrategyLineageService
+                        .verifyPresetWritten(destPath, finalParams);
                 System.out.printf("  Exported %s parameter settings successfully.%n", symbol);
             }
 
@@ -421,16 +408,10 @@ public class StrategyExporter {
         }
     }
 
-    private static boolean isMagicNumberParameter(String name) {
-        if (name == null) return false;
-        String lower = name.toLowerCase();
-        return lower.equals("magic") || lower.equals("inpmagicnumber") || lower.equals("magicnumber");
-    }
-
-    private static boolean isOrderCommentParameter(String name) {
-        if (name == null) return false;
-        String lower = name.toLowerCase();
-        return lower.equals("comment") || lower.equals("inp_order_comment") || lower.equals("ordercomment") || lower.equals("order_comment");
+    static String sanitizeFilenameComponent(String value) {
+        if (value == null) return "_";
+        String sanitized = value.replaceAll("[^a-zA-Z0-9_.-]", "_");
+        return sanitized.isBlank() ? "_" : sanitized;
     }
 
     private static void generatePdfReport(List<StrategyCandidate> allCandidates, Map<String, StrategyCandidate> bestStrategies, File file) throws Exception {

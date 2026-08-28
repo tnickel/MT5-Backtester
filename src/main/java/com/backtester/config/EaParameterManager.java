@@ -382,8 +382,11 @@ public class EaParameterManager {
         }
 
         Path mt5Dir = Paths.get(terminalPath).getParent();
-        String processName = appConfig.isMt4(expertPath) ? "terminal" : "terminal64";
-        killExistingTerminalProcesses(mt5Dir, processName);
+        // Never silently kill MetaTrader — a long manual optimization must survive.
+        if (!confirmKillExistingTerminals(mt5Dir)) {
+            log.warn("Default-config generation aborted: MetaTrader kill declined (install {}).", mt5Dir);
+            return false;
+        }
 
         Path testerDir = appConfig.isMt4(expertPath) ? mt5Dir.resolve("tester") : mt5Dir.resolve("MQL5").resolve("Profiles").resolve("Tester");
         Path expectedSetFile = appConfig.isMt4(expertPath) ? testerDir.resolve(eaName + ".ini") : testerDir.resolve(eaName + ".set");
@@ -509,21 +512,15 @@ public class EaParameterManager {
         }
     }
 
-    private void killExistingTerminalProcesses(Path mtDir, String processName) {
-        try {
-            String searchPath = mtDir.toAbsolutePath().toString().replace("'", "''");
-            ProcessBuilder killPb = new ProcessBuilder(
-                "powershell", "-NoProfile", "-Command",
-                "$procs = Get-Process " + processName + " -ErrorAction SilentlyContinue | " +
-                "Where-Object { $_.Path -and $_.Path.StartsWith('" + searchPath + "') }; " +
-                "if ($procs) { $procs | Stop-Process -Force; Start-Sleep -Milliseconds 500 }"
-            );
-            killPb.redirectErrorStream(true);
-            Process killProc = killPb.start();
-            killProc.waitFor(5, java.util.concurrent.TimeUnit.SECONDS);
-        } catch (Exception e) {
-            log.warn("Failed to check or kill existing terminal processes", e);
-        }
+    /**
+     * Asks before ending MetaTrader at this install. Returns true when it is safe
+     * to continue (no terminals, or user confirmed kill). Returns false if the
+     * user refused — caller must abort without touching the process.
+     */
+    private boolean confirmKillExistingTerminals(Path mtDir) {
+        int killed = com.backtester.engine.Mt5ProcessGuard.confirmKillAllTerminalsForInstall(
+                mtDir, null, msg -> log.info(msg), false);
+        return killed >= 0;
     }
 
     /**
@@ -890,6 +887,7 @@ public class EaParameterManager {
 
         } catch (IOException e) {
             log.error("Failed to write .set file: " + setFile, e);
+            throw new java.io.UncheckedIOException("Failed to write .set file: " + setFile, e);
         }
     }
 }

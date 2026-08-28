@@ -1,8 +1,6 @@
 package com.backtester.engine;
 
 import com.backtester.config.AppConfig;
-import com.backtester.config.EaParameter;
-import com.backtester.config.EaParameterManager;
 import com.backtester.config.MetaTraderPlatform;
 import com.backtester.report.BacktestArtifactReplayResolver;
 import com.backtester.report.OptimizationReportParser;
@@ -79,12 +77,14 @@ public class OptimizationRunner {
         if (optConfig.getToDate() != null) result.setToDate(optConfig.getToDate().toString());
 
         tailer = null;
-        Path presetSnapshot = null;
         MetaTraderPlatform platform = config.getPlatform(optConfig.getExpert());
 
-        // Pre-flight: check for stale MetaTrader processes from previous runs
-        if (!Mt5ProcessGuard.ensureNoStaleProcesses(null, this::logMessage, optConfig.isShutdownTerminal())) {
-            logMessage("Optimization aborted: user declined to kill stale MetaTrader process.");
+        // Pre-flight: check for stale MetaTrader processes from previous runs.
+        // autoKillMt5=true terminates them WITHOUT asking (unattended runs);
+        // false shows a confirmation dialog (GUI) or proceeds without killing (CLI).
+        if (!Mt5ProcessGuard.ensureNoStaleProcesses(null, this::logMessage, optConfig.isAutoKillMt5())) {
+            logMessage("Optimization aborted: stale MetaTrader process remains running"
+                    + " (kill declined, failed, or autoKillMt5=false in CLI mode).");
             result.setMessage("Aborted: stale MetaTrader process");
             return result;
         }
@@ -101,14 +101,25 @@ public class OptimizationRunner {
             // 2. Cleanup leftover OptimizationReport* only (NOT Tester/cache/*.opt).
             // Wiping .opt on every run would force every guided stage to recompute from
             // scratch. Cache is cleared only via explicit Clear-all.
-            // Kill leftover terminals for this install so /config launches do not
-            // "delegate" and exit without Forward.
+            // autoKillMt5=true kills terminals of THIS install without asking (used by
+            // unattended workflow/automation runs); false asks first (GUI) — a manual
+            // multi-day optimization must never be destroyed silently. In CLI mode a
+            // declined/absent kill aborts the run instead of asking.
+            // Note: optConfig.isShutdownTerminal() only controls whether OUR launched
+            // MT closes itself after the run (ini ShutdownTerminal=1). It must NOT
+            // silently kill a manually started MetaTrader.
             String terminalPath = config.getTerminalPath(optConfig.getExpert());
             Path mt5Dir = Paths.get(terminalPath).getParent();
-            int killed = Mt5ProcessGuard.killAllTerminalsForInstall(mt5Dir, this::logMessage);
+            int killed = Mt5ProcessGuard.confirmKillAllTerminalsForInstall(
+                    mt5Dir, null, this::logMessage, optConfig.isAutoKillMt5());
+            if (killed < 0) {
+                result.setMessage("Aborted: MetaTrader still running at install path"
+                        + " (kill declined or autoKillMt5=false in CLI mode)");
+                logMessage("Optimization aborted: MetaTrader remains running at install path.");
+                return result;
+            }
             if (killed > 0) {
                 logMessage("Beendet " + killed + " alte terminal64-Prozesse für diese MT5-Installation.");
-                Thread.sleep(800);
             }
             cleanupOldReports(mt5Dir, REPORT_FILENAME);
 
@@ -121,7 +132,7 @@ public class OptimizationRunner {
             // Backtester_<EA>.set is overwritten by the next optimization, and the
             // report only lists parameters that actually varied — without this
             // copy a pass can never be reproduced.
-            presetSnapshot = snapshotExpertParameters(optConfig, outputDir);
+            snapshotExpertParameters(optConfig, outputDir);
 
             // 4. Copy tester.ini to MetaTrader directory to avoid path-with-spaces issues
             // (Java's ProcessBuilder quotes the entire /config: argument when the path has spaces,
@@ -339,7 +350,7 @@ public class OptimizationRunner {
                 }
             } else {
                 logMessage("Warning: Optimization report not found at " + reportFile + " — no passes produced.");
-                result.setMessage("Keine Daten — Optimierung hat keine Ergebnisse produziert.");
+                result.setMessage("Optimization report file not found: " + reportFile);
             }
 
             // Look for forward test report if enabled (only for MT5)
@@ -358,7 +369,6 @@ public class OptimizationRunner {
             }
 
             result.linkPassesToOutputDirectory();
-            injectUnreportedOptimizedParameters(result, presetSnapshot);
 
             String modelName = (optConfig.getModel() >= 0 && optConfig.getModel() < OptimizationConfig.MODEL_NAMES.length)
                     ? OptimizationConfig.MODEL_NAMES[optConfig.getModel()]
@@ -412,6 +422,13 @@ public class OptimizationRunner {
      * Copies the preset the optimization is started with into its report
      * directory, so the run stays reproducible after the shared preset file has
      * been overwritten by a later run.
+     *
+     * <p>Passes are NOT bulk-embedded with concrete .set lines anymore (one full
+     * setfile per pass was an unbounded memory spike on large optimizations).
+     * Instead, {@link com.backtester.report.PassPresetResolver} resolves each
+     * pass from this archived preset plus its report columns at execution time
+     * and embeds the concrete lines lazily into the few passes that are actually
+     * retested, exported or inspected.
      */
     private Path snapshotExpertParameters(OptimizationConfig optConfig, Path outputDir) {
         String presetName = optConfig.getExpertParameters();
@@ -435,56 +452,10 @@ public class OptimizationRunner {
             return snapshot;
         } catch (Exception e) {
             log.error("Failed to archive optimization preset", e);
-            logMessage("Warning: could not archive the optimization preset — passes will not be reproducible: "
-                    + e.getMessage());
+            logMessage("ERROR: could not archive the optimization preset — passes cannot be "
+                    + "reconstructed from an archived preset and later retests may fall back "
+                    + "to a shared EA config: " + e.getMessage());
             return null;
-        }
-    }
-
-    /**
-     * MT5 omits a report column for every optimized parameter whose range
-     * collapses to a single value, because it is constant across all passes. Its
-     * real value is the optimize start, which is otherwise lost. Writing it into
-     * each pass keeps the pass self-contained even after the report directory is gone.
-     */
-    private void injectUnreportedOptimizedParameters(OptimizationResult result, Path presetSnapshot) {
-        if (presetSnapshot == null || result == null) return;
-        java.util.List<OptimizationResult.Pass> passes = result.getPasses();
-        if (passes == null || passes.isEmpty()) return;
-
-        try {
-            java.util.List<EaParameter> preset = new EaParameterManager().readSetFile(presetSnapshot);
-            if (preset == null || preset.isEmpty()) return;
-
-            java.util.Set<String> reported = new java.util.HashSet<>();
-            for (OptimizationResult.Pass p : passes) {
-                if (p.getParameterValues() != null) {
-                    reported.addAll(p.getParameterValues().keySet());
-                }
-            }
-
-            java.util.Map<String, String> constants = new java.util.LinkedHashMap<>();
-            for (EaParameter p : preset) {
-                if (!p.isOptimizeEnabled() || p.isStringType()) continue;
-                if (reported.contains(p.getName())) continue;
-                String start = p.getOptimizeStart();
-                if (start == null || start.isBlank()) continue;
-                constants.put(p.getName(), EaParameter.normalizeMql5Value(start.trim()));
-            }
-            if (constants.isEmpty()) return;
-
-            for (OptimizationResult.Pass p : passes) {
-                constants.forEach(p::setParameter);
-            }
-            if (result.getForwardPasses() != null) {
-                for (OptimizationResult.Pass p : result.getForwardPasses()) {
-                    constants.forEach(p::setParameter);
-                }
-            }
-            logMessage("Recovered " + constants.size()
-                    + " optimized parameter(s) that MT5 omitted from the report: " + constants);
-        } catch (Exception e) {
-            log.warn("Could not recover unreported optimized parameters", e);
         }
     }
 
@@ -619,13 +590,13 @@ public class OptimizationRunner {
     private boolean isMt5ProcessRunning(Path mt5Dir) {
         if (mt5Dir == null) return false;
         try {
-            String prefix = mt5Dir.toAbsolutePath().normalize().toString().toLowerCase();
+            String prefix = mt5Dir.toAbsolutePath().normalize().toString().toLowerCase(java.util.Locale.ROOT);
             return ProcessHandle.allProcesses()
                 .anyMatch(ph -> {
                     if (!ph.isAlive()) return false;
                     java.util.Optional<String> cmd = ph.info().command();
                     if (cmd.isEmpty()) return false;
-                    String path = cmd.get().toLowerCase().replace('/', '\\');
+                    String path = cmd.get().toLowerCase(java.util.Locale.ROOT).replace('/', '\\');
                     boolean isTerminal = path.endsWith("\\terminal64.exe")
                             || path.endsWith("\\terminal.exe")
                             || path.endsWith("terminal64.exe")

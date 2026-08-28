@@ -17,6 +17,8 @@ import com.lowagie.text.Image;
 import com.lowagie.text.Element;
 import com.lowagie.text.Phrase;
 import com.lowagie.text.Chunk;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.*;
 import java.awt.image.BufferedImage;
@@ -34,6 +36,8 @@ import java.util.*;
  * Includes synthetic equity curves and parameter sweep charts drawn via Java2D.
  */
 public class PdfReportGenerator {
+
+    private static final Logger log = LoggerFactory.getLogger(PdfReportGenerator.class);
 
     private static final Font TITLE_FONT = FontFactory.getFont(FontFactory.HELVETICA_BOLD, 22, Font.BOLD, new Color(15, 23, 42));
     private static final Font SUBTITLE_FONT = FontFactory.getFont(FontFactory.HELVETICA, 12, Font.ITALIC, new Color(71, 85, 105));
@@ -68,8 +72,10 @@ public class PdfReportGenerator {
      */
     public static void generateReport(WorkflowEngine engine, CombinedPass cp, File file) throws Exception {
         Document document = new Document();
-        PdfWriter.getInstance(document, new FileOutputStream(file));
-        document.open();
+        boolean completed = false;
+        try (FileOutputStream output = new FileOutputStream(file)) {
+            PdfWriter.getInstance(document, output);
+            document.open();
 
         Pass bt = cp.getBacktestPass();
         Pass fw = cp.getForwardPass();
@@ -332,7 +338,25 @@ public class PdfReportGenerator {
             document.add(sweepTable);
         }
 
-        document.close();
+            document.close();
+            completed = true;
+        } catch (Exception e) {
+            try {
+                if (!completed) java.nio.file.Files.deleteIfExists(file.toPath());
+            } catch (java.io.IOException cleanupError) {
+                e.addSuppressed(cleanupError);
+            }
+            throw e;
+        } finally {
+            try {
+                if (document.isOpen()) document.close();
+            } catch (Exception cleanupError) {
+                // On failure the try-with-resources has already closed the FileOutputStream,
+                // so document.close() can throw "stream closed" — swallow it so the original
+                // exception propagates instead of being masked.
+                log.debug("Failed to close PDF document during cleanup", cleanupError);
+            }
+        }
     }
 
     /**
@@ -340,8 +364,10 @@ public class PdfReportGenerator {
      */
     public static void generatePortfolioReport(WorkflowEngine engine, List<CombinedPass> passes, File file) throws Exception {
         Document document = new Document();
-        PdfWriter.getInstance(document, new FileOutputStream(file));
-        document.open();
+        boolean completed = false;
+        try (FileOutputStream output = new FileOutputStream(file)) {
+            PdfWriter.getInstance(document, output);
+            document.open();
 
         String eaName = extractEaName(engine.getExpert());
 
@@ -437,7 +463,25 @@ public class PdfReportGenerator {
             document.add(reportPara);
         }
 
-        document.close();
+            document.close();
+            completed = true;
+        } catch (Exception e) {
+            try {
+                if (!completed) java.nio.file.Files.deleteIfExists(file.toPath());
+            } catch (java.io.IOException cleanupError) {
+                e.addSuppressed(cleanupError);
+            }
+            throw e;
+        } finally {
+            try {
+                if (document.isOpen()) document.close();
+            } catch (Exception cleanupError) {
+                // On failure the try-with-resources has already closed the FileOutputStream,
+                // so document.close() can throw "stream closed" — swallow it so the original
+                // exception propagates instead of being masked.
+                log.debug("Failed to close PDF document during cleanup", cleanupError);
+            }
+        }
     }
 
     // --- Helper Methods ---

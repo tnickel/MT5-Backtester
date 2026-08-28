@@ -11,7 +11,9 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Base64;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
@@ -63,7 +65,7 @@ public class VirtualDesktopHelper {
 
         Thread thread = new Thread(() -> {
             log.info("Starting background window hiding loop for: {}", escapedExe);
-            String targetPath = escapedExe.replace("'", "''");
+            String targetPath = psQuote(escapedExe);
             String psScript =
                 "Add-Type -TypeDefinition @\"\n" +
                 "using System;\n" +
@@ -119,12 +121,14 @@ public class VirtualDesktopHelper {
 
     /** Starts a process in the background and hides its main window immediately using Win32 API ShowWindow. */
     public static Process startHidden(String executable, List<String> args, Path workingDir) {
-        String os = System.getProperty("os.name").toLowerCase();
+        String os = System.getProperty("os.name").toLowerCase(java.util.Locale.ROOT);
         if (!os.contains("win")) {
             return startNormally(executable, args, workingDir);
         }
 
+        AtomicLong targetPid = new AtomicLong(-1L);
         try {
+            Set<Long> processesBeforeLaunch = runningProcessIdsForExecutable(executable);
             StringBuilder argString = new StringBuilder();
             if (args != null && !args.isEmpty()) {
                 for (int i = 0; i < args.size(); i++) {
@@ -133,28 +137,18 @@ public class VirtualDesktopHelper {
                 }
             }
 
-            String psScript = buildHiddenPowerShellScript(executable, argString.toString());
-
-            ProcessBuilder pb = new ProcessBuilder(
-                "powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", psScript
-            );
-            pb.redirectErrorStream(true);
-            if (workingDir != null) {
-                pb.directory(workingDir.toFile());
-            }
+            String psScript = buildHiddenPowerShellScript(executable, args);
 
             log.info("Starting process hidden: {} {}", executable, argString);
-            Process psProcess = pb.start();
 
-            AtomicLong targetPid = new AtomicLong(-1L);
-            boolean completed = awaitProcess(psProcess, line -> {
+            boolean completed = executePowerShellScript(psScript, line -> {
                 log.debug("[VD-PS-Hide] {}", line);
                 if (line.startsWith("STARTED_PID:")) {
                     try {
                         targetPid.set(Long.parseLong(line.substring("STARTED_PID:".length()).trim()));
                     } catch (NumberFormatException ignored) {}
                 }
-            }, 30, TimeUnit.SECONDS);
+            }, workingDir);
 
             if (!completed) {
                 destroyStartedTarget(targetPid.get());
@@ -164,22 +158,88 @@ public class VirtualDesktopHelper {
 
             if (targetPid.get() > 0) {
                 log.info("Process started hidden with PID: {}", targetPid.get());
-                final long finalPid = targetPid.get();
-                return ProcessHandle.of(finalPid)
-                    .map(ph -> (Process) new PidProcess(ph))
-                    .orElse(null);
+                // MetaTrader can hand the launch to its LiveUpdate executable and only
+                // start the requested terminal after the updater has finished.  Do not
+                // return the short-lived launcher; wait for the exact terminal binary.
+                return resolveStartedProcess(targetPid.get(), executable, processesBeforeLaunch, 90_000L);
             } else {
                 log.warn("Could not determine PID from PowerShell output, falling back to normal start");
                 return startNormally(executable, args, workingDir);
             }
 
         } catch (InterruptedException e) {
+            destroyStartedTarget(targetPid.get());
             Thread.currentThread().interrupt();
             log.warn("PowerShell hidden launch interrupted");
             return null;
         } catch (Exception e) {
             log.error("Failed to start process hidden, falling back to normal start", e);
             return startNormally(executable, args, workingDir);
+        }
+    }
+
+    static Set<Long> runningProcessIdsForExecutable(String executable) {
+        Set<Long> processIds = new HashSet<>();
+        ProcessHandle.allProcesses().forEach(handle -> {
+            if (handle.isAlive() && executableMatches(handle, executable)) {
+                processIds.add(handle.pid());
+            }
+        });
+        return processIds;
+    }
+
+    static Process resolveStartedProcess(long reportedPid,
+                                         String executable,
+                                         Set<Long> processesBeforeLaunch,
+                                         long timeoutMillis) throws InterruptedException {
+        long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(Math.max(0L, timeoutMillis));
+        Set<Long> excluded = processesBeforeLaunch != null ? processesBeforeLaunch : Set.of();
+
+        do {
+            ProcessHandle reported = ProcessHandle.of(reportedPid).orElse(null);
+            if (reported != null && reported.isAlive() && executableMatches(reported, executable)) {
+                return new PidProcess(reported);
+            }
+
+            List<ProcessHandle> replacements = ProcessHandle.allProcesses()
+                .filter(ProcessHandle::isAlive)
+                .filter(handle -> !excluded.contains(handle.pid()))
+                .filter(handle -> executableMatches(handle, executable))
+                .limit(2)
+                .toList();
+            if (replacements.size() == 1) {
+                ProcessHandle replacement = replacements.getFirst();
+                log.info("MT5 launcher PID {} was replaced; tracking actual process PID {}.",
+                    reportedPid, replacement.pid());
+                return new PidProcess(replacement);
+            }
+            if (replacements.size() > 1) {
+                log.error("Cannot safely track MT5 launcher PID {}: multiple new processes match {}.",
+                    reportedPid, executable);
+                return null;
+            }
+
+            if (System.nanoTime() >= deadline) {
+                return null;
+            }
+            Thread.sleep(100L);
+        } while (true);
+    }
+
+    private static boolean executableMatches(ProcessHandle handle, String executable) {
+        if (handle == null || executable == null || executable.isBlank()) {
+            return false;
+        }
+        return handle.info().command()
+            .map(command -> normalizedExecutable(command).equals(normalizedExecutable(executable)))
+            .orElse(false);
+    }
+
+    private static String normalizedExecutable(String executable) {
+        try {
+            return Path.of(executable).toAbsolutePath().normalize().toString().toLowerCase(java.util.Locale.ROOT);
+        } catch (RuntimeException ignored) {
+            return executable.replace('/', '\\').toLowerCase(java.util.Locale.ROOT);
         }
     }
 
@@ -203,12 +263,14 @@ public class VirtualDesktopHelper {
     }
 
     public static Process startOnDesktop(String executable, List<String> args, Path workingDir, int desktopIndex) {
-        String os = System.getProperty("os.name").toLowerCase();
+        String os = System.getProperty("os.name").toLowerCase(java.util.Locale.ROOT);
         if (!os.contains("win")) {
             return startNormally(executable, args, workingDir);
         }
 
+        AtomicLong targetPid = new AtomicLong(-1L);
         try {
+            Set<Long> processesBeforeLaunch = runningProcessIdsForExecutable(executable);
             StringBuilder argString = new StringBuilder();
             if (args != null && !args.isEmpty()) {
                 for (int i = 0; i < args.size(); i++) {
@@ -218,30 +280,32 @@ public class VirtualDesktopHelper {
             }
 
             int desktopNum = desktopIndex + 1;
-            String psScript = buildPowerShellScript(executable, argString.toString(), desktopIndex);
+            String psScript = buildPowerShellScript(executable, args, desktopIndex);
 
             log.info("Starting process on Virtual Desktop {} (move-window): {} {}", desktopNum, executable, argString);
 
-            final long[] targetPid = new long[]{-1};
             executePowerShellScript(psScript, line -> {
                 log.info("[VD-PS] {}", line);
                 if (line.startsWith("STARTED_PID:")) {
                     try {
-                        targetPid[0] = Long.parseLong(line.substring("STARTED_PID:".length()).trim());
+                        targetPid.set(Long.parseLong(line.substring("STARTED_PID:".length()).trim()));
                     } catch (NumberFormatException ignored) {}
                 }
             }, workingDir);
 
-            if (targetPid[0] > 0) {
-                log.info("Process successfully launched on Virtual Desktop {} with PID: {}", desktopNum, targetPid[0]);
-                return ProcessHandle.of(targetPid[0])
-                    .map(ph -> (Process) new PidProcess(ph))
-                    .orElse(null);
+            if (targetPid.get() > 0) {
+                log.info("Process successfully launched on Virtual Desktop {} with PID: {}", desktopNum, targetPid.get());
+                return resolveStartedProcess(targetPid.get(), executable, processesBeforeLaunch, 90_000L);
             } else {
                 log.warn("Could not determine PID from PowerShell output, falling back to normal start");
                 return startNormally(executable, args, workingDir);
             }
 
+        } catch (InterruptedException e) {
+            destroyStartedTarget(targetPid.get());
+            Thread.currentThread().interrupt();
+            log.warn("Virtual-desktop launch interrupted");
+            return null;
         } catch (Exception e) {
             log.error("Failed to start process on Virtual Desktop {}, falling back to normal start", desktopIndex + 1, e);
             return startNormally(executable, args, workingDir);
@@ -250,7 +314,7 @@ public class VirtualDesktopHelper {
 
     public static void moveProcessToDesktop(Process process, int desktopIndex) {
         if (process == null) return;
-        String os = System.getProperty("os.name").toLowerCase();
+        String os = System.getProperty("os.name").toLowerCase(java.util.Locale.ROOT);
         if (!os.contains("win")) return;
 
         long pid = process.pid();
@@ -277,6 +341,9 @@ public class VirtualDesktopHelper {
                     "    try { Move-Window -Desktop $targetDesktop -Hwnd $hwnd; Write-Host 'MOVED'; } catch { Write-Host \"MOVE_ERROR: $_\"; } " +
                     "}";
                 executePowerShellScript(psScript, line -> log.info("[VD-Move] {}", line), null);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                log.warn("Moving process {} to Desktop {} interrupted", pid, desktopNum);
             } catch (Exception e) {
                 log.error("Failed to move process {} to Desktop {}", pid, desktopNum, e);
             }
@@ -287,7 +354,15 @@ public class VirtualDesktopHelper {
         moveProcessToDesktop(process, 1);
     }
 
-    private static void executePowerShellScript(String psScript, Consumer<String> lineConsumer, Path workingDir) {
+    /**
+     * Runs the script via {@code -EncodedCommand} so no shell layer can re-split or interpolate it.
+     *
+     * @return true if the PowerShell child completed within the timeout
+     * @throws InterruptedException when the calling thread is interrupted — the child is
+     *         terminated and the interruption propagates so callers can bail out without
+     *         running any fallback launch
+     */
+    private static boolean executePowerShellScript(String psScript, Consumer<String> lineConsumer, Path workingDir) throws InterruptedException {
         Process ps = null;
         try {
             byte[] bytes = psScript.getBytes(StandardCharsets.UTF_16LE);
@@ -301,15 +376,16 @@ public class VirtualDesktopHelper {
                 pb.directory(workingDir.toFile());
             }
             ps = pb.start();
-            if (!awaitProcess(ps, lineConsumer, 30, TimeUnit.SECONDS)) {
-                log.warn("PowerShell virtual-desktop command timed out after 30 seconds");
+            boolean completed = awaitProcess(ps, lineConsumer, 30, TimeUnit.SECONDS);
+            if (!completed) {
+                log.warn("PowerShell command timed out after 30 seconds");
             }
-        } catch (InterruptedException e) {
-            if (ps != null) terminateProcess(ps);
-            Thread.currentThread().interrupt();
-            log.warn("PowerShell virtual-desktop command interrupted");
-        } catch (Exception e) {
+            return completed;
+        } catch (IOException e) {
             log.error("Failed to execute PowerShell script", e);
+            return false;
+        } finally {
+            if (ps != null && ps.isAlive()) terminateProcess(ps);
         }
     }
 
@@ -386,9 +462,27 @@ public class VirtualDesktopHelper {
         }
     }
 
-    private static String buildPowerShellScript(String executable, String arguments, int desktopIndex) {
-        String escapedExe = executable.replace("'", "''");
-        String escapedArgs = arguments.replace("'", "''");
+    /** Escapes a PowerShell string literal by doubling embedded single quotes. */
+    private static String psQuote(String value) {
+        return value == null ? "" : value.replace("'", "''");
+    }
+
+    /** Renders the arguments as a quoted PowerShell array ({@code @('a','b')}), or an empty string when there are none. */
+    private static String toPowerShellArgumentArray(List<String> arguments) {
+        if (arguments == null || arguments.isEmpty()) {
+            return "";
+        }
+        StringBuilder array = new StringBuilder("@(");
+        for (int i = 0; i < arguments.size(); i++) {
+            if (i > 0) array.append(",");
+            array.append("'").append(psQuote(arguments.get(i))).append("'");
+        }
+        return array.append(")").toString();
+    }
+
+    private static String buildPowerShellScript(String executable, List<String> arguments, int desktopIndex) {
+        String escapedExe = psQuote(executable);
+        String argumentList = toPowerShellArgumentArray(arguments);
         int targetNum = desktopIndex + 1;
 
         return "Import-Module VirtualDesktop -WarningAction SilentlyContinue 3>$null; " +
@@ -402,9 +496,9 @@ public class VirtualDesktopHelper {
             "} " +
             "$targetDesktop = Get-Desktop " + desktopIndex + "; " +
             "Write-Host \"VD_STATUS: Target desktop = Desktop " + targetNum + " ($targetDesktop)\"; " +
-            (escapedArgs.isEmpty()
+            (argumentList.isEmpty()
                 ? "$app = Start-Process -FilePath '" + escapedExe + "' -PassThru; "
-                : "$app = Start-Process -FilePath '" + escapedExe + "' -ArgumentList '" + escapedArgs + "' -PassThru; ") +
+                : "$app = Start-Process -FilePath '" + escapedExe + "' -ArgumentList " + argumentList + " -PassThru; ") +
             "$spid = $app.Id; " +
             "Write-Host \"STARTED_PID:$spid\"; " +
             "$hwnd = [IntPtr]::Zero; " +
@@ -428,19 +522,20 @@ public class VirtualDesktopHelper {
             "} else { Write-Host 'NO_HWND_FOUND'; }";
     }
 
-    private static String buildHiddenPowerShellScript(String executable, String arguments) {
-        String escapedExe = executable.replace("'", "''");
-        String escapedArgs = arguments.replace("'", "''");
-        if (!escapedArgs.contains("/hide")) {
-            escapedArgs = (escapedArgs + " /hide").trim();
+    private static String buildHiddenPowerShellScript(String executable, List<String> arguments) {
+        String escapedExe = psQuote(executable);
+        List<String> argList = arguments == null ? new ArrayList<>() : new ArrayList<>(arguments);
+        if (!argList.contains("/hide")) {
+            argList.add("/hide");
         }
+        String argumentList = toPowerShellArgumentArray(argList);
 
         return "$showWindow = Add-Type -MemberDefinition ' " +
             "[DllImport(\"user32.dll\")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow); " +
             "' -Name 'Win32ShowWindow' -Namespace 'Win32' -PassThru; " +
-            (escapedArgs.isEmpty()
+            (argumentList.isEmpty()
                 ? "$app = Start-Process -FilePath '" + escapedExe + "' -WindowStyle Hidden -PassThru; "
-                : "$app = Start-Process -FilePath '" + escapedExe + "' -ArgumentList '" + escapedArgs + "' -WindowStyle Hidden -PassThru; ") +
+                : "$app = Start-Process -FilePath '" + escapedExe + "' -ArgumentList " + argumentList + " -WindowStyle Hidden -PassThru; ") +
             "$spid = $app.Id; " +
             "Write-Host \"STARTED_PID:$spid\"; " +
             "$hwnd = 0; " +

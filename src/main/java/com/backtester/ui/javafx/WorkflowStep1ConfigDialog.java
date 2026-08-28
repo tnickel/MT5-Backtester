@@ -763,7 +763,17 @@ public final class WorkflowStep1ConfigDialog {
                 updateParamsTable.run();
             }
         });
-        periodCombo.valueProperty().addListener((obs, oldVal, newVal) -> updateParamsTable.run());
+        periodCombo.valueProperty().addListener((obs, oldVal, newVal) -> {
+            if (newVal != null) {
+                paramTable.getProperties().put(EaParameterUiContext.CHART_PERIOD_TABLE_KEY, newVal.trim());
+                paramTable.refresh();
+            }
+            updateParamsTable.run();
+        });
+        // Pin the dialog's initial period so timeframe cells resolve against it.
+        if (periodCombo.getValue() != null) {
+            paramTable.getProperties().put(EaParameterUiContext.CHART_PERIOD_TABLE_KEY, periodCombo.getValue().trim());
+        }
 
         if (engine.getEaParameters() != null && !engine.getEaParameters().isEmpty()) {
             String expert = engine.getExpert() != null ? engine.getExpert().trim() : "";

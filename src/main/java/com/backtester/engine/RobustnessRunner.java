@@ -32,7 +32,7 @@ public class RobustnessRunner {
     private java.util.function.BiConsumer<Integer, Integer> progressCountCallback;
     private java.util.function.Consumer<String> currentParamCallback;
     private java.util.function.BiConsumer<String, java.util.Map<String, com.backtester.report.OptimizationResult>> paramFinishCallback;
-    private OptimizationRunner currentOptRunner = null;
+    private volatile OptimizationRunner currentOptRunner = null;
     private volatile boolean cancelled = false;
 
     public RobustnessRunner(AppConfig config) {
@@ -129,7 +129,10 @@ public class RobustnessRunner {
             Path presetFile = testerDir.resolve(presetBaseName);
             
             try {
+                java.nio.file.Files.deleteIfExists(presetFile);
                 eaParamManager.writeSetFile(presetFile, isolatedParams, baseConfig.getExpert());
+                com.backtester.workflow.MasterStrategyLineageService
+                        .verifyPresetWritten(presetFile, isolatedParams);
             } catch (Exception e) {
                 logMessage("ERROR creating specialized preset for " + sweepParam.getName() + ": " + e.getMessage());
                 continue;
@@ -137,7 +140,8 @@ public class RobustnessRunner {
 
             Map<String, OptimizationResult> periodMap = new LinkedHashMap<>();
 
-            for (int i = 0; i <= shifts; i++) {
+            try {
+                for (int i = 0; i <= shifts; i++) {
                 if (cancelled) break;
                 currentCount++;
                 
@@ -216,13 +220,22 @@ public class RobustnessRunner {
                 OptimizationResult optResult = currentOptRunner.runOptimization(sweepConfig);
                 if (optResult != null && optResult.isSuccess()) {
                     int actualPasses = optResult.getPasses().size();
-                    logMessage(String.format("Finished sweep for %s (%s). Produced %d / %d passes.", 
+                    logMessage(String.format("Finished sweep for %s (%s). Produced %d / %d passes.",
                             sweepParam.getName(), periodLabel, actualPasses, expectedSteps));
                     periodMap.put(periodLabel, optResult);
                 } else if (!cancelled) {
                     logMessage("WARNING: Sweep for " + sweepParam.getName() + " on period " + periodLabel + " failed: " + (optResult != null ? optResult.getMessage() : "null result"));
                 }
             } // end period shift loop
+            } finally {
+                // The sweep preset is an execution input of the shifts above only;
+                // deleting it right after keeps the tester profile dir from
+                // growing without bound across runs.
+                try {
+                    java.nio.file.Files.deleteIfExists(presetFile);
+                } catch (Exception ignored) {
+                }
+            }
 
             result.addSweep(sweepParam.getName(), periodMap);
             

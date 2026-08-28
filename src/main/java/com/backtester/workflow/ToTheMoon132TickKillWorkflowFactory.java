@@ -14,9 +14,10 @@ import java.util.List;
  * windows before anyone pays for three-year, OOS, or four-year ticks.
  *
  * <ol>
- *   <li>M1-OHLC search on 3 years development, forward split, staged filters</li>
-   *   <li>g01: IS/OOS both green, ~100 diverse OHLC survivors, 1J every-tick gate (1:1),
- *       then B1–B10; k12 re-clusters later survivors and keeps those ids</li>
+ *   <li>M1-OHLC search on the latest development year, 1:1 forward split, staged filters</li>
+   *   <li>g01: IS/OOS both green, diverse OHLC survivors, 1J every-tick gate (1:1),
+ *       then B1–B10 with up to {@link ClusterIdentity#MAX_POOLED_STRATEGIES} cousins;
+ *       k12 re-clusters later survivors into the same tick pool</li>
  *   <li>3-month every-tick smoke: blow-up kill only, not a rank</li>
  *   <li>1-year every-tick kill: pass/fail on the last development year</li>
  *   <li>3-year every-tick development retest</li>
@@ -29,10 +30,11 @@ public final class ToTheMoon132TickKillWorkflowFactory {
 
     public static final String DEVELOPMENT_FROM = ToTheMoon132GuidedWorkflowFactory.DEVELOPMENT_FROM;
     public static final String DEVELOPMENT_TO = ToTheMoon132GuidedWorkflowFactory.DEVELOPMENT_TO;
+    public static final String SEARCH_FROM = ToTheMoon132GuidedWorkflowFactory.SEARCH_FROM;
     public static final String OOS_FROM = ToTheMoon132GuidedWorkflowFactory.OOS_FROM;
     public static final String FINAL_TO = ToTheMoon132GuidedWorkflowFactory.FINAL_TO;
     public static final String SMOKE_FROM = LocalDate.parse(DEVELOPMENT_TO).minusMonths(3).toString();
-    public static final String KILL_1Y_FROM = LocalDate.parse(DEVELOPMENT_TO).minusYears(1).toString();
+    public static final String KILL_1Y_FROM = SEARCH_FROM;
     public static final String TOP20_DATABANK = "k12_dev_top20";
     public static final String SMOKE_DATABANK = "k13_smoke_tick";
     public static final String KILL_1Y_DATABANK = "k14_kill_1y";
@@ -40,6 +42,8 @@ public final class ToTheMoon132TickKillWorkflowFactory {
     public static final String OOS_DATABANK = "k16_oos_tick";
     public static final String FOUR_YEAR_DATABANK = "k17_final_4y";
     public static final String REAL_TICKS_DATABANK = "k18_real_4y";
+    /** Diverse tick-entry pool (B1–B10 lines, multiple cousins). */
+    public static final int TICK_POOL_MAX = ClusterIdentity.MAX_POOLED_STRATEGIES;
     private static final int TOP20_MIN_DIFFERENT_PARAMS = 2;
 
     private ToTheMoon132TickKillWorkflowFactory() {
@@ -82,9 +86,10 @@ public final class ToTheMoon132TickKillWorkflowFactory {
                                                 List<EaParameter> comparisonParameters,
                                                 String symbol,
                                                 String period) {
-        WorkflowTask task = new WorkflowTask("12 Re-Diversität der Überlebenden (B-Cluster)",
+        WorkflowTask task = new WorkflowTask(
+                "12 Re-Diversität der Überlebenden (bis " + TICK_POOL_MAX + ", B-Cluster)",
                 WorkflowTask.TaskType.DIVERSITY_FILTER);
-        configureMarket(task, symbol, period, DEVELOPMENT_FROM, DEVELOPMENT_TO, WorkflowTask.MODE_OHLC_M1);
+        configureMarket(task, symbol, period, SEARCH_FROM, DEVELOPMENT_TO, WorkflowTask.MODE_OHLC_M1);
         task.setSourceDatabank(sourceDatabank);
         task.setTargetDatabank(TOP20_DATABANK);
         task.setDiversityRankByScore(true);
@@ -92,7 +97,8 @@ public final class ToTheMoon132TickKillWorkflowFactory {
         task.setDiversityParamDiffPct(WorkflowTask.DEFAULT_DIVERSITY_PARAM_DIFF_PCT);
         task.setDiversityTradeDiffPct(WorkflowTask.DEFAULT_DIVERSITY_TRADE_DIFF_PCT);
         task.setDiversityMinDifferentParams(TOP20_MIN_DIFFERENT_PARAMS);
-        task.setDiversityMaxStrategies(ClusterIdentity.MAX_CLUSTERS);
+        task.setDiversityMaxStrategies(TICK_POOL_MAX);
+        task.setDiversityStampClusterIds(true);
         task.setDiversityParameterSnapshot(comparisonParameters);
         task.setDeleteFailed(true);
         return task;

@@ -333,7 +333,7 @@ public class MultiReportGenerator {
                 }
                 
                 writer.write(String.format("<tr><td>%d</td><td>%s</td><td>%s</td><td>%s</td><td>%d</td><td%s>%.2f</td><td>%.2f</td><td%s>%.2f</td><td%s>%.2f%%</td><td>%s</td></tr>\n",
-                        idx++, r.getExpert(), r.getSymbol(), r.getPeriod(),
+                        idx++, escapeHtml(r.getExpert()), escapeHtml(r.getSymbol()), escapeHtml(r.getPeriod()),
                         r.getTotalTrades(), pfClass, pf, r.getRecoveryFactor(), profitClass, profit, ddClass, dd, statusObj));
             }
             writer.write("</table>\n");
@@ -381,11 +381,12 @@ public class MultiReportGenerator {
                 writer.write("<div class='test-container'>\n");
 
                 writer.write("<div class='test-header'>\n");
-                writer.write("<h3>Run #" + idx++ + ": " + r.getExpert() + " on " + r.getSymbol() + " (" + r.getPeriod() + ")</h3>\n");
+                writer.write("<h3>Run #" + idx++ + ": " + escapeHtml(r.getExpert()) + " on "
+                        + escapeHtml(r.getSymbol()) + " (" + escapeHtml(r.getPeriod()) + ")</h3>\n");
                 if (r.isSuccess()) {
                     writer.write("<span class='status-success'>SUCCESS</span>\n");
                 } else {
-                    writer.write("<span class='status-fail'>FAILED: " + r.getMessage() + "</span>\n");
+                    writer.write("<span class='status-fail'>FAILED: " + escapeHtml(r.getMessage()) + "</span>\n");
                 }
                 writer.write("</div>\n");
 
@@ -860,5 +861,14 @@ public class MultiReportGenerator {
             log.error("Failed to write monthly recovery factor bar chart", e);
             return "";
         }
+    }
+
+    private static String escapeHtml(String value) {
+        if (value == null) return "";
+        return value.replace("&", "&amp;")
+                .replace("<", "&lt;")
+                .replace(">", "&gt;")
+                .replace("\"", "&quot;")
+                .replace("'", "&#39;");
     }
 }

@@ -6,6 +6,7 @@ import javafx.collections.FXCollections;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.TableCell;
 import javafx.scene.control.TableColumn;
+import javafx.scene.control.TableView;
 import javafx.scene.control.TextField;
 import javafx.util.Callback;
 
@@ -51,6 +52,22 @@ public class EnumAwareParamCell extends TableCell<EaParameter, String> {
         this.fieldKind = fieldKind != null ? fieldKind : FieldKind.GENERIC;
     }
 
+    /**
+     * Resolves the chart period for PERIOD_CURRENT display: the owning table's
+     * pinned value (see {@link EaParameterUiContext#CHART_PERIOD_TABLE_KEY})
+     * wins; the global context is only the fallback.
+     */
+    private String resolveChartPeriod() {
+        TableView<EaParameter> table = getTableView();
+        if (table != null) {
+            Object perTable = table.getProperties().get(EaParameterUiContext.CHART_PERIOD_TABLE_KEY);
+            if (perTable instanceof String period) {
+                return period;
+            }
+        }
+        return EaParameterUiContext.getChartPeriod();
+    }
+
     public static Callback<TableColumn<EaParameter, String>, TableCell<EaParameter, String>> forTableColumn() {
         return forTableColumn(FieldKind.GENERIC);
     }
@@ -76,7 +93,7 @@ public class EnumAwareParamCell extends TableCell<EaParameter, String> {
         boolean isTimeframe = usesTimeframeLabels(param);
 
         if (isTimeframe) {
-            String chartPeriod = EaParameterUiContext.getChartPeriod();
+            String chartPeriod = resolveChartPeriod();
             List<String> options = EaParameter.timeframeDisplayOptions(chartPeriod);
             comboBox = new ComboBox<>(FXCollections.observableArrayList(options));
             comboBox.setValue(EaParameter.toTimeframeDisplay(getItem(), chartPeriod));
@@ -207,7 +224,7 @@ public class EnumAwareParamCell extends TableCell<EaParameter, String> {
         if (param == null) return val;
 
         if (usesTimeframeLabels(param)) {
-            return EaParameter.toTimeframeDisplay(val, EaParameterUiContext.getChartPeriod());
+            return EaParameter.toTimeframeDisplay(val, resolveChartPeriod());
         }
 
         String lowerName = param.getName() != null ? param.getName().toLowerCase(Locale.ROOT) : "";

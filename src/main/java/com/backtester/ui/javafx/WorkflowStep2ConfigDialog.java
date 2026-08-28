@@ -7,6 +7,7 @@ import com.backtester.config.PresetManager;
 import javafx.scene.web.WebView;
 import com.backtester.config.EaParameterManager;
 import com.backtester.engine.BacktestConfig;
+import com.backtester.engine.ForwardSplit;
 import com.backtester.engine.OptimizationConfig;
 import com.backtester.engine.WorkflowEngine;
 import com.backtester.report.OptimizationResult.CombinedPass;
@@ -105,12 +106,8 @@ public final class WorkflowStep2ConfigDialog {
             boolean isCustom = (fMode == 4);
             forwardDatePicker.setDisable(!isCustom && fMode > 0);
             if (!isCustom && fMode > 0 && engine.getFromDate() != null && engine.getToDate() != null && engine.getToDate().isAfter(engine.getFromDate())) {
-                long totalDays = java.time.temporal.ChronoUnit.DAYS.between(engine.getFromDate(), engine.getToDate());
-                if (totalDays > 0) {
-                    if (fMode == 1) forwardDatePicker.setValue(engine.getFromDate().plusDays(totalDays / 2));
-                    else if (fMode == 2) forwardDatePicker.setValue(engine.getFromDate().plusDays((totalDays * 2) / 3));
-                    else if (fMode == 3) forwardDatePicker.setValue(engine.getFromDate().plusDays((totalDays * 3) / 4));
-                }
+                forwardDatePicker.setValue(ForwardSplit.computeForwardStartDate(
+                        engine.getFromDate(), engine.getToDate(), fMode, null));
             }
         };
         forwardCombo.setOnAction(e -> updateFwdDate.run());

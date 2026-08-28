@@ -95,6 +95,15 @@ public class OptimizationConfig {
      */
     private boolean shutdownTerminal = true;
 
+    /**
+     * Whether stale terminal processes of THIS install may be killed without
+     * asking (unattended workflow/automation runs). false shows a confirmation
+     * dialog (GUI) or aborts (CLI). Independent of {@link #shutdownTerminal},
+     * which only controls whether OUR launched terminal closes itself after
+     * the run.
+     */
+    private boolean autoKillMt5 = true;
+
     // --- Getters & Setters ---
 
     public String getExpert() { return expert; }
@@ -158,6 +167,9 @@ public class OptimizationConfig {
 
     public boolean isShutdownTerminal() { return shutdownTerminal; }
     public void setShutdownTerminal(boolean shutdownTerminal) { this.shutdownTerminal = shutdownTerminal; }
+
+    public boolean isAutoKillMt5() { return autoKillMt5; }
+    public void setAutoKillMt5(boolean autoKillMt5) { this.autoKillMt5 = autoKillMt5; }
 
     public boolean isForwardEnabled() { return forwardMode > 0; }
 

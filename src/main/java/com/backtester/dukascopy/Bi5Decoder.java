@@ -76,7 +76,11 @@ public class Bi5Decoder {
 
             while (true) {
                 int bytesRead = readFully(lzmaIn, buffer);
-                if (bytesRead < TICK_SIZE) break;
+                if (bytesRead == 0) break;
+                if (bytesRead < TICK_SIZE) {
+                    throw new IOException("Truncated BI5 tick record: expected " + TICK_SIZE
+                            + " bytes, got " + bytesRead);
+                }
 
                 ByteBuffer bb = ByteBuffer.wrap(buffer).order(ByteOrder.BIG_ENDIAN);
 
@@ -95,8 +99,6 @@ public class Bi5Decoder {
 
                 ticks.add(new Tick(tickTime, ask, bid, askVol, bidVol));
             }
-        } catch (Exception e) {
-            log.warn("Error decoding {}: {}", bi5File.getFileName(), e.getMessage());
         }
 
         log.debug("Decoded {} ticks from {}", ticks.size(), bi5File.getFileName());
@@ -126,7 +128,15 @@ public class Bi5Decoder {
                 List<Tick> ticks = decode(file, symbol, date, hour);
                 allTicks.addAll(ticks);
             } catch (Exception e) {
-                log.warn("Failed to decode file: {} - {}", file, e.getMessage());
+                try {
+                    Files.deleteIfExists(file);
+                } catch (IOException deleteError) {
+                    e.addSuppressed(deleteError);
+                }
+                if (e instanceof IOException ioException) {
+                    throw ioException;
+                }
+                throw new IOException("Failed to decode BI5 file: " + file, e);
             }
         }
 

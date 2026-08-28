@@ -15,10 +15,16 @@ import java.util.regex.Pattern;
  * Stable B1…B10 identities on surviving {@link CombinedPass} rows.
  * Included in {@code DatabankManager} pass identity so sequential cluster
  * optimizer runs do not collapse overlapping MT5 pass numbers.
+ *
+ * <p>{@link #MAX_CLUSTERS} caps distinct form lines; {@link #MAX_POOLED_STRATEGIES}
+ * caps how many stamped passes may remain (cousins share a Bn).
  */
 public final class ClusterIdentity {
 
+    /** Maximum distinct form-line ids (B1…B10). */
     public static final int MAX_CLUSTERS = 10;
+    /** Maximum stamped strategies across all lines (cousins allowed). */
+    public static final int MAX_POOLED_STRATEGIES = 100;
     private static final Pattern ID_PATTERN = Pattern.compile("^B([1-9]|10)$");
 
     private ClusterIdentity() {
@@ -42,17 +48,18 @@ public final class ClusterIdentity {
     }
 
     /**
-     * Assigns unused B-ids in list order. Existing ids are kept. At most
-     * {@link #MAX_CLUSTERS} clustered rows remain; extras without an id are dropped.
-     * If more than ten already-stamped ids exist, the highest-score ten are kept.
+     * Assigns unused B-ids in list order. Existing ids are kept. Multiple passes
+     * may share a Bn (cousins). At most {@link #MAX_POOLED_STRATEGIES} clustered
+     * rows remain; extras without an id after line assignment are filled onto
+     * existing lines, then the pool is score-capped.
      */
     public static List<CombinedPass> stampInOrder(List<CombinedPass> passes) {
         return stamp(passes, true);
     }
 
     /**
-     * Unassigned survivors receive the next free B-ids, ranked by
-     * {@link GuidedOptimizationService#selectBestPass} order, up to ten clusters.
+     * Unassigned survivors receive free B-ids (then cousins on existing lines),
+     * ranked by score, up to {@link #MAX_POOLED_STRATEGIES} total.
      */
     public static List<CombinedPass> stampUnassignedByScore(List<CombinedPass> passes) {
         return stamp(passes, false);
@@ -92,21 +99,36 @@ public final class ClusterIdentity {
             unassigned.sort(scoreThenPassNumber());
         }
 
+        // Phase 1: fill distinct B1…B10.
         int next = 1;
+        List<CombinedPass> stillUnassigned = new ArrayList<>();
         for (CombinedPass pass : unassigned) {
             if (used.size() >= MAX_CLUSTERS) {
-                break;
+                stillUnassigned.add(pass);
+                continue;
             }
             while (next <= MAX_CLUSTERS && used.contains("B" + next)) {
                 next++;
             }
             if (next > MAX_CLUSTERS) {
-                break;
+                stillUnassigned.add(pass);
+                continue;
             }
             String id = "B" + next;
             pass.setClusterId(id);
             used.add(id);
             next++;
+        }
+
+        // Phase 2: remaining survivors become cousins on existing lines (round-robin).
+        if (!stillUnassigned.isEmpty()) {
+            List<String> lines = used.isEmpty() ? defaultLineIds() : new ArrayList<>(used);
+            int cursor = 0;
+            for (CombinedPass pass : stillUnassigned) {
+                String id = lines.get(cursor % lines.size());
+                pass.setClusterId(id);
+                cursor++;
+            }
         }
 
         List<CombinedPass> clustered = new ArrayList<>();
@@ -118,12 +140,20 @@ public final class ClusterIdentity {
                 leftover.add(pass);
             }
         }
-        if (clustered.size() > MAX_CLUSTERS) {
+        if (clustered.size() > MAX_POOLED_STRATEGIES) {
             clustered.sort(scoreThenPassNumber());
-            clustered = new ArrayList<>(clustered.subList(0, MAX_CLUSTERS));
+            clustered = new ArrayList<>(clustered.subList(0, MAX_POOLED_STRATEGIES));
         }
-        // Unassigned extras beyond the cap are dropped (they are not clusters).
+        // Unassigned extras beyond the pool are dropped (they are not clusters).
         return clustered.isEmpty() && leftover.size() == work.size() ? work : clustered;
+    }
+
+    private static List<String> defaultLineIds() {
+        List<String> lines = new ArrayList<>(MAX_CLUSTERS);
+        for (int i = 1; i <= MAX_CLUSTERS; i++) {
+            lines.add("B" + i);
+        }
+        return lines;
     }
 
     private static Comparator<CombinedPass> scoreThenPassNumber() {

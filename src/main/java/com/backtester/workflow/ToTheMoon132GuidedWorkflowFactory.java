@@ -17,8 +17,9 @@ public final class ToTheMoon132GuidedWorkflowFactory {
 
     public static final String DEVELOPMENT_FROM = "2022-08-01";
     public static final String DEVELOPMENT_TO = "2025-08-01";
-    public static final String FORWARD_FROM = developmentForwardStart();
-    public static final String GRID_TICK_FROM = java.time.LocalDate.parse(DEVELOPMENT_TO).minusYears(1).toString();
+    public static final String SEARCH_FROM = java.time.LocalDate.parse(DEVELOPMENT_TO).minusYears(1).toString();
+    public static final String FORWARD_FROM = searchForwardStart();
+    public static final String GRID_TICK_FROM = SEARCH_FROM;
     public static final String OOS_FROM = "2025-08-02";
     public static final String FINAL_TO = "2026-08-01";
     public static final String DEVELOPMENT_TOP20_DATABANK = "g11_dev_top20";
@@ -27,9 +28,13 @@ public final class ToTheMoon132GuidedWorkflowFactory {
     public static final String GRID_SHORTLIST_DATABANK = "g01_grid_shortlist";
     public static final String GRID_TICK_DATABANK = "g01_grid_tick";
     public static final String GRID_CLUSTER_DATABANK = "g01_grid_pick";
+    /** Survivors of the 3-year OHLC gate after g01 cluster — source for g02+. */
+    public static final String GRID_3Y_OHLC_DATABANK = "g01_grid_3y_ohlc";
     public static final int GRID_SHORTLIST_MAX_STRATEGIES = 100;
-    public static final int GRID_HALF_MIN_TRADES = 500;
-    public static final double GRID_HALF_MIN_PROFIT = 600;
+    // The 1:1 search halves are now six months each. These retain roughly the
+    // former per-month requirements (500 trades / 600 profit per 18-month half).
+    public static final int GRID_HALF_MIN_TRADES = 165;
+    public static final double GRID_HALF_MIN_PROFIT = 200;
     public static final int GRID_TICK_MIN_TRADES = 300;
     public static final double GRID_TICK_MIN_PROFIT = 100;
     private static final int DEVELOPMENT_TOP20_MIN_DIFFERENT_PARAMS = 2;
@@ -251,7 +256,7 @@ public final class ToTheMoon132GuidedWorkflowFactory {
 
         WorkflowTask selection = new WorkflowTask("00 Strategie-Auswahl — ToTheMoon132 " + sym + " " + per,
                 WorkflowTask.TaskType.STRATEGY_SELECTION);
-        configureMarket(selection, sym, per, DEVELOPMENT_FROM, DEVELOPMENT_TO, WorkflowTask.MODE_OHLC_M1);
+        configureMarket(selection, sym, per, SEARCH_FROM, DEVELOPMENT_TO, WorkflowTask.MODE_OHLC_M1);
         selection.setSourceDatabank(DatabankManager.RESULTS);
         selection.setTargetDatabank(DatabankManager.RESULTS);
         project.addTask(selection);
@@ -260,14 +265,14 @@ public final class ToTheMoon132GuidedWorkflowFactory {
         for (int i = 0; i < stages.size(); i++) {
             Stage stage = stages.get(i);
             WorkflowTask optimizer = new WorkflowTask(stage.name + " — Optimizer", WorkflowTask.TaskType.OPTIMIZER);
-            configureMarket(optimizer, sym, per, DEVELOPMENT_FROM, DEVELOPMENT_TO, WorkflowTask.MODE_OHLC_M1);
+            configureMarket(optimizer, sym, per, SEARCH_FROM, DEVELOPMENT_TO, WorkflowTask.MODE_OHLC_M1);
             optimizer.setSourceDatabank(previousPick);
             optimizer.setTargetDatabank(stage.databankPrefix + "_raw");
             optimizer.setOptimizerMode(stage.optimizerMode);
             optimizer.setOptimizerCriterion(7); // MetaQuotes complex criterion (equity, risk, sample).
             optimizer.setOptimizerForwardMode(1); // 1:1 = last half is forward.
             java.time.LocalDate fwdStart = com.backtester.engine.ForwardSplit.computeForwardStartDate(
-                    java.time.LocalDate.parse(DEVELOPMENT_FROM), java.time.LocalDate.parse(DEVELOPMENT_TO), 1, null);
+                    java.time.LocalDate.parse(SEARCH_FROM), java.time.LocalDate.parse(DEVELOPMENT_TO), 1, null);
             optimizer.setOptimizerForwardDate(fwdStart != null ? fwdStart.toString() : FORWARD_FROM);
             optimizer.setDeleteFailed(false);
             if (optimizerReportsRoot != null) {
@@ -283,7 +288,7 @@ public final class ToTheMoon132GuidedWorkflowFactory {
 
             WorkflowTask filter = new WorkflowTask(stage.name + " — Trade/Qualitätsfilter",
                     WorkflowTask.TaskType.PRE_FILTER);
-            configureMarket(filter, sym, per, DEVELOPMENT_FROM, DEVELOPMENT_TO, WorkflowTask.MODE_OHLC_M1);
+            configureMarket(filter, sym, per, SEARCH_FROM, DEVELOPMENT_TO, WorkflowTask.MODE_OHLC_M1);
             filter.setSourceDatabank(stage.databankPrefix + "_raw");
             boolean firstGridStage = i == 0;
             filter.setTargetDatabank(firstGridStage ? GRID_QUALITY_DATABANK : stage.databankPrefix + "_pick");
@@ -299,7 +304,13 @@ public final class ToTheMoon132GuidedWorkflowFactory {
             if (insertMasterReferences) {
                 project.addTask(createMasterReferenceTask(stage, sym, per));
             }
-            previousPick = stage.databankPrefix + "_pick";
+            if (firstGridStage) {
+                // Only strategies that survive 3y OHLC continue into g02+ optimization.
+                project.addTask(createGridThreeYearOhlcGate(sym, per));
+                previousPick = GRID_3Y_OHLC_DATABANK;
+            } else {
+                previousPick = stage.databankPrefix + "_pick";
+            }
         }
         return previousPick;
     }
@@ -326,10 +337,12 @@ public final class ToTheMoon132GuidedWorkflowFactory {
                                                             List<EaParameter> comparisonParameters,
                                                             String symbol,
                                                             String period) {
-        WorkflowTask task = new WorkflowTask("12 Re-Diversität der Überlebenden (B-Cluster)",
+        WorkflowTask task = new WorkflowTask(
+                "12 Re-Diversität der Überlebenden (bis "
+                        + ClusterIdentity.MAX_POOLED_STRATEGIES + ", B-Cluster)",
                 WorkflowTask.TaskType.DIVERSITY_FILTER);
         configureMarket(task, symbol, period,
-                DEVELOPMENT_FROM, DEVELOPMENT_TO, WorkflowTask.MODE_OHLC_M1);
+                SEARCH_FROM, DEVELOPMENT_TO, WorkflowTask.MODE_OHLC_M1);
         task.setSourceDatabank(sourceDatabank);
         task.setTargetDatabank(DEVELOPMENT_TOP20_DATABANK);
         task.setDiversityRankByScore(true);
@@ -337,7 +350,8 @@ public final class ToTheMoon132GuidedWorkflowFactory {
         task.setDiversityParamDiffPct(WorkflowTask.DEFAULT_DIVERSITY_PARAM_DIFF_PCT);
         task.setDiversityTradeDiffPct(WorkflowTask.DEFAULT_DIVERSITY_TRADE_DIFF_PCT);
         task.setDiversityMinDifferentParams(DEVELOPMENT_TOP20_MIN_DIFFERENT_PARAMS);
-        task.setDiversityMaxStrategies(ClusterIdentity.MAX_CLUSTERS);
+        task.setDiversityMaxStrategies(ClusterIdentity.MAX_POOLED_STRATEGIES);
+        task.setDiversityStampClusterIds(true);
         task.setDiversityParameterSnapshot(comparisonParameters);
         task.setDeleteFailed(true);
         return task;
@@ -406,7 +420,7 @@ public final class ToTheMoon132GuidedWorkflowFactory {
     private static WorkflowTask createGridIsOosFilter(String symbol, String period) {
         WorkflowTask task = new WorkflowTask("01 Grid-Fundament — IS/OOS-Konsistenz (1:1)",
                 WorkflowTask.TaskType.PRE_FILTER);
-        configureMarket(task, symbol, period, DEVELOPMENT_FROM, DEVELOPMENT_TO, WorkflowTask.MODE_OHLC_M1);
+        configureMarket(task, symbol, period, SEARCH_FROM, DEVELOPMENT_TO, WorkflowTask.MODE_OHLC_M1);
         task.setSourceDatabank(GRID_QUALITY_DATABANK);
         task.setTargetDatabank(GRID_IS_OOS_DATABANK);
         task.setDeleteFailed(true);
@@ -423,7 +437,7 @@ public final class ToTheMoon132GuidedWorkflowFactory {
                                                                  String period) {
         WorkflowTask task = new WorkflowTask("01 Grid-Fundament — Diversität (Shortlist 100)",
                 WorkflowTask.TaskType.DIVERSITY_FILTER);
-        configureMarket(task, symbol, period, DEVELOPMENT_FROM, DEVELOPMENT_TO, WorkflowTask.MODE_OHLC_M1);
+        configureMarket(task, symbol, period, SEARCH_FROM, DEVELOPMENT_TO, WorkflowTask.MODE_OHLC_M1);
         task.setSourceDatabank(GRID_IS_OOS_DATABANK);
         task.setTargetDatabank(GRID_SHORTLIST_DATABANK);
         task.setDiversityRankByScore(true);
@@ -470,7 +484,7 @@ public final class ToTheMoon132GuidedWorkflowFactory {
         WorkflowTask task = new WorkflowTask("01 Grid-Fundament — Diversität (B-Cluster)",
                 WorkflowTask.TaskType.DIVERSITY_FILTER);
         configureMarket(task, symbol, period,
-                DEVELOPMENT_FROM, DEVELOPMENT_TO, WorkflowTask.MODE_OHLC_M1);
+                SEARCH_FROM, DEVELOPMENT_TO, WorkflowTask.MODE_OHLC_M1);
         task.setSourceDatabank(GRID_TICK_DATABANK);
         task.setTargetDatabank(GRID_CLUSTER_DATABANK);
         task.setDiversityRankByScore(true);
@@ -478,11 +492,32 @@ public final class ToTheMoon132GuidedWorkflowFactory {
         task.setDiversityParamDiffPct(WorkflowTask.DEFAULT_DIVERSITY_PARAM_DIFF_PCT);
         task.setDiversityTradeDiffPct(WorkflowTask.DEFAULT_DIVERSITY_TRADE_DIFF_PCT);
         task.setDiversityMinDifferentParams(GRID_CLUSTER_MIN_DIFFERENT_PARAMS);
-        task.setDiversityMaxStrategies(ClusterIdentity.MAX_CLUSTERS);
+        task.setDiversityMaxStrategies(ClusterIdentity.MAX_POOLED_STRATEGIES);
+        task.setDiversityStampClusterIds(true);
         task.setDiversityParameterSnapshot(gridOptimizer != null
                 ? formParametersFrom(gridOptimizer.getOptimizerParameterSnapshot())
                 : List.of());
         task.setDeleteFailed(true);
+        return task;
+    }
+
+    /**
+     * Full development-window OHLC retest after g01 clustering. g02+ only sees survivors.
+     */
+    private static WorkflowTask createGridThreeYearOhlcGate(String symbol, String period) {
+        WorkflowTask task = new WorkflowTask(
+                "01 Grid-Fundament — 3J-OHLC-Gate (nur Überlebende weiter)",
+                WorkflowTask.TaskType.RETESTER);
+        configureMarket(task, symbol, period,
+                DEVELOPMENT_FROM, DEVELOPMENT_TO, WorkflowTask.MODE_OHLC_M1);
+        task.setSourceDatabank(GRID_CLUSTER_DATABANK);
+        task.setTargetDatabank(GRID_3Y_OHLC_DATABANK);
+        task.setDeleteFailed(true);
+        task.setFilterConditions(List.of(
+                condition(FilterCondition.Metric.LT_NET_PROFIT, FilterCondition.Operator.GREATER_THAN, 0),
+                condition(FilterCondition.Metric.LT_TOTAL_TRADES, FilterCondition.Operator.GREATER_EQUAL, 800),
+                condition(FilterCondition.Metric.LT_PROFIT_FACTOR, FilterCondition.Operator.GREATER_EQUAL, 1.15),
+                condition(FilterCondition.Metric.LT_MAX_DD_PERCENT, FilterCondition.Operator.LESS_EQUAL, 12)));
         return task;
     }
 
@@ -587,9 +622,9 @@ public final class ToTheMoon132GuidedWorkflowFactory {
     }
 
     private static WorkflowTask createMasterReferenceTask(Stage stage, String symbol, String period) {
-        WorkflowTask task = new WorkflowTask(stage.name + " — Master-Referenz (OHLC 3J)",
+        WorkflowTask task = new WorkflowTask(stage.name + " — Master-Referenz (OHLC 1J)",
                 WorkflowTask.TaskType.MASTER_REFERENCE);
-        configureMarket(task, symbol, period, DEVELOPMENT_FROM, DEVELOPMENT_TO, WorkflowTask.MODE_OHLC_M1);
+        configureMarket(task, symbol, period, SEARCH_FROM, DEVELOPMENT_TO, WorkflowTask.MODE_OHLC_M1);
         task.setSourceDatabank(stage.databankPrefix + "_pick");
         task.setTargetDatabank(stage.databankPrefix + "_master");
         task.setDeleteFailed(true);
@@ -740,13 +775,13 @@ public final class ToTheMoon132GuidedWorkflowFactory {
         return symbol != null && symbol.toUpperCase(Locale.ROOT).contains("JPY");
     }
 
-    private static String developmentForwardStart() {
+    private static String searchForwardStart() {
         java.time.LocalDate forwardStart = com.backtester.engine.ForwardSplit.computeForwardStartDate(
-                java.time.LocalDate.parse(DEVELOPMENT_FROM),
+                java.time.LocalDate.parse(SEARCH_FROM),
                 java.time.LocalDate.parse(DEVELOPMENT_TO),
                 1,
                 null);
-        return forwardStart != null ? forwardStart.toString() : "2024-02-01";
+        return forwardStart != null ? forwardStart.toString() : "2025-01-31";
     }
 
     private static void setFixed(Map<String, EaParameter> byName, String name, String value) {

@@ -63,8 +63,8 @@ public class WorkflowExecutionStatusWindow {
     public void update(String taskName, double progress, String percentText, String detail) {
         if (executionStatusStage == null) return;
         if (executionStatusTaskLabel != null) {
-            executionStatusTaskLabel.setText("Aktueller Task: "
-                    + (taskName == null || taskName.isBlank() ? "—" : taskName));
+            executionStatusTaskLabel.setText(
+                    taskName == null || taskName.isBlank() ? "Aktueller Task: —" : taskName);
         }
         if (executionStatusBar != null) executionStatusBar.setProgress(progress);
         if (executionStatusPercentLabel != null) executionStatusPercentLabel.setText(percentText);
@@ -118,6 +118,7 @@ public class WorkflowExecutionStatusWindow {
         );
         content.setPadding(new Insets(16));
         content.setPrefWidth(420);
+        content.setMinHeight(190);
         content.setStyle(
                 "-fx-background-color: #121722; -fx-border-color: #00e676; -fx-border-width: 2; "
                         + "-fx-border-radius: 8; -fx-background-radius: 8;"

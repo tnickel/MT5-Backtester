@@ -20,6 +20,31 @@ public class MultiReportGeneratorTest {
     public TemporaryFolder tempFolder = new TemporaryFolder();
 
     @Test
+    public void userControlledLabelsAreHtmlEscaped() throws IOException {
+        MultiBacktestConfig config = new MultiBacktestConfig();
+        config.setFromDate(LocalDate.of(2025, 1, 1));
+        config.setToDate(LocalDate.of(2025, 1, 2));
+        config.setDeposit(10000);
+
+        BacktestResult result = new BacktestResult();
+        result.setExpert("<script>alert('expert')</script>");
+        result.setSymbol("EUR&USD");
+        result.setPeriod("<M5>");
+        result.setSuccess(false);
+        result.setMessage("<img src=x onerror=alert(1)>");
+
+        Path report = MultiReportGenerator.generate(config, List.of(result),
+                tempFolder.newFolder("escaped-report").toPath());
+        String html = Files.readString(report);
+
+        assertFalse(html.contains("<script>alert"));
+        assertFalse(html.contains("<img src=x"));
+        assertTrue(html.contains("&lt;script&gt;alert(&#39;expert&#39;)&lt;/script&gt;"));
+        assertTrue(html.contains("EUR&amp;USD"));
+        assertTrue(html.contains("&lt;M5&gt;"));
+    }
+
+    @Test
     public void testGenerateReport() throws IOException {
         // Setup config
         MultiBacktestConfig config = new MultiBacktestConfig();

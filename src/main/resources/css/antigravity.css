@@ -303,6 +303,29 @@
     -fx-text-fill: #00e5ff;
 }
 
+/* Task-linked databank tabs: yellow bg + dark text (readable) */
+.tab.databank-task-highlight {
+    -fx-background-color: #f9a825;
+    -fx-background-radius: 8 8 0 0;
+    -fx-border-color: #f57f17 #f57f17 transparent #f57f17;
+    -fx-border-width: 1 1 0 1;
+    -fx-effect: none;
+}
+.tab.databank-task-highlight .tab-label {
+    -fx-text-fill: #1a1408;
+    -fx-font-weight: bold;
+}
+.tab.databank-task-highlight:selected {
+    -fx-background-color: #ffc107;
+    -fx-border-color: #ff6f00 transparent transparent transparent;
+    -fx-border-width: 3 0 0 0;
+    -fx-effect: dropshadow(three-pass-box, rgba(255, 152, 0, 0.45), 10, 0, 0, -2);
+}
+.tab.databank-task-highlight:selected .tab-label {
+    -fx-text-fill: #1a1408;
+    -fx-font-weight: bold;
+}
+
 /* Custom Workflow Running Tab Styling (Amber Glow) */
 .tab.workflow-running-tab {
     -fx-background-color: linear-gradient(to bottom, rgba(255, 179, 0, 0.2), rgba(26, 30, 40, 0.8));

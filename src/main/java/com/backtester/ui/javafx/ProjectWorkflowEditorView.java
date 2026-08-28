@@ -5,6 +5,7 @@ import com.backtester.config.EaParameter;
 import com.backtester.database.CustomProjectSaveCoordinator;
 import com.backtester.database.DatabaseManager;
 import com.backtester.engine.BacktestRunner;
+import com.backtester.engine.ForwardSplit;
 import com.backtester.engine.MetaTraderRunLock;
 import com.backtester.engine.OptimizationConfig;
 import com.backtester.engine.WorkflowEngine;
@@ -36,6 +37,7 @@ import javafx.beans.property.SimpleObjectProperty;
 import javafx.beans.property.SimpleStringProperty;
 import javafx.collections.FXCollections;
 import javafx.collections.ObservableList;
+import javafx.concurrent.Task;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.control.*;
@@ -80,6 +82,8 @@ public class ProjectWorkflowEditorView {
 
     private static final long PROJECT_SAVE_DEBOUNCE_MILLIS = 500;
     private static final Duration PROJECT_SAVE_FLUSH_TIMEOUT = Duration.ofMinutes(2);
+    private static final int CONSOLE_LOG_MAX_CHARS = 200_000;
+    private static final int CONSOLE_LOG_RETAIN_CHARS = 150_000;
 
     private final BorderPane root;
     /** Volatile: the reference backtest worker checks whether it is still the loaded one. */
@@ -97,6 +101,7 @@ public class ProjectWorkflowEditorView {
     private Button stopBtn;
     private Button resetBtn;
     private ToggleButton automaticModeToggle;
+    private Label workflowStatusHeaderLabel;
 
     // Main Center Tabs (Progress | Full settings | Results)
     private TabPane centerMainTabPane;
@@ -108,7 +113,7 @@ public class ProjectWorkflowEditorView {
     private VBox taskChainListBox;
     private Button addTaskBtn;
     private WorkflowTask selectedTask;
-    private String selectedTaskExecutionSignature;
+    private volatile String selectedTaskExecutionSignature;
     private OptimizerSettingsHighlightDialog optimizerSettingsHighlightDialog;
     private MasterStrategyLineageWindow masterStrategyLineageWindow;
     /** Serial queue: a pick during a running measurement is measured afterwards. */
@@ -123,7 +128,7 @@ public class ProjectWorkflowEditorView {
     private TextArea consoleLog;
 
     /** True while Start/Single-Step execution is running (keeps task chain visible). */
-    private boolean editorLocked;
+    private volatile boolean editorLocked;
 
     // Full Settings Sub-Tab Components
     private TabPane fullSettingsSubTabPane;
@@ -150,6 +155,12 @@ public class ProjectWorkflowEditorView {
     private TextField optimizerOutputDirectoryField;
     private Button filterGateAnalysisButton;
     private HBox filterGateAnalysisRow;
+    /** Retester Data-tab: Forward split (Off / 1:2 / …) — not shown for Optimizer. */
+    private Label retesterForwardModeLabel;
+    private ComboBox<String> retesterForwardModeCombo;
+    private Label retesterForwardDateLabel;
+    private DatePicker retesterForwardDatePicker;
+    private Label retesterForwardHelp;
     private ComboBox<String> optimizerAlgorithmCombo;
     private ComboBox<String> optimizerCriterionCombo;
     private ComboBox<String> optimizerForwardModeCombo;
@@ -178,6 +189,10 @@ public class ProjectWorkflowEditorView {
     private Spinner<Integer> robustnessShiftDaysSpinner;
     private TextField robustnessExcludedParamsField;
     private boolean updatingRobustnessControls;
+    /** True while programmatically filling date/data controls — skip save+downstream wipe. */
+    private volatile boolean updatingDataSettingsControls;
+    /** MT5 opti import: do not clear databanks on task signature change during save. */
+    private volatile boolean suppressDownstreamInvalidation;
     private Label currentTaskSettingsHeader;
 
     // Bottom Fixed Databank Panel
@@ -198,7 +213,16 @@ public class ProjectWorkflowEditorView {
 
         // Top Navigation Header
         HBox topBar = createTopBar();
-        root.setTop(topBar);
+        workflowStatusHeaderLabel = new Label("Workflow-Status: Bereit");
+        workflowStatusHeaderLabel.setMaxWidth(Double.MAX_VALUE);
+        workflowStatusHeaderLabel.setWrapText(true);
+        workflowStatusHeaderLabel.setPadding(new Insets(6, 10, 6, 10));
+        workflowStatusHeaderLabel.setTextFill(Color.web("#00e676"));
+        workflowStatusHeaderLabel.setFont(Font.font("Segoe UI", FontWeight.BOLD, 12));
+        workflowStatusHeaderLabel.setStyle(
+                "-fx-background-color: rgba(0, 230, 118, 0.08); -fx-border-color: rgba(0, 230, 118, 0.55); "
+                        + "-fx-border-width: 1; -fx-border-radius: 5; -fx-background-radius: 5;");
+        root.setTop(new VBox(4, topBar, workflowStatusHeaderLabel));
 
         // Center SplitPane: Left Tasks Chain + Center Content (Progress / Settings / Results)
         SplitPane centerSplit = new SplitPane();
@@ -349,7 +373,7 @@ public class ProjectWorkflowEditorView {
         lineageReportBtn.setStyle(
                 "-fx-background-color: #1e2432; -fx-text-fill: #00e5ff; -fx-border-color: #00e5ff; "
                         + "-fx-border-radius: 5; -fx-background-radius: 5; -fx-font-weight: bold; -fx-cursor: hand;");
-        lineageReportBtn.setOnAction(e -> generateLineageReport());
+        lineageReportBtn.setOnAction(e -> generateLineageReport(lineageReportBtn));
 
         startBtn = new Button("▶ Start");
         startBtn.getStyleClass().add("button-start");
@@ -387,18 +411,40 @@ public class ProjectWorkflowEditorView {
         return bar;
     }
 
-    private void generateLineageReport() {
+    private void generateLineageReport(Button sourceButton) {
         if (project == null) return;
-        try {
-            Path reportPath = MasterStrategyLineageReportGenerator.generateReport(project);
-            MasterStrategyLineageReportGenerator.openInBrowser(reportPath);
-        } catch (Exception ex) {
-            Alert alert = new Alert(Alert.AlertType.ERROR);
-            alert.setTitle("Fehler");
-            alert.setHeaderText("Abschlussbericht konnte nicht generiert werden");
-            alert.setContentText(ex.getMessage());
-            alert.showAndWait();
-        }
+        final CustomProject currentProject = project;
+        if (sourceButton != null) sourceButton.setDisable(true);
+
+        Task<Path> reportTask = new Task<>() {
+            @Override
+            protected Path call() {
+                return MasterStrategyLineageReportGenerator.generateReport(currentProject);
+            }
+        };
+        reportTask.setOnSucceeded(e -> {
+            if (sourceButton != null) sourceButton.setDisable(false);
+            try {
+                MasterStrategyLineageReportGenerator.openInBrowser(reportTask.getValue());
+            } catch (Exception ex) {
+                showLineageReportError(ex);
+            }
+        });
+        reportTask.setOnFailed(e -> {
+            if (sourceButton != null) sourceButton.setDisable(false);
+            showLineageReportError(reportTask.getException());
+        });
+        Thread thread = new Thread(reportTask, "lineage-report-generator");
+        thread.setDaemon(true);
+        thread.start();
+    }
+
+    private void showLineageReportError(Throwable ex) {
+        Alert alert = new Alert(Alert.AlertType.ERROR);
+        alert.setTitle("Fehler");
+        alert.setHeaderText("Abschlussbericht konnte nicht generiert werden");
+        alert.setContentText(ex != null ? ex.getMessage() : "Unbekannter Fehler");
+        alert.showAndWait();
     }
 
     private void openMasterStrategyLineageWindow() {
@@ -734,6 +780,7 @@ public class ProjectWorkflowEditorView {
         grid.add(new Label("Start day (Test From):"), 0, 3);
         startDatePicker = new DatePicker();
         startDatePicker.setOnAction(e -> {
+            if (updatingDataSettingsControls) return;
             commitDatePicker(startDatePicker);
             if (selectedTask != null && startDatePicker.getValue() != null) {
                 selectedTask.setStartDate(startDatePicker.getValue().toString());
@@ -742,6 +789,7 @@ public class ProjectWorkflowEditorView {
             }
         });
         startDatePicker.valueProperty().addListener((obs, oldVal, newVal) -> {
+            if (updatingDataSettingsControls) return;
             if (selectedTask != null && newVal != null) {
                 selectedTask.setStartDate(newVal.toString());
                 recalculateForwardDate();
@@ -749,6 +797,7 @@ public class ProjectWorkflowEditorView {
             }
         });
         startDatePicker.getEditor().focusedProperty().addListener((obs, wasFocused, isFocused) -> {
+            if (updatingDataSettingsControls) return;
             if (!isFocused) {
                 commitDatePicker(startDatePicker);
                 if (selectedTask != null && startDatePicker.getValue() != null) {
@@ -759,6 +808,7 @@ public class ProjectWorkflowEditorView {
             }
         });
         startDatePicker.getEditor().textProperty().addListener((obs, oldText, newText) -> {
+            if (updatingDataSettingsControls) return;
             commitDatePicker(startDatePicker);
             if (selectedTask != null && startDatePicker.getValue() != null) {
                 selectedTask.setStartDate(startDatePicker.getValue().toString());
@@ -771,6 +821,7 @@ public class ProjectWorkflowEditorView {
         grid.add(new Label("End day (Test To):"), 0, 4);
         endDatePicker = new DatePicker();
         endDatePicker.setOnAction(e -> {
+            if (updatingDataSettingsControls) return;
             commitDatePicker(endDatePicker);
             if (selectedTask != null && endDatePicker.getValue() != null) {
                 selectedTask.setEndDate(endDatePicker.getValue().toString());
@@ -779,6 +830,7 @@ public class ProjectWorkflowEditorView {
             }
         });
         endDatePicker.valueProperty().addListener((obs, oldVal, newVal) -> {
+            if (updatingDataSettingsControls) return;
             if (selectedTask != null && newVal != null) {
                 selectedTask.setEndDate(newVal.toString());
                 recalculateForwardDate();
@@ -786,6 +838,7 @@ public class ProjectWorkflowEditorView {
             }
         });
         endDatePicker.getEditor().focusedProperty().addListener((obs, wasFocused, isFocused) -> {
+            if (updatingDataSettingsControls) return;
             if (!isFocused) {
                 commitDatePicker(endDatePicker);
                 if (selectedTask != null && endDatePicker.getValue() != null) {
@@ -796,6 +849,7 @@ public class ProjectWorkflowEditorView {
             }
         });
         endDatePicker.getEditor().textProperty().addListener((obs, oldText, newText) -> {
+            if (updatingDataSettingsControls) return;
             commitDatePicker(endDatePicker);
             if (selectedTask != null && endDatePicker.getValue() != null) {
                 selectedTask.setEndDate(endDatePicker.getValue().toString());
@@ -804,6 +858,35 @@ public class ProjectWorkflowEditorView {
             }
         });
         grid.add(endDatePicker, 1, 4);
+
+        retesterForwardModeLabel = new Label("Forward-Test:");
+        retesterForwardModeCombo = new ComboBox<>(FXCollections.observableArrayList(OptimizationConfig.FORWARD_MODES));
+        retesterForwardModeCombo.getSelectionModel().select(0);
+        retesterForwardModeCombo.setOnAction(e -> {
+            if (updatingDataSettingsControls) return;
+            saveRetesterForwardSettings();
+        });
+        grid.add(retesterForwardModeLabel, 0, 5);
+        grid.add(retesterForwardModeCombo, 1, 5);
+
+        retesterForwardDateLabel = new Label("Forward Datum:");
+        retesterForwardDatePicker = new DatePicker();
+        retesterForwardDatePicker.setDisable(true);
+        retesterForwardDatePicker.setOnAction(e -> {
+            if (updatingDataSettingsControls) return;
+            saveRetesterForwardSettings();
+        });
+        grid.add(retesterForwardDateLabel, 0, 6);
+        grid.add(retesterForwardDatePicker, 1, 6);
+
+        retesterForwardHelp = new Label(
+                "Off = ein durchgehender Backtest über Start–Ende. "
+                        + "1/2 period (1:1) = Zeitraum wird in IS + FW geteilt (zwei MT5-Läufe); "
+                        + "beide Hälften müssen im Plus sein. Forward Datum nur bei „Custom date“ editierbar.");
+        retesterForwardHelp.setWrapText(true);
+        retesterForwardHelp.setStyle("-fx-text-fill: #9aa4b5; -fx-font-size: 12px;");
+        retesterForwardHelp.setMaxWidth(760);
+        grid.add(retesterForwardHelp, 0, 7, 2, 1);
 
         Label outputDirectoryLabel = new Label("Optimizer-Ausgabeordner:");
         optimizerOutputDirectoryField = new TextField();
@@ -819,8 +902,8 @@ public class ProjectWorkflowEditorView {
         browseOutputDirectoryButton.setOnAction(e -> chooseOptimizerOutputDirectory());
         optimizerOutputDirectoryRow = new HBox(10, optimizerOutputDirectoryField, browseOutputDirectoryButton);
         optimizerOutputDirectoryRow.setAlignment(Pos.CENTER_LEFT);
-        grid.add(outputDirectoryLabel, 0, 5);
-        grid.add(optimizerOutputDirectoryRow, 1, 5);
+        grid.add(outputDirectoryLabel, 0, 8);
+        grid.add(optimizerOutputDirectoryRow, 1, 8);
 
         Label outputDirectoryHelp = new Label(
                 "Für jeden Optimizer-Lauf wird darin ein eigener Zeitstempel-Unterordner mit tester.ini, " +
@@ -829,7 +912,7 @@ public class ProjectWorkflowEditorView {
         outputDirectoryHelp.setWrapText(true);
         outputDirectoryHelp.setStyle("-fx-text-fill: #9aa4b5; -fx-font-size: 12px;");
         outputDirectoryHelp.setMaxWidth(760);
-        grid.add(outputDirectoryHelp, 0, 6, 2, 1);
+        grid.add(outputDirectoryHelp, 0, 9, 2, 1);
 
         outputDirectoryLabel.visibleProperty().bind(optimizerOutputDirectoryRow.visibleProperty());
         outputDirectoryLabel.managedProperty().bind(optimizerOutputDirectoryRow.managedProperty());
@@ -847,7 +930,9 @@ public class ProjectWorkflowEditorView {
         filterGateAnalysisRow.setPadding(new Insets(4, 0, 0, 0));
         filterGateAnalysisRow.visibleProperty().bind(optimizerOutputDirectoryRow.visibleProperty());
         filterGateAnalysisRow.managedProperty().bind(optimizerOutputDirectoryRow.managedProperty());
-        grid.add(filterGateAnalysisRow, 0, 7, 2, 1);
+        grid.add(filterGateAnalysisRow, 0, 10, 2, 1);
+
+        setRetesterForwardControlsVisible(false);
 
         panel.getChildren().addAll(dataSettingsHeading, grid);
         return panel;
@@ -1706,6 +1791,23 @@ public class ProjectWorkflowEditorView {
             public ComboBox<String> getRankingTargetCombo() {
                 return rankingTargetCombo;
             }
+
+            @Override
+            public void reloadSelectedTaskForm() {
+                if (selectedTask != null) {
+                    selectTask(selectedTask);
+                }
+            }
+
+            @Override
+            public void acknowledgeTaskExecutionSignature(WorkflowTask task) {
+                ProjectWorkflowEditorView.this.acknowledgeTaskExecutionSignature(task);
+            }
+
+            @Override
+            public void runSuppressingDownstreamInvalidation(Runnable action) {
+                ProjectWorkflowEditorView.this.runSuppressingDownstreamInvalidation(action);
+            }
         };
     }
 
@@ -1807,8 +1909,9 @@ public class ProjectWorkflowEditorView {
                 if (progressPercentLabel != null) progressPercentLabel.setText(percentText);
                 if (progressLabel != null) progressLabel.setText(label);
                 if (currentTaskBannerLabel != null) {
-                    currentTaskBannerLabel.setText("Aktueller Task: " + taskBannerName);
+                    currentTaskBannerLabel.setText(taskBannerName);
                 }
+                if (workflowStatusHeaderLabel != null) workflowStatusHeaderLabel.setText(taskBannerName);
             }
 
             @Override
@@ -1817,6 +1920,7 @@ public class ProjectWorkflowEditorView {
                 if (progressPercentLabel != null) progressPercentLabel.setText("0%");
                 if (progressLabel != null) progressLabel.setText(label);
                 if (currentTaskBannerLabel != null) currentTaskBannerLabel.setText("Aktueller Task: —");
+                if (workflowStatusHeaderLabel != null) workflowStatusHeaderLabel.setText("Workflow-Status: Bereit");
             }
 
             @Override
@@ -2193,6 +2297,8 @@ public class ProjectWorkflowEditorView {
             deleteFailedCheckBox.setSelected(task.isDeleteFailed());
             filterConditionsTable.getItems().setAll(task.getFilterConditions());
 
+            focusDatabankTabsForTask(task);
+
             if (execModeCombo != null) {
                 switch (task.getExecutionMode()) {
                     case WorkflowTask.MODE_EVERY_TICK: execModeCombo.setValue("Every Tick (Ticksimulation)"); break;
@@ -2212,28 +2318,38 @@ public class ProjectWorkflowEditorView {
                         ? taskPeriod : (project != null ? project.getPeriod() : "H1"));
                 EaParameterUiContext.setChartPeriod(timeframeCombo.getValue());
             }
-            if (startDatePicker != null) {
-                LocalDate startVal = parseDateOrNull(task.getStartDate());
-                if (startVal == null) {
-                    startVal = engine.getFromDate() != null ? engine.getFromDate() : LocalDate.now().minusYears(2);
-                    task.setStartDate(startVal.toString());
+            updatingDataSettingsControls = true;
+            try {
+                if (startDatePicker != null) {
+                    LocalDate startVal = parseDateOrNull(task.getStartDate());
+                    if (startVal == null) {
+                        startVal = engine.getFromDate() != null ? engine.getFromDate() : LocalDate.now().minusYears(2);
+                        task.setStartDate(startVal.toString());
+                    }
+                    startDatePicker.setValue(startVal);
                 }
-                startDatePicker.setValue(startVal);
-            }
-            if (endDatePicker != null) {
-                LocalDate endVal = parseDateOrNull(task.getEndDate());
-                if (endVal == null) {
-                    endVal = engine.getToDate() != null ? engine.getToDate() : LocalDate.now();
-                    task.setEndDate(endVal.toString());
+                if (endDatePicker != null) {
+                    LocalDate endVal = parseDateOrNull(task.getEndDate());
+                    if (endVal == null) {
+                        endVal = engine.getToDate() != null ? engine.getToDate() : LocalDate.now();
+                        task.setEndDate(endVal.toString());
+                    }
+                    endDatePicker.setValue(endVal);
                 }
-                endDatePicker.setValue(endVal);
+            } finally {
+                updatingDataSettingsControls = false;
             }
 
             boolean optimizerTask = task.getType() == WorkflowTask.TaskType.OPTIMIZER;
+            boolean retesterTask = task.getType() == WorkflowTask.TaskType.RETESTER;
             if (dataSettingsHeading != null) {
                 dataSettingsHeading.setText(optimizerTask
                         ? "Optimizer Data & Output Settings"
                         : "Backtest Data Settings (Retester)");
+            }
+            setRetesterForwardControlsVisible(retesterTask);
+            if (retesterTask) {
+                updateRetesterForwardControls(task);
             }
             if (optimizerOutputDirectoryRow != null) {
                 optimizerOutputDirectoryRow.setVisible(optimizerTask);
@@ -2302,8 +2418,36 @@ public class ProjectWorkflowEditorView {
                 taskNameField.setDisable(true);
             }
             fullSettingsSubTabPane.getTabs().clear();
+            setRetesterForwardControlsVisible(false);
+            if (databankPanel != null) {
+                databankPanel.clearTaskDatabankHighlight();
+            }
         }
+        // Populating the form writes normalized defaults (source databank, dates,
+        // forward date) back into the task. Those are not user edits, so re-snapshot
+        // the signature here — otherwise the next save would wipe downstream banks.
+        selectedTaskExecutionSignature = WorkflowDownstreamInvalidation.executionSignature(task);
         updateOptimizerSettingsHighlightWindow(task);
+    }
+
+    /** Jump to output databank tab; mark input+output tabs yellow. */
+    private void focusDatabankTabsForTask(WorkflowTask task) {
+        if (databankPanel == null || task == null) {
+            return;
+        }
+        if (task.getType() == WorkflowTask.TaskType.STRATEGY_SELECTION) {
+            databankPanel.clearTaskDatabankHighlight();
+            return;
+        }
+        String src = task.getSourceDatabank();
+        String tgt = task.getTargetDatabank();
+        if (task.getType() == WorkflowTask.TaskType.OPTIMIZER) {
+            databankPanel.focusTaskDatabanks(null, tgt);
+        } else if (task.getType() == WorkflowTask.TaskType.PORTFOLIO_EXPORT) {
+            databankPanel.focusTaskDatabanks(src, null);
+        } else {
+            databankPanel.focusTaskDatabanks(src, tgt);
+        }
     }
 
     /**
@@ -2382,57 +2526,96 @@ public class ProjectWorkflowEditorView {
             return;
         }
 
-        FilterGateAnalysisService.PassLoadResult loaded = FilterGateAnalysisService.loadPassesForTask(
-                task, effectiveOptimizerOutputDirectory(task), databankManager);
-        if (loaded.getPasses().isEmpty()) {
-            Alert alert = new Alert(Alert.AlertType.WARNING,
-                    "Keine Passes gefunden.\n\nWeder ein Optimizer-Report unter dem Ausgabeordner "
-                            + "noch Strategien in der Ziel-Databank „" + task.getTargetDatabank() + "“.",
-                    ButtonType.OK);
-            alert.setTitle("Filter an/aus");
-            alert.setHeaderText("Keine Daten");
-            if (root.getScene() != null) alert.initOwner(root.getScene().getWindow());
-            alert.showAndWait();
-            return;
+        if (filterGateAnalysisButton != null) filterGateAnalysisButton.setDisable(true);
+
+        /** Pass loading and gate analysis run off the FX thread; the dialog opens in succeeded(). */
+        record GateComputation(FilterGateAnalysisService.PassLoadResult loaded,
+                               FilterGateAnalysisService.FilterGateAnalysis analysis) {
         }
 
-        List<String> candidates = FilterGateAnalysisService.listGateParameterCandidates(
-                task, loaded.getPasses());
-        List<String> optimized = FilterGateAnalysisService.listOptimizedParameterNames(
-                task, loaded.getPasses());
-        String gate = candidates.isEmpty() ? "" : candidates.get(0);
-        FilterGateAnalysisService.FilterGateAnalysis analysis = FilterGateAnalysisService.analyze(
-                loaded.getPasses(),
-                gate,
-                loaded.getDataSource(),
-                loaded.getSourcePath(),
-                loaded.getDatabankName(),
-                FilterGateAnalysisService.DEFAULT_MIN_COHORT_SIZE,
-                FilterGateAnalysisService.DEFAULT_TOP_N,
-                FilterGateAnalysisService.DEFAULT_SCORE_MARGIN,
-                candidates,
-                optimized);
+        final String outputDirectory = effectiveOptimizerOutputDirectory(task);
+        Task<GateComputation> analysisTask = new Task<>() {
+            @Override
+            protected GateComputation call() {
+                FilterGateAnalysisService.PassLoadResult loaded = FilterGateAnalysisService.loadPassesForTask(
+                        task, outputDirectory, databankManager);
+                if (loaded.getPasses().isEmpty()) {
+                    return new GateComputation(loaded, null);
+                }
+                List<String> candidates = FilterGateAnalysisService.listGateParameterCandidates(
+                        task, loaded.getPasses());
+                List<String> optimized = FilterGateAnalysisService.listOptimizedParameterNames(
+                        task, loaded.getPasses());
+                String gate = candidates.isEmpty() ? "" : candidates.get(0);
+                FilterGateAnalysisService.FilterGateAnalysis analysis = FilterGateAnalysisService.analyze(
+                        loaded.getPasses(),
+                        gate,
+                        loaded.getDataSource(),
+                        loaded.getSourcePath(),
+                        loaded.getDatabankName(),
+                        FilterGateAnalysisService.DEFAULT_MIN_COHORT_SIZE,
+                        FilterGateAnalysisService.DEFAULT_TOP_N,
+                        FilterGateAnalysisService.DEFAULT_SCORE_MARGIN,
+                        candidates,
+                        optimized);
+                return new GateComputation(loaded, analysis);
+            }
+        };
+        analysisTask.setOnSucceeded(e -> {
+            if (filterGateAnalysisButton != null) filterGateAnalysisButton.setDisable(false);
+            FilterGateAnalysisService.PassLoadResult loaded = analysisTask.getValue().loaded();
+            if (loaded.getPasses().isEmpty()) {
+                Alert alert = new Alert(Alert.AlertType.WARNING,
+                        "Keine Passes gefunden.\n\nWeder ein Optimizer-Report unter dem Ausgabeordner "
+                                + "noch Strategien in der Ziel-Databank „" + task.getTargetDatabank() + "“.",
+                        ButtonType.OK);
+                alert.setTitle("Filter an/aus");
+                alert.setHeaderText("Keine Daten");
+                if (root.getScene() != null) alert.initOwner(root.getScene().getWindow());
+                alert.showAndWait();
+                return;
+            }
 
-        Window owner = root.getScene() != null ? root.getScene().getWindow() : null;
-        FilterGateAnalysisDialog.show(owner, task.getName(), analysis, loaded.getPasses(), pass -> {
-            if (pass != null) {
-                StrategyDetailsModalDialog.show(pass, task.getTargetDatabank(), project, owner, 0);
+            Window owner = root.getScene() != null ? root.getScene().getWindow() : null;
+            FilterGateAnalysisDialog.show(owner, task.getName(), analysisTask.getValue().analysis(),
+                    loaded.getPasses(), pass -> {
+                        if (pass != null) {
+                            StrategyDetailsModalDialog.show(pass, task.getTargetDatabank(), project, owner, 0);
+                        }
+                    });
+
+            if (loaded.isFallback()) {
+                logToConsole("FILTER-ANALYSE",
+                        "Fallback auf Ziel-Databank „" + loaded.getDatabankName()
+                                + "“ — kein vollständiger Optimizer-Report gefunden.");
+            } else {
+                logToConsole("FILTER-ANALYSE",
+                        "Quelle Optimizer-Report: " + loaded.getSourcePath());
             }
         });
-
-        if (loaded.isFallback()) {
-            logToConsole("FILTER-ANALYSE",
-                    "Fallback auf Ziel-Databank „" + loaded.getDatabankName()
-                            + "“ — kein vollständiger Optimizer-Report gefunden.");
-        } else {
-            logToConsole("FILTER-ANALYSE",
-                    "Quelle Optimizer-Report: " + loaded.getSourcePath());
-        }
+        analysisTask.setOnFailed(e -> {
+            if (filterGateAnalysisButton != null) filterGateAnalysisButton.setDisable(false);
+            Throwable ex = analysisTask.getException();
+            Alert alert = new Alert(Alert.AlertType.ERROR,
+                    "Filter-Analyse fehlgeschlagen: " + (ex != null ? ex.getMessage() : "Unbekannter Fehler"),
+                    ButtonType.OK);
+            alert.setTitle("Filter an/aus");
+            alert.setHeaderText("Fehler");
+            if (root.getScene() != null) alert.initOwner(root.getScene().getWindow());
+            alert.showAndWait();
+        });
+        Thread thread = new Thread(analysisTask, "filter-gate-analysis");
+        thread.setDaemon(true);
+        thread.start();
     }
 
     private void recalculateForwardDate() {
-        if (updatingOptimizerControls || selectedTask == null
-                || selectedTask.getType() != WorkflowTask.TaskType.OPTIMIZER) return;
+        if (selectedTask == null) return;
+        if (selectedTask.getType() == WorkflowTask.TaskType.RETESTER) {
+            recalculateRetesterForwardDate();
+            return;
+        }
+        if (updatingOptimizerControls || selectedTask.getType() != WorkflowTask.TaskType.OPTIMIZER) return;
         if (startDatePicker == null || endDatePicker == null || optimizerForwardModeCombo == null || optimizerForwardDatePicker == null) return;
 
         LocalDate start = startDatePicker.getValue();
@@ -2458,17 +2641,8 @@ public class ProjectWorkflowEditorView {
             return;
         }
 
-        long totalDays = java.time.temporal.ChronoUnit.DAYS.between(start, end);
-        if (totalDays <= 0) return;
-
-        LocalDate newForwardDate = null;
-        if (forwardMode == 1) { // 1/2 period (50% in-sample, 50% forward)
-            newForwardDate = start.plusDays(totalDays / 2);
-        } else if (forwardMode == 2) { // 1/3 period (66.7% in-sample, 33.3% forward)
-            newForwardDate = start.plusDays((totalDays * 2) / 3);
-        } else if (forwardMode == 3) { // 1/4 period (75% in-sample, 25% forward)
-            newForwardDate = start.plusDays((totalDays * 3) / 4);
-        }
+        LocalDate newForwardDate = ForwardSplit.computeForwardStartDate(
+                start, end, forwardMode, null);
 
         if (newForwardDate != null) {
             updatingOptimizerControls = true;
@@ -2482,6 +2656,114 @@ public class ProjectWorkflowEditorView {
             }
             engine.setForwardDate(newForwardDate);
         }
+    }
+
+    private void setRetesterForwardControlsVisible(boolean visible) {
+        if (retesterForwardModeLabel != null) {
+            retesterForwardModeLabel.setVisible(visible);
+            retesterForwardModeLabel.setManaged(visible);
+        }
+        if (retesterForwardModeCombo != null) {
+            retesterForwardModeCombo.setVisible(visible);
+            retesterForwardModeCombo.setManaged(visible);
+        }
+        if (retesterForwardDateLabel != null) {
+            retesterForwardDateLabel.setVisible(visible);
+            retesterForwardDateLabel.setManaged(visible);
+        }
+        if (retesterForwardDatePicker != null) {
+            retesterForwardDatePicker.setVisible(visible);
+            retesterForwardDatePicker.setManaged(visible);
+        }
+        if (retesterForwardHelp != null) {
+            retesterForwardHelp.setVisible(visible);
+            retesterForwardHelp.setManaged(visible);
+        }
+    }
+
+    /**
+     * Loads Forward-Test from the Retester task. Without an explicit split the UI
+     * shows Off — the getter default (1/2) must not imply a live split.
+     */
+    private void updateRetesterForwardControls(WorkflowTask task) {
+        if (task == null || retesterForwardModeCombo == null || retesterForwardDatePicker == null) return;
+        updatingDataSettingsControls = true;
+        try {
+            int mode = task.hasExplicitForwardSplit() ? task.getOptimizerForwardMode() : 0;
+            if (mode < 0 || mode >= retesterForwardModeCombo.getItems().size()) {
+                mode = 0;
+            }
+            retesterForwardModeCombo.getSelectionModel().select(mode);
+            boolean isCustom = (mode == 4);
+            retesterForwardDatePicker.setDisable(!isCustom);
+            if (mode <= 0) {
+                retesterForwardDatePicker.setValue(null);
+            } else if (isCustom) {
+                retesterForwardDatePicker.setValue(parseDateOrNull(task.getOptimizerForwardDate()));
+            } else {
+                LocalDate start = startDatePicker != null ? startDatePicker.getValue() : parseDateOrNull(task.getStartDate());
+                LocalDate end = endDatePicker != null ? endDatePicker.getValue() : parseDateOrNull(task.getEndDate());
+                LocalDate computed = ForwardSplit.computeForwardStartDate(start, end, mode, null);
+                LocalDate stored = parseDateOrNull(task.getOptimizerForwardDate());
+                retesterForwardDatePicker.setValue(computed != null ? computed : stored);
+            }
+        } finally {
+            updatingDataSettingsControls = false;
+        }
+    }
+
+    private void recalculateRetesterForwardDate() {
+        if (updatingDataSettingsControls || selectedTask == null
+                || selectedTask.getType() != WorkflowTask.TaskType.RETESTER) return;
+        if (startDatePicker == null || endDatePicker == null
+                || retesterForwardModeCombo == null || retesterForwardDatePicker == null) return;
+
+        LocalDate start = startDatePicker.getValue();
+        LocalDate end = endDatePicker.getValue();
+        int forwardMode = retesterForwardModeCombo.getSelectionModel().getSelectedIndex();
+        boolean isCustom = (forwardMode == 4);
+        retesterForwardDatePicker.setDisable(!isCustom);
+
+        if (forwardMode <= 0) {
+            updatingDataSettingsControls = true;
+            try {
+                retesterForwardDatePicker.setValue(null);
+            } finally {
+                updatingDataSettingsControls = false;
+            }
+            selectedTask.setOptimizerForwardDate("");
+            return;
+        }
+
+        if (start == null || end == null || !end.isAfter(start) || isCustom) {
+            return;
+        }
+
+        LocalDate newForwardDate = ForwardSplit.computeForwardStartDate(start, end, forwardMode, null);
+        if (newForwardDate != null) {
+            updatingDataSettingsControls = true;
+            try {
+                retesterForwardDatePicker.setValue(newForwardDate);
+            } finally {
+                updatingDataSettingsControls = false;
+            }
+            selectedTask.setOptimizerForwardDate(newForwardDate.toString());
+        }
+    }
+
+    private void saveRetesterForwardSettings() {
+        if (updatingDataSettingsControls || selectedTask == null
+                || selectedTask.getType() != WorkflowTask.TaskType.RETESTER) return;
+        if (retesterForwardModeCombo == null || retesterForwardDatePicker == null) return;
+        int forwardIndex = retesterForwardModeCombo.getSelectionModel().getSelectedIndex();
+        if (forwardIndex < 0) return;
+
+        recalculateRetesterForwardDate();
+
+        LocalDate forwardDate = forwardIndex > 0 ? retesterForwardDatePicker.getValue() : null;
+        selectedTask.setOptimizerForwardMode(forwardIndex);
+        selectedTask.setOptimizerForwardDate(forwardDate != null ? forwardDate.toString() : "");
+        saveProject();
     }
 
     private void saveSelectedOptimizerSettings() {
@@ -2548,6 +2830,7 @@ public class ProjectWorkflowEditorView {
             String fidelityText;
             switch (resolution.fidelity()) {
                 case EXACT_SNAPSHOT: fidelityText = "exakter Lauf-Snapshot"; break;
+                case EMBEDDED_PASS: fidelityText = "strategiegebundenes Setfile"; break;
                 case OPTIMIZATION_BASE: fidelityText = "archiviertes Optimizer-Preset + Passwerte"; break;
                 default: fidelityText = "aktuelle EA-Konfiguration (nicht vollständig beweisbar)"; break;
             }
@@ -2822,7 +3105,7 @@ public class ProjectWorkflowEditorView {
     /**
      * One MASTER_REFERENCE task, one terminal: measure each live cluster champion
      * under frozen OHLC conditions. This is not an improve-or-die gate; lines stay
-     * live even when the 3Y ratio differs from the genetic optimizer score.
+     * live even when the reference ratio differs from the genetic optimizer score.
      */
     private List<CombinedPass> recordClusteredMasterReferences(WorkflowTask checkpoint,
                                                                List<CombinedPass> inputPasses) {
@@ -3404,7 +3687,7 @@ public class ProjectWorkflowEditorView {
                                                           MasterStrategyLineageService.AdoptionSummary summary,
                                                           BacktestRunner runner) {
         String signature = MasterStrategyLineageService.measurementSignature(
-                MasterStrategyLineageService.buildReferenceConfig(targetProject, ""), parameters);
+                MasterStrategyLineageService.buildReferenceConfig(targetProject, consumer, ""), parameters);
         Optional<MasterStrategyEntry> known =
                 MasterStrategyLineageService.findLatestMeasurement(targetProject, signature);
         if (known.isPresent()) {
@@ -3793,6 +4076,15 @@ public class ProjectWorkflowEditorView {
                 selectedTask.setOptimizerForwardDate(forwardDate != null ? forwardDate.toString() : "");
             }
             recalculateForwardDate();
+        } else if (selectedTask.getType() == WorkflowTask.TaskType.RETESTER) {
+            if (retesterForwardDatePicker != null) {
+                int mode = retesterForwardModeCombo != null
+                        ? retesterForwardModeCombo.getSelectionModel().getSelectedIndex() : 0;
+                LocalDate forwardDate = mode > 0 ? retesterForwardDatePicker.getValue() : null;
+                selectedTask.setOptimizerForwardMode(Math.max(0, mode));
+                selectedTask.setOptimizerForwardDate(forwardDate != null ? forwardDate.toString() : "");
+            }
+            recalculateForwardDate();
         }
         invalidateDownstreamIfSelectedTaskChanged();
     }
@@ -3805,6 +4097,9 @@ public class ProjectWorkflowEditorView {
     }
 
     private void invalidateDownstreamIfSelectedTaskChanged() {
+        if (suppressDownstreamInvalidation || updatingDataSettingsControls) {
+            return;
+        }
         if (selectedTask == null || project == null) {
             return;
         }
@@ -3819,12 +4114,50 @@ public class ProjectWorkflowEditorView {
             if (cleared > 0) {
                 logToConsole("WORKFLOW", "Task-Einstellungen geändert: "
                         + cleared + " nachfolgende Databank(en) geleert.");
-                refreshTaskChain();
-                if (databankPanel != null) {
-                    databankPanel.refreshDatabanksUI();
-                }
+                refreshWorkflowViewsOnFxThread();
             }
             selectedTaskExecutionSignature = current;
+        }
+    }
+
+    private void refreshWorkflowViewsOnFxThread() {
+        Runnable refresh = () -> {
+            refreshTaskChain();
+            if (databankPanel != null) {
+                databankPanel.refreshDatabanksUI();
+            }
+        };
+        if (Platform.isFxApplicationThread()) {
+            refresh.run();
+        } else {
+            Platform.runLater(refresh);
+        }
+    }
+
+    /**
+     * After externally applying task settings (e.g. MT5 opti import dates), adopt the
+     * new signature so the next save does not treat the change as a user edit and wipe
+     * the task's own target databank.
+     */
+    private void acknowledgeTaskExecutionSignature(WorkflowTask task) {
+        // Resync from the currently selected task: an import may change dates on a
+        // task other than the selected one, and any stale signature would trigger a
+        // wipe on the next save.
+        selectedTaskExecutionSignature = selectedTask != null
+                ? WorkflowDownstreamInvalidation.executionSignature(selectedTask)
+                : null;
+    }
+
+    private void runSuppressingDownstreamInvalidation(Runnable action) {
+        if (action == null) {
+            return;
+        }
+        boolean prev = suppressDownstreamInvalidation;
+        suppressDownstreamInvalidation = true;
+        try {
+            action.run();
+        } finally {
+            suppressDownstreamInvalidation = prev;
         }
     }
 
@@ -3937,7 +4270,20 @@ public class ProjectWorkflowEditorView {
         Platform.runLater(() -> {
             if (consoleLog != null) {
                 consoleLog.appendText("[" + tag + "] " + msg + "\n");
+                trimConsoleLogIfNeeded();
             }
         });
+    }
+
+    private void trimConsoleLogIfNeeded() {
+        int length = consoleLog.getLength();
+        if (length <= CONSOLE_LOG_MAX_CHARS) return;
+
+        int minimumCut = length - CONSOLE_LOG_RETAIN_CHARS;
+        int prefixEnd = Math.min(length, minimumCut + 2_000);
+        String prefix = consoleLog.getText(0, prefixEnd);
+        int lineEnd = prefix.indexOf('\n', minimumCut);
+        int cut = lineEnd >= 0 ? lineEnd + 1 : minimumCut;
+        consoleLog.deleteText(0, cut);
     }
 }

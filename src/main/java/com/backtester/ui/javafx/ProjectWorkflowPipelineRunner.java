@@ -129,6 +129,9 @@ public class ProjectWorkflowPipelineRunner {
     private final WorkflowExecutionStatusWindow statusWindow;
 
     private Task<Void> activeProjectTask;
+    private volatile ProgressContext progressContext = ProgressContext.empty();
+    private volatile double latestProgress;
+    private volatile String latestProgressDetail = "Bereit";
 
     public ProjectWorkflowPipelineRunner(WorkflowEngine engine,
                                          DatabankManager databankManager,
@@ -454,6 +457,14 @@ public class ProjectWorkflowPipelineRunner {
         if (task == null) return;
 
         CustomProject project = host.getProject();
+        List<WorkflowTask> projectTasks = project != null && project.getTasks() != null
+                ? project.getTasks() : List.of();
+        int stageIndex = projectTasks.indexOf(task);
+        progressContext = ProgressContext.stage(
+                stageIndex >= 0 ? stageIndex + 1 : 0,
+                projectTasks.size(),
+                task.getName(),
+                liveLineCount(project, databankManager.getDatabank(task.getSourceDatabank())));
         host.commitCurrentTaskDataSettings();
         try {
             if (!shouldDeferRuntimeSearchSpaceCheck(project, task,
@@ -526,7 +537,7 @@ public class ProjectWorkflowPipelineRunner {
                 task.setStatus(WorkflowTask.TaskStatus.RUNNING);
                 Platform.runLater(() -> {
                     host.refreshTaskChain();
-                    updateProgressUI(0.5, "Führe Einzelstep aus: " + task.getName());
+                    updateProgressUI(0.0, "Führe Einzelstep aus: " + task.getName());
                 });
 
                 applyTaskExecutionConfig(task);
@@ -550,12 +561,15 @@ public class ProjectWorkflowPipelineRunner {
                     case RETESTER:
                         long retStartMs = System.currentTimeMillis();
                         int retTotal = inputPasses != null ? inputPasses.size() : 1;
+                        progressContext = progressContext.withStrategies(0, retTotal);
+                        publishProgressContext(formatProgressWithEta(task.getName(), 0, retTotal, retStartMs));
                         outputPasses = engine.runLongtermTest(
                             inputPasses,
                             task,
                             msg -> host.logToConsole("RETESTER", msg),
                             pct -> {
                                 int curr = Math.min(retTotal, Math.max(0, (int) Math.round(((double) pct / 100.0) * retTotal)));
+                                progressContext = progressContext.withStrategies(curr, retTotal);
                                 updateProgressUI((double) pct / 100.0, formatProgressWithEta(task.getName(), curr, retTotal, retStartMs));
                             }
                         );
@@ -638,6 +652,7 @@ public class ProjectWorkflowPipelineRunner {
                 }
 
                 host.logToConsole("SINGLE-STEP", "=== EINZELSTEP ERFOLGREICH BEENDET. Databank '" + task.getTargetDatabank() + "' enthält " + processed.size() + " Strategien ===");
+                progressContext = progressContext.withOutcome("abgeschlossen");
                 updateProgressUI(1.0, "Einzelstep beendet.");
                 return null;
             }
@@ -650,6 +665,8 @@ public class ProjectWorkflowPipelineRunner {
                 Throwable error = getException();
                 String message = error != null && error.getMessage() != null ? error.getMessage() : "Unbekannter Fehler";
                 task.setLastExecutionLog(message);
+                progressContext = progressContext.withOutcome("FEHLGESCHLAGEN");
+                updateProgressUI(latestProgress, "Fehlgeschlagen: " + message);
                 logger.error("Task '" + task.getName() + "' fehlgeschlagen", error);
                 host.logToConsole("ERROR", "Task '" + task.getName() + "' fehlgeschlagen: " + message);
                 Platform.runLater(() -> {
@@ -666,6 +683,8 @@ public class ProjectWorkflowPipelineRunner {
             protected void cancelled() {
                 task.setStatus(WorkflowTask.TaskStatus.PENDING);
                 task.setLastExecutionLog("Vom Benutzer abgebrochen.");
+                progressContext = ProgressContext.empty();
+                host.resetProgressDisplay("Abgebrochen.");
                 cleanupExecutionState();
             }
         };
@@ -678,6 +697,9 @@ public class ProjectWorkflowPipelineRunner {
     private void startProjectExecution() {
         CustomProject project = host.getProject();
         if (project == null || project.getTasks().isEmpty()) return;
+        progressContext = ProgressContext.empty();
+        latestProgress = 0.0;
+        latestProgressDetail = "Workflow startet...";
         host.commitCurrentTaskDataSettings();
         try {
             validateProjectExecutionOrder();
@@ -750,6 +772,8 @@ public class ProjectWorkflowPipelineRunner {
                     }
 
                     List<CombinedPass> inputPasses = databankManager.getDatabank(task.getSourceDatabank());
+                    progressContext = ProgressContext.stage(i + 1, total, task.getName(),
+                            liveLineCount(project, inputPasses));
                     if (!prepareFollowUpOptimizer(project, task, inputPasses, (double) i / total)) {
                         return null;
                     }
@@ -786,6 +810,8 @@ public class ProjectWorkflowPipelineRunner {
                             case RETESTER:
                                 long loopRetStartMs = System.currentTimeMillis();
                                 int loopRetTotal = inputPasses != null ? inputPasses.size() : 1;
+                                progressContext = progressContext.withStrategies(0, loopRetTotal);
+                                publishProgressContext(formatProgressWithEta(task.getName(), 0, loopRetTotal, loopRetStartMs));
                                 currentPipelinePasses = engine.runLongtermTest(
                                     inputPasses,
                                     task,
@@ -793,6 +819,7 @@ public class ProjectWorkflowPipelineRunner {
                                     pct -> {
                                         int curr = Math.min(loopRetTotal, Math.max(0, (int) Math.round(((double) pct / 100.0) * loopRetTotal)));
                                         double overallProgress = ((double) currentIdx + ((double) pct / 100.0)) / total;
+                                        progressContext = progressContext.withStrategies(curr, loopRetTotal);
                                         updateProgressUI(overallProgress, formatProgressWithEta(task.getName(), curr, loopRetTotal, loopRetStartMs));
                                     }
                                 );
@@ -894,6 +921,8 @@ public class ProjectWorkflowPipelineRunner {
 
                 project.setLastRunTimestamp(System.currentTimeMillis());
                 host.saveProject();
+                progressContext = ProgressContext.stage(total, total,
+                        "Workflow abgeschlossen", liveLineCount(project, currentPipelinePasses));
                 updateProgressUI(1.0, "Projekt erfolgreich abgeschlossen!");
                 host.logToConsole("PROJECT", "=== CUSTOM PROJECT ERFOLGREICH BEENDET ===");
                 return null;
@@ -908,6 +937,8 @@ public class ProjectWorkflowPipelineRunner {
             protected void failed() {
                 Throwable error = getException();
                 String message = error != null && error.getMessage() != null ? error.getMessage() : "Unbekannter Fehler";
+                progressContext = progressContext.withOutcome("FEHLGESCHLAGEN");
+                updateProgressUI(latestProgress, "Fehlgeschlagen: " + message);
                 logger.error("Projektlauf fehlgeschlagen", error);
                 host.logToConsole("ERROR", "Projektlauf fehlgeschlagen: " + message);
                 Platform.runLater(() -> {
@@ -932,6 +963,8 @@ public class ProjectWorkflowPipelineRunner {
                         }
                     }
                 }
+                progressContext = ProgressContext.empty();
+                host.resetProgressDisplay("Abgebrochen.");
                 cleanupExecutionState();
             }
         };
@@ -1205,6 +1238,9 @@ public class ProjectWorkflowPipelineRunner {
     }
 
     private void resetProjectExecution() {
+        progressContext = ProgressContext.empty();
+        latestProgress = 0.0;
+        latestProgressDetail = "Zurückgesetzt.";
         CustomProject project = host.getProject();
         if (project != null && project.getTasks() != null) {
             for (WorkflowTask t : project.getTasks()) {
@@ -1271,9 +1307,13 @@ public class ProjectWorkflowPipelineRunner {
 
     private void updateProgressUI(double progress, String label) {
         double clamped = Math.max(0.0, Math.min(1.0, progress));
+        latestProgress = clamped;
+        latestProgressDetail = label != null ? label : "";
         int pct = (int) Math.round(clamped * 100.0);
         String percentText = pct + "%";
-        String taskBannerName = extractCurrentTaskName(label);
+        String structuredStatus = progressContext.displayText();
+        final String taskBannerName = structuredStatus.isBlank()
+                ? extractCurrentTaskName(label) : structuredStatus;
         Platform.runLater(() -> {
             host.updateMainProgress(clamped, percentText, label, taskBannerName);
             statusWindow.update(taskBannerName, clamped, percentText, label);
@@ -1392,6 +1432,8 @@ public class ProjectWorkflowPipelineRunner {
             }
             index++;
             String clusterId = ClusterIdentity.normalize(champion);
+            progressContext = progressContext.withLine(clusterId, index, total);
+            publishProgressContext("Starte Linie " + clusterId + " (" + index + " / " + total + ")...");
             host.logToConsole("CLUSTER", "Optimizer '" + task.getName() + "' Linie " + clusterId
                     + " (" + index + "/" + total + "), Basis Pass #" + champion.getPassNumber()
                     + " — sequentiell, ein Terminal.");
@@ -1411,6 +1453,10 @@ public class ProjectWorkflowPipelineRunner {
                 }
             } catch (InterruptedException ex) {
                 throw ex;
+            } catch (WorkflowEngine.OptimizationExecutionException ex) {
+                // A broken/missing MT5 optimization result is infrastructure failure,
+                // not evidence that this strategy line is bad. Abort the whole task.
+                throw ex;
             } catch (Exception ex) {
                 failedLines++;
                 String err = ex.getMessage() != null ? ex.getMessage() : ex.getClass().getSimpleName();
@@ -1419,6 +1465,8 @@ public class ProjectWorkflowPipelineRunner {
                 logger.warn("Sequential cluster optimizer failed for {}", clusterId, ex);
                 ClusterAutomation.markDied(project.getClusterCensus(), clusterId,
                         task.getName(), task.getTargetDatabank());
+                progressContext = progressContext.withLiveLines(Math.max(0, total - failedLines));
+                publishProgressContext("Linie " + clusterId + " technisch fehlgeschlagen; fahre fort...");
             }
         }
         List<CombinedPass> kept = ClusterAutomation.applyOptimizerImproveOrDie(
@@ -1427,6 +1475,9 @@ public class ProjectWorkflowPipelineRunner {
                 task.getTargetDatabank(),
                 live,
                 merged);
+        int survivingLines = ClusterAutomation.liveChampions(project, kept).size();
+        progressContext = progressContext.withoutLine().withLiveLines(survivingLines);
+        publishProgressContext("Optimizer-Stufe beendet: " + survivingLines + " lebende Linien.");
         if (kept.isEmpty() && failedLines == total && total > 0) {
             throw new WorkflowPauseException("Automatik angehalten: Alle "
                     + total + " Cluster-Linien sind in '" + task.getName() + "' fehlgeschlagen.");
@@ -1522,5 +1573,90 @@ public class ProjectWorkflowPipelineRunner {
         }
         int pipe = text.indexOf(" | ");
         return pipe >= 0 ? text.substring(0, pipe).trim() : text;
+    }
+
+    private static int liveLineCount(CustomProject project, List<CombinedPass> inputPasses) {
+        if (!ClusterAutomation.hasAnyClusterId(inputPasses)) return -1;
+        return ClusterAutomation.liveChampions(project, inputPasses).size();
+    }
+
+    private void publishProgressContext(String detail) {
+        updateProgressUI(latestProgress,
+                detail != null && !detail.isBlank() ? detail : latestProgressDetail);
+    }
+
+    /** Structured workflow status; detail labels must never be parsed to recover this state. */
+    static record ProgressContext(int stageNumber,
+                                  int stageTotal,
+                                  String taskName,
+                                  String lineId,
+                                  int lineNumber,
+                                  int lineTotal,
+                                  int liveLines,
+                                  int strategyNumber,
+                                  int strategyTotal) {
+        static ProgressContext empty() {
+            return new ProgressContext(0, 0, "", "", 0, 0, -1, 0, 0);
+        }
+
+        static ProgressContext stage(int stageNumber, int stageTotal, String taskName, int liveLines) {
+            return new ProgressContext(Math.max(0, stageNumber), Math.max(0, stageTotal),
+                    taskName != null ? taskName.trim() : "", "", 0, 0, liveLines, 0, 0);
+        }
+
+        ProgressContext withLine(String lineId, int lineNumber, int lineTotal) {
+            return new ProgressContext(stageNumber, stageTotal, taskName,
+                    lineId != null ? lineId.trim() : "", Math.max(0, lineNumber),
+                    Math.max(0, lineTotal), liveLines, strategyNumber, strategyTotal);
+        }
+
+        ProgressContext withoutLine() {
+            return withLine("", 0, 0);
+        }
+
+        ProgressContext withLiveLines(int count) {
+            return new ProgressContext(stageNumber, stageTotal, taskName, lineId,
+                    lineNumber, lineTotal, count, strategyNumber, strategyTotal);
+        }
+
+        ProgressContext withStrategies(int strategyNumber, int strategyTotal) {
+            return new ProgressContext(stageNumber, stageTotal, taskName, lineId,
+                    lineNumber, lineTotal, liveLines,
+                    Math.max(0, strategyNumber), Math.max(0, strategyTotal));
+        }
+
+        ProgressContext withOutcome(String outcome) {
+            String suffix = outcome != null ? outcome.trim() : "";
+            String named = suffix.isBlank() ? taskName
+                    : (taskName.isBlank() ? suffix : taskName + " — " + suffix);
+            return new ProgressContext(stageNumber, stageTotal, named, "", 0, 0, liveLines,
+                    strategyNumber, strategyTotal);
+        }
+
+        String displayText() {
+            StringBuilder text = new StringBuilder();
+            if (stageNumber > 0 && stageTotal > 0) {
+                text.append("Stufe ").append(stageNumber).append(" / ").append(stageTotal);
+            }
+            if (!taskName.isBlank()) {
+                if (!text.isEmpty()) text.append(" · ");
+                text.append(taskName);
+            }
+            if (strategyTotal > 0) {
+                text.append(" | Strategie ").append(strategyNumber)
+                        .append(" / ").append(strategyTotal);
+            }
+            if (!lineId.isBlank() && lineNumber > 0 && lineTotal > 0) {
+                text.append(" | Linie ").append(lineId).append(" · ")
+                        .append(lineNumber).append(" / ").append(lineTotal);
+            }
+            if (liveLines >= 0) {
+                text.append(" | ").append(liveLines)
+                        .append(lineId.isBlank()
+                                ? (liveLines == 1 ? " lebende Linie" : " lebende Linien")
+                                : (liveLines == 1 ? " derzeit aktive Linie" : " derzeit aktive Linien"));
+            }
+            return text.toString();
+        }
     }
 }

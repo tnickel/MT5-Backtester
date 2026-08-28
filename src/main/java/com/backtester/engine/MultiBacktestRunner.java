@@ -6,18 +6,17 @@ import com.backtester.report.MultiReportGenerator;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import javax.swing.*;
-import java.awt.*;
-import java.io.File;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Consumer;
 
 /**
- * Orchestrates a batch of MT5 backtests, running them sequentially.
+ * Orchestrates a batch of MT5 backtests, running them sequentially on a daemon
+ * thread. Callbacks are invoked on that worker thread — UI callers marshal to
+ * the FX thread themselves.
  */
-public class MultiBacktestRunner extends SwingWorker<List<BacktestResult>, String> {
+public class MultiBacktestRunner {
 
     private static final Logger log = LoggerFactory.getLogger(MultiBacktestRunner.class);
 
@@ -26,8 +25,9 @@ public class MultiBacktestRunner extends SwingWorker<List<BacktestResult>, Strin
     private final java.util.function.BiConsumer<Integer, Integer> progressCallback;
     private final Consumer<BacktestResult> singleResultCallback;
 
-    private BacktestRunner currentSingleRunner;
-    private boolean cancelled = false;
+    private volatile BacktestRunner currentSingleRunner;
+    private volatile boolean cancelled = false;
+    private volatile Thread workerThread;
     private Path generatedReportPath;
 
     public MultiBacktestRunner(MultiBacktestConfig batchConfig,
@@ -40,8 +40,24 @@ public class MultiBacktestRunner extends SwingWorker<List<BacktestResult>, Strin
         this.singleResultCallback = singleResultCallback;
     }
 
-    @Override
-    protected List<BacktestResult> doInBackground() {
+    /**
+     * Starts the batch on a daemon thread; {@link #done()} is invoked on that
+     * thread after the batch finishes (successfully, cancelled or failed).
+     */
+    public void execute() {
+        Thread thread = new Thread(() -> {
+            try {
+                runBatch();
+            } finally {
+                done();
+            }
+        }, "multi-backtest-runner");
+        thread.setDaemon(true);
+        workerThread = thread;
+        thread.start();
+    }
+
+    public List<BacktestResult> runBatch() {
         List<BacktestConfig> combinations = batchConfig.generateSingleConfigs();
         int total = combinations.size();
         List<BacktestResult> allResults = new ArrayList<>();
@@ -49,7 +65,7 @@ public class MultiBacktestRunner extends SwingWorker<List<BacktestResult>, Strin
         logMessage("Starting batch run of " + total + " backtests...");
 
         for (int i = 0; i < total; i++) {
-            if (isCancelled() || cancelled || Thread.currentThread().isInterrupted()) {
+            if (cancelled || Thread.currentThread().isInterrupted()) {
                 logMessage("Batch run was cancelled. Stopping.");
                 break;
             }
@@ -118,31 +134,35 @@ public class MultiBacktestRunner extends SwingWorker<List<BacktestResult>, Strin
         return allResults;
     }
 
+    /** Override to react to batch completion; invoked on the worker thread. */
+    protected void done() {
+    }
+
     public Path getGeneratedReportPath() {
         return generatedReportPath;
     }
 
-    public void cancelBatch() {
+    public boolean isCancelled() {
+        return cancelled;
+    }
+
+    public void cancel(boolean mayInterruptIfRunning) {
         this.cancelled = true;
         if (currentSingleRunner != null) {
             currentSingleRunner.cancel();
         }
-        cancel(true);
+        if (mayInterruptIfRunning) {
+            Thread thread = workerThread;
+            if (thread != null) {
+                thread.interrupt();
+            }
+        }
     }
 
     private void logMessage(String msg) {
         log.info(msg);
         if (logCallback != null) {
-            // Forward safely to UI
-            SwingUtilities.invokeLater(() -> logCallback.accept(msg));
-        }
-    }
-
-    private void openHtmlReport(Path path) {
-        try {
-            Desktop.getDesktop().browse(path.toUri());
-        } catch (Exception e) {
-            log.warn("Could not auto-open HTML multi report", e);
+            logCallback.accept(msg);
         }
     }
 }

@@ -41,7 +41,7 @@ public final class MasterStrategyLineageService {
             org.slf4j.LoggerFactory.getLogger(MasterStrategyLineageService.class);
 
     /** Fixed reference window — identical for every entry, otherwise nothing is comparable. */
-    public static final String REFERENCE_FROM = ToTheMoon132GuidedWorkflowFactory.DEVELOPMENT_FROM;
+    public static final String REFERENCE_FROM = ToTheMoon132GuidedWorkflowFactory.SEARCH_FROM;
     public static final String REFERENCE_TO = ToTheMoon132GuidedWorkflowFactory.DEVELOPMENT_TO;
     public static final int REFERENCE_MODEL = BacktestConfig.MODEL_OHLC_M1;
     public static final int REFERENCE_DEPOSIT = 10000;
@@ -472,7 +472,7 @@ public final class MasterStrategyLineageService {
      * which is exactly the case this guard exists for. The comparison uses the same
      * renderer that produced the file, so it cannot fail over formatting.
      */
-    static void verifyPresetWritten(Path presetFile, List<EaParameter> expected)
+    public static void verifyPresetWritten(Path presetFile, List<EaParameter> expected)
             throws IOException {
         if (presetFile == null || !Files.isRegularFile(presetFile)) {
             throw new IOException("Referenz-Preset " + presetFile + " wurde nicht angelegt.");
@@ -741,28 +741,69 @@ public final class MasterStrategyLineageService {
     }
 
     public static BacktestConfig buildReferenceConfig(CustomProject project, String presetFileName) {
+        return buildReferenceConfig(project, findReferenceTask(project), presetFileName);
+    }
+
+    /**
+     * Builds the fixed comparison run from the workflow task that owns the current
+     * search window. Persisted projects can therefore keep their historic 3Y context,
+     * while new 1Y templates execute exactly the dates displayed in their task.
+     */
+    public static BacktestConfig buildReferenceConfig(CustomProject project,
+                                                      WorkflowTask referenceTask,
+                                                      String presetFileName) {
         AppConfig config = AppConfig.getInstance();
-        String expert = project != null && !project.getExpert().isBlank()
+        String expert = project != null && project.getExpert() != null && !project.getExpert().isBlank()
                 ? project.getExpert() : config.get("app.expert", "ToTheMoon_KI_v132");
-        String symbol = project != null && !project.getSymbol().isBlank()
-                ? project.getSymbol() : config.get("app.symbol", "EURUSD");
-        String period = project != null && !project.getPeriod().isBlank()
-                ? project.getPeriod() : config.get("app.period", "H1");
+        String symbol = referenceTask != null && !referenceTask.getRetestSymbol().isBlank()
+                ? referenceTask.getRetestSymbol()
+                : project != null && project.getSymbol() != null && !project.getSymbol().isBlank()
+                        ? project.getSymbol() : config.get("app.symbol", "EURUSD");
+        String period = referenceTask != null && !referenceTask.getRetestPeriod().isBlank()
+                ? referenceTask.getRetestPeriod()
+                : project != null && project.getPeriod() != null && !project.getPeriod().isBlank()
+                        ? project.getPeriod() : config.get("app.period", "H1");
+        LocalDate from = parseReferenceDate(
+                referenceTask != null ? referenceTask.getStartDate() : null, REFERENCE_FROM);
+        LocalDate to = parseReferenceDate(
+                referenceTask != null ? referenceTask.getEndDate() : null, REFERENCE_TO);
+        if (!from.isBefore(to)) {
+            from = LocalDate.parse(REFERENCE_FROM);
+            to = LocalDate.parse(REFERENCE_TO);
+        }
 
         BacktestConfig btConfig = new BacktestConfig();
         btConfig.setExpert(expert);
         btConfig.setExpertParameters(presetFileName);
         btConfig.setSymbol(symbol);
         btConfig.setPeriod(period);
-        btConfig.setFromDate(LocalDate.parse(REFERENCE_FROM));
-        btConfig.setToDate(LocalDate.parse(REFERENCE_TO));
-        btConfig.setModel(REFERENCE_MODEL);
+        btConfig.setFromDate(from);
+        btConfig.setToDate(to);
+        btConfig.setModel(referenceTask != null ? referenceTask.getMt5Model() : REFERENCE_MODEL);
         btConfig.setDeposit(REFERENCE_DEPOSIT);
         btConfig.setCurrency(REFERENCE_CURRENCY);
         btConfig.setLeverage(REFERENCE_LEVERAGE);
         btConfig.setShutdownTerminal(true);
         btConfig.setAutoKillMt5(true);
         return btConfig;
+    }
+
+    private static WorkflowTask findReferenceTask(CustomProject project) {
+        if (project == null || project.getTasks() == null) return null;
+        for (WorkflowTask task : project.getTasks()) {
+            if (task != null && task.isEnabled() && task.getType() == WorkflowTask.TaskType.OPTIMIZER) {
+                return task;
+            }
+        }
+        return null;
+    }
+
+    private static LocalDate parseReferenceDate(String value, String fallback) {
+        try {
+            return LocalDate.parse(value != null && !value.isBlank() ? value.trim() : fallback);
+        } catch (RuntimeException ignored) {
+            return LocalDate.parse(fallback);
+        }
     }
 
     /** Maps a finished reference backtest onto a lineage entry (not yet appended). */
@@ -832,7 +873,7 @@ public final class MasterStrategyLineageService {
                                                    Consumer<String> logSink,
                                                    BacktestRunner runner) {
         long lineageGeneration = captureLineageGeneration(project);
-        BacktestConfig btConfig = buildReferenceConfig(project, "");
+        BacktestConfig btConfig = buildReferenceConfig(project, consumer, "");
         String expert = btConfig.getExpert();
         // Project-scoped file name: two projects must not overwrite each other's preset.
         String presetFileName = "MasterStrategy_Ref_"
@@ -855,7 +896,8 @@ public final class MasterStrategyLineageService {
 
             emit(logSink, "Referenz-Backtest der Master-Strategie startet ("
                     + btConfig.getSymbol() + " " + btConfig.getPeriod() + ", "
-                    + REFERENCE_FROM + " bis " + REFERENCE_TO + ", " + btConfig.getModelName() + ").");
+                    + btConfig.getFromDate() + " bis " + btConfig.getToDate()
+                    + ", " + btConfig.getModelName() + ").");
 
             BacktestRunner activeRunner = runner != null ? runner : new BacktestRunner();
             if (logSink != null) activeRunner.setLogCallback(msg -> logSink.accept(msg));

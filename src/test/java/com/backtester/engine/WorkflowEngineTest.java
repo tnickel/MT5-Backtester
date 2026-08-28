@@ -3,6 +3,7 @@ package com.backtester.engine;
 import com.backtester.database.DatabaseManager;
 import com.backtester.database.HistoryRun;
 import com.backtester.config.EaParameter;
+import com.backtester.report.BacktestResult;
 import com.backtester.report.OptimizationResult;
 import com.backtester.report.OptimizationResult.CombinedPass;
 import com.backtester.report.OptimizationResult.Pass;
@@ -895,6 +896,53 @@ public class WorkflowEngineTest {
         assertEquals("2022-08-01", merged.getFromDate());
         assertEquals("2025-08-01", merged.getToDate());
         assertEquals("fw-report", merged.getReportDirectory());
+    }
+
+    @Test
+    public void failedRetestResultAbortsWithPassAndMt5Message() {
+        BacktestResult failed = new BacktestResult();
+        failed.setSuccess(false);
+        failed.setMessage("Report file not found - check MT5 logs");
+        Pass pass = new Pass();
+        pass.setPassNumber(1270);
+        CombinedPass candidate = new CombinedPass(pass, null, 80.0, 1.0, "");
+        WorkflowTask task = new WorkflowTask("Tick-Gate", WorkflowTask.TaskType.RETESTER);
+
+        try {
+            WorkflowEngine.requireSuccessfulRetestResult(failed, task, candidate, "Tick-IS");
+            fail("A technical MT5 failure must abort the retester immediately");
+        } catch (IllegalStateException ex) {
+            assertTrue(ex.getMessage().contains("Technischer MT5-Fehler"));
+            assertTrue(ex.getMessage().contains("Tick-Gate"));
+            assertTrue(ex.getMessage().contains("Tick-IS"));
+            assertTrue(ex.getMessage().contains("Pass 1270"));
+            assertTrue(ex.getMessage().contains("Report file not found"));
+            assertTrue(ex.getMessage().contains("sofort gestoppt"));
+        }
+    }
+
+    @Test
+    public void missingRetestResultAlsoAbortsInsteadOfDroppingCandidate() {
+        Pass pass = new Pass();
+        pass.setPassNumber(7);
+        CombinedPass candidate = new CombinedPass(pass, null, 80.0, 1.0, "");
+
+        try {
+            WorkflowEngine.requireSuccessfulRetestResult(null, null, candidate, "Retest");
+            fail("A missing MT5 result must abort the retester immediately");
+        } catch (IllegalStateException ex) {
+            assertTrue(ex.getMessage().contains("MT5 lieferte kein Ergebnis"));
+            assertTrue(ex.getMessage().contains("Pass 7"));
+        }
+    }
+
+    @Test
+    public void successfulRetestResultContinuesNormally() {
+        BacktestResult successful = new BacktestResult();
+        successful.setSuccess(true);
+
+        assertSame(successful, WorkflowEngine.requireSuccessfulRetestResult(
+                successful, null, null, "Retest"));
     }
 
     private void deleteRecursive(File f) {

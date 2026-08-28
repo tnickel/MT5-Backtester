@@ -109,4 +109,27 @@ public class Bi5DecoderTest {
         assertEquals(LocalDateTime.of(2024, 1, 2, 10, 15, 0), ticks.get(0).timestamp);
         assertEquals(LocalDateTime.of(2024, 1, 2, 11, 10, 0), ticks.get(1).timestamp);
     }
+
+    @Test
+    public void decodeRangeRejectsAndDeletesTruncatedTickRecord() throws Exception {
+        Bi5Decoder decoder = new Bi5Decoder();
+        Path baseDir = tempFolder.newFolder("corrupt-data").toPath();
+        Path corrupt = baseDir.resolve("EURUSD/2024/01/02/10h_ticks.bi5");
+        Files.createDirectories(corrupt.getParent());
+
+        byte[] partialTick = new byte[19];
+        try (OutputStream fileOut = Files.newOutputStream(corrupt);
+             LZMAOutputStream lzmaOut = new LZMAOutputStream(fileOut, new LZMA2Options(), partialTick.length)) {
+            lzmaOut.write(partialTick);
+        }
+
+        try {
+            decoder.decodeRange(baseDir, "EURUSD", LocalDate.of(2024, 1, 2), LocalDate.of(2024, 1, 2));
+            fail("Expected truncated BI5 data to be rejected");
+        } catch (IOException expected) {
+            assertTrue(expected.getMessage().contains("Truncated")
+                    || expected.getMessage().contains("Failed to decode"));
+        }
+        assertFalse("Corrupt cache file must be removed so it can be downloaded again", Files.exists(corrupt));
+    }
 }

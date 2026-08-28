@@ -1,5 +1,6 @@
 package com.backtester.workflow;
 
+import com.backtester.config.EaParameter;
 import com.backtester.report.OptimizationResult.CombinedPass;
 
 import java.util.ArrayList;
@@ -37,6 +38,20 @@ public final class WorkflowDownstreamInvalidation {
         sb.append(task.getOptimizerCriterion()).append('|');
         sb.append(task.getOptimizerForwardMode()).append('|');
         sb.append(nullToEmpty(task.getOptimizerForwardDate())).append('|');
+        for (String target : task.getOptimizerTargetParameters()) {
+            sb.append("target=").append(nullToEmpty(target)).append(';');
+        }
+        sb.append('|');
+        for (EaParameter parameter : task.getOptimizerParameterSnapshot()) {
+            if (parameter == null) continue;
+            sb.append(nullToEmpty(parameter.getName())).append(':')
+                    .append(nullToEmpty(parameter.getValue())).append(':')
+                    .append(parameter.isOptimizeEnabled()).append(':')
+                    .append(nullToEmpty(parameter.getOptimizeStart())).append(':')
+                    .append(nullToEmpty(parameter.getOptimizeStep())).append(':')
+                    .append(nullToEmpty(parameter.getOptimizeEnd())).append(';');
+        }
+        sb.append('|');
         sb.append(task.getDiversityParamDiffPct()).append('|');
         sb.append(task.getDiversityTradeDiffPct()).append('|');
         sb.append(task.getDiversityMinDifferentParams()).append('|');
@@ -54,7 +69,8 @@ public final class WorkflowDownstreamInvalidation {
             if (condition == null) {
                 continue;
             }
-            sb.append(condition.getMetric()).append(':')
+            sb.append(condition.isEnabled()).append(':')
+                    .append(condition.getMetric()).append(':')
                     .append(condition.getOperator()).append(':')
                     .append(condition.getValue()).append(';');
         }

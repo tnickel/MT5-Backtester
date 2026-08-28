@@ -37,7 +37,7 @@ public class BacktestRunner {
     private final ReportParser reportParser;
     private Consumer<String> logCallback;
     private volatile boolean cancelled = false;
-    private Process currentProcess;
+    private volatile Process currentProcess;
 
     /** The report filename used in the INI (without path) */
     private static final String REPORT_FILENAME = "BacktestReport";
@@ -137,6 +137,15 @@ public class BacktestRunner {
 
             // 4. Build process arguments
             java.util.List<String> mt5Args = new java.util.ArrayList<>();
+            if (platform == MetaTraderPlatform.MT5) {
+                String skipUpdateToken = config.get("mt5.skip.update.token", "").trim();
+                if (skipUpdateToken.matches("(?i)[0-9a-f]{32}")) {
+                    mt5Args.add("/skipupdate:" + skipUpdateToken);
+                    logMessage("Using configured MT5 skip-update token to avoid a blocking LiveUpdate retry.");
+                } else if (!skipUpdateToken.isEmpty()) {
+                    logMessage("WARNING: Ignoring invalid mt5.skip.update.token (expected 32 hexadecimal characters).");
+                }
+            }
             if (config.isPortableMode()) {
                 mt5Args.add("/portable");
             }
@@ -368,8 +377,8 @@ public class BacktestRunner {
         try (Stream<Path> walker = Files.walk(mt5Dir, 3)) {
             Path found = walker
                 .filter(p -> {
-                    String fname = p.getFileName().toString().toLowerCase();
-                    return fname.startsWith(reportBaseName.toLowerCase()) &&
+                    String fname = p.getFileName().toString().toLowerCase(java.util.Locale.ROOT);
+                    return fname.startsWith(reportBaseName.toLowerCase(java.util.Locale.ROOT)) &&
                            (fname.endsWith(".htm") || fname.endsWith(".html") || fname.endsWith(".xml"));
                 })
                 .findFirst()
@@ -472,27 +481,17 @@ public class BacktestRunner {
      */
     private boolean checkAndKillExistingMt5(Path mt5Dir, boolean autoKill, MetaTraderPlatform platform) {
         try {
-            String processName = platform.getProcessName();
             String platformName = platform.getName();
             logMessage("Checking for existing " + platformName + " processes...");
 
-            String searchPath = mt5Dir.toAbsolutePath().toString().replace("'", "''");
-
-            ProcessBuilder checkPb = new ProcessBuilder(
-                "powershell", "-NoProfile", "-Command",
-                "$procs = Get-Process " + processName + " -ErrorAction SilentlyContinue | " +
-                "Where-Object { $_.Path -and $_.Path.ToLower().StartsWith('" + searchPath.toLowerCase() + "') }; " +
-                "if ($procs) { $procs | ForEach-Object { Write-Output $_.Id } } else { Write-Output 'NONE' }"
-            );
-            checkPb.redirectErrorStream(true);
-            Process checkProc = checkPb.start();
-            String output = new String(checkProc.getInputStream().readAllBytes()).trim();
-            checkProc.waitFor(10, TimeUnit.SECONDS);
-
-            if ("NONE".equals(output) || output.isEmpty()) {
+            java.util.List<Long> existingPids = Mt5ProcessGuard.findTerminalPidsForInstall(mt5Dir);
+            if (existingPids.isEmpty()) {
                 logMessage("No existing " + platformName + " process found.");
                 return true;
             }
+            String output = existingPids.stream()
+                    .map(String::valueOf)
+                    .collect(java.util.stream.Collectors.joining(System.lineSeparator()));
 
             // Terminal is running — ask the user for confirmation (or auto-kill)
             logMessage("Found running " + platformName + " process(es): PID " + output.replace("\n", ", "));
@@ -507,7 +506,7 @@ public class BacktestRunner {
                     return true;
                 }
                 try {
-                    SwingUtilities.invokeAndWait(() -> {
+                    if (SwingUtilities.isEventDispatchThread()) {
                         int choice = JOptionPane.showConfirmDialog(
                             null,
                             platformName + " is already running (PID: " + output.replace("\n", ", ").replace("\r", "") + ").\n\n" +
@@ -519,7 +518,25 @@ public class BacktestRunner {
                             JOptionPane.WARNING_MESSAGE
                         );
                         userConfirmed.set(choice == JOptionPane.YES_OPTION);
-                    });
+                    } else {
+                        SwingUtilities.invokeAndWait(() -> {
+                            int choice = JOptionPane.showConfirmDialog(
+                                null,
+                                platformName + " is already running (PID: " + output.replace("\n", ", ").replace("\r", "") + ").\n\n" +
+                                platformName + " supports only one instance per directory in portable mode.\n" +
+                                "The existing instance must be closed before starting a backtest.\n\n" +
+                                "Terminate the running " + platformName + " instance?",
+                                platformName + " Already Running",
+                                JOptionPane.YES_NO_OPTION,
+                                JOptionPane.WARNING_MESSAGE
+                            );
+                            userConfirmed.set(choice == JOptionPane.YES_OPTION);
+                        });
+                    }
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    log.warn("Interrupted while waiting for MetaTrader cleanup confirmation", e);
+                    return false;
                 } catch (Exception e) {
                     log.error("Error showing confirmation dialog", e);
                     return false;
@@ -533,30 +550,13 @@ public class BacktestRunner {
 
             // User confirmed — kill the process
             logMessage("Terminating existing " + platformName + " processes...");
-            ProcessBuilder killPb = new ProcessBuilder(
-                "powershell", "-NoProfile", "-Command",
-                "$procs = Get-Process " + processName + " -ErrorAction SilentlyContinue | " +
-                "Where-Object { $_.Path -and $_.Path.ToLower().StartsWith('" + searchPath.toLowerCase() + "') }; " +
-                "$procs | ForEach-Object { Write-Output \"Terminating " + platformName + " (PID $($_.Id))\"; " +
-                "Stop-Process -Id $_.Id -Force }; Start-Sleep -Seconds 3; Write-Output '" + platformName + " terminated successfully'"
-            );
-            killPb.redirectErrorStream(true);
-            Process killProc = killPb.start();
-
-            try (BufferedReader reader = new BufferedReader(
-                    new InputStreamReader(killProc.getInputStream()))) {
-                String line;
-                while ((line = reader.readLine()) != null) {
-                    logMessage("[cleanup] " + line);
-                }
+            int killed = Mt5ProcessGuard.killAllTerminalsForInstall(mt5Dir, this::logMessage);
+            if (!Mt5ProcessGuard.findTerminalPidsForInstall(mt5Dir).isEmpty()) {
+                logMessage(platformName + " cleanup failed: one or more processes are still alive.");
+                return false;
             }
 
-            boolean done = killProc.waitFor(15, TimeUnit.SECONDS);
-            if (!done) {
-                killProc.destroyForcibly();
-            }
-
-            logMessage(platformName + " cleanup complete.");
+            logMessage(platformName + " cleanup complete (" + killed + " process(es) stopped).");
             return true;
         } catch (Exception e) {
             logMessage("MetaTrader cleanup note: " + e.getMessage());
@@ -585,7 +585,6 @@ public class BacktestRunner {
             mt5Dir.resolve(platform.getMqlFolderName()).resolve("Reports"),
         };
 
-        String processName = platform.getProcessName();
         String platformName = platform.getName();
 
         while (System.currentTimeMillis() < deadline && !cancelled) {
@@ -608,19 +607,7 @@ public class BacktestRunner {
 
             // Check if MetaTrader is still running from this directory
             try {
-                String searchPath = mt5Dir.toAbsolutePath().toString().replace("'", "''");
-                ProcessBuilder pb = new ProcessBuilder(
-                    "powershell", "-NoProfile", "-Command",
-                    "$procs = Get-Process " + processName + " -ErrorAction SilentlyContinue | " +
-                    "Where-Object { $_.Path -and $_.Path.ToLower().StartsWith('" + searchPath.toLowerCase() + "') }; " +
-                    "if ($procs) { Write-Output @($procs).Count } else { Write-Output '0' }"
-                );
-                pb.redirectErrorStream(true);
-                Process check = pb.start();
-                String output = new String(check.getInputStream().readAllBytes()).trim();
-                check.waitFor(5, TimeUnit.SECONDS);
-
-                if ("0".equals(output) || output.isEmpty()) {
+                if (Mt5ProcessGuard.findTerminalPidsForInstall(mt5Dir).isEmpty()) {
                     logMessage(platformName + " process has exited. Checking for report one last time...");
                     // One final check
                     for (Path dir : searchDirs) {
@@ -737,7 +724,7 @@ public class BacktestRunner {
                                message.startsWith("[cleanup]");
 
         if (isTerminalLog) {
-            String lower = message.toLowerCase();
+            String lower = message.toLowerCase(java.util.Locale.ROOT);
             if (lower.contains("error") || lower.contains("failed") || 
                 lower.contains("cannot") || lower.contains("critical") || 
                 lower.contains("❌")) {
@@ -759,7 +746,7 @@ public class BacktestRunner {
             }
 
             if (isTerminalLog) {
-                String lower = message.toLowerCase();
+                String lower = message.toLowerCase(java.util.Locale.ROOT);
                 if (lower.contains("error") || lower.contains("failed") || 
                     lower.contains("cannot") || lower.contains("critical") || 
                     lower.contains("❌")) {

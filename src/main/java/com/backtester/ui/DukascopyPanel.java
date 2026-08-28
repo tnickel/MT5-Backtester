@@ -13,6 +13,7 @@ import com.github.lgooddatepicker.components.DatePickerSettings;
 import javax.swing.*;
 import javax.swing.table.DefaultTableModel;
 import java.awt.*;
+import java.io.*;
 import java.nio.file.*;
 import java.time.LocalDate;
 import java.util.*;
@@ -413,7 +414,10 @@ public class DukascopyPanel extends JPanel {
         SwingWorker<Void, String> worker = new SwingWorker<>() {
             @Override
             protected Void doInBackground() throws Exception {
-                CsvConverter converter = new CsvConverter(config.getBrokerTimezoneOffset());
+                // Prefer the DST-aware broker zone from config when set; fall back to the fixed offset
+                CsvConverter converter = config.getDukascopyBrokerZone() != null
+                        ? new CsvConverter(config.getDukascopyBrokerZone())
+                        : new CsvConverter(config.getBrokerTimezoneOffset());
                 Bi5Decoder decoder = new Bi5Decoder();
                 Path dataDir = config.getDataDirectory();
 
@@ -444,7 +448,22 @@ public class DukascopyPanel extends JPanel {
                                       List<Bi5Decoder.Tick> ticks = decoder.decode(bi5File, symbol, date, hour);
                                       allTicks.addAll(ticks);
                                   } catch (Exception e) {
-                                      // Skip files that can't be parsed
+                                      // Corrupt cached .bi5: delete it and abort instead of silently
+                                      // shortening the tick data (same behavior as Bi5Decoder.decodeRange).
+                                      try {
+                                          Files.deleteIfExists(bi5File);
+                                      } catch (IOException deleteError) {
+                                          e.addSuppressed(deleteError);
+                                      }
+                                      logPanel.log("ERROR", "Corrupt Dukascopy cache file deleted: " + bi5File
+                                              + " (" + e.getMessage() + ")");
+                                      IOException failure = e instanceof IOException io
+                                              ? io
+                                              : new IOException(e.getMessage(), e);
+                                      throw new UncheckedIOException(
+                                              "Corrupt Dukascopy cache file deleted: " + bi5File
+                                                      + " — please re-download the data for " + symbol,
+                                              failure);
                                   }
                               });
                     }
@@ -455,7 +474,7 @@ public class DukascopyPanel extends JPanel {
                     }
 
                     // Convert to M1 bars
-                    List<CsvConverter.M1Bar> bars = converter.aggregateToM1(allTicks);
+                    List<CsvConverter.M1Bar> bars = converter.aggregateToM1(allTicks, symbol);
                     Path csvFile = dataDir.resolve(symbol + "_M1.csv");
                     int digits = CsvConverter.getDigits(symbol);
                     converter.writeCsv(bars, csvFile, digits);

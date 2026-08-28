@@ -120,14 +120,30 @@ public class CustomSymbolManager {
     }
 
     private void saveSymbols() {
+        Path tempFile = null;
         try {
             Files.createDirectories(configDir);
             Path file = configDir.resolve(SYMBOLS_FILE);
-            try (Writer writer = Files.newBufferedWriter(file)) {
+            tempFile = Files.createTempFile(configDir, SYMBOLS_FILE, ".tmp");
+            try (Writer writer = Files.newBufferedWriter(tempFile)) {
                 gson.toJson(symbols, writer);
+            }
+            try {
+                Files.move(tempFile, file, StandardCopyOption.ATOMIC_MOVE,
+                        StandardCopyOption.REPLACE_EXISTING);
+            } catch (AtomicMoveNotSupportedException e) {
+                Files.move(tempFile, file, StandardCopyOption.REPLACE_EXISTING);
             }
         } catch (IOException e) {
             log.error("Failed to save symbols config", e);
+        } finally {
+            if (tempFile != null) {
+                try {
+                    Files.deleteIfExists(tempFile);
+                } catch (IOException e) {
+                    log.debug("Failed to remove temporary symbols config {}", tempFile, e);
+                }
+            }
         }
     }
 }

@@ -483,8 +483,15 @@ public class ReportParser {
 
         Matcher trMatcher = Pattern.compile("<tr[^>]*>(.*?)</tr>", Pattern.CASE_INSENSITIVE).matcher(tradesSection);
         int tradeNum = 0;
+        // Report times are broker server time; parse them as UTC so the resulting epoch
+        // values are deterministic and machine-independent (not tied to the local
+        // timezone of the machine running the backtest).
         java.text.SimpleDateFormat sdf = new java.text.SimpleDateFormat("yyyy.MM.dd HH:mm:ss");
+        sdf.setTimeZone(java.util.TimeZone.getTimeZone("UTC"));
+        sdf.setLenient(false);
         java.text.SimpleDateFormat sdfShort = new java.text.SimpleDateFormat("yyyy.MM.dd");
+        sdfShort.setTimeZone(java.util.TimeZone.getTimeZone("UTC"));
+        sdfShort.setLenient(false);
         
         while (trMatcher.find()) {
             String rowInner = trMatcher.group(1);
@@ -501,7 +508,10 @@ public class ReportParser {
                 try {
                     if (dateStr.length() >= 19) timestamp = sdf.parse(dateStr.substring(0, 19)).getTime();
                     else if (dateStr.length() >= 10) timestamp = sdfShort.parse(dateStr.substring(0, 10)).getTime();
-                } catch (Exception ignored) {}
+                } catch (java.text.ParseException e) {
+                    // Keep the epoch-0 fallback so the row is not lost, but make the bad data visible
+                    log.warn("Unparseable trade timestamp '{}' in report - falling back to epoch 0", dateStr);
+                }
 
                 // In MT5, Balance is second to last. In MT4, Balance is the last column.
                 String balStr = "";
@@ -547,6 +557,9 @@ public class ReportParser {
         // Handle German number format: 1.234,56 → 1234.56
         if (cleaned.contains(",") && cleaned.indexOf(',') > cleaned.lastIndexOf('.')) {
             cleaned = cleaned.replace(".", "").replace(",", ".");
+        } else {
+            // English thousands separator: 1,234.56 -> 1234.56
+            cleaned = cleaned.replace(",", "");
         }
         // Handle format like "1 227.68" (space as thousands separator already removed)
 

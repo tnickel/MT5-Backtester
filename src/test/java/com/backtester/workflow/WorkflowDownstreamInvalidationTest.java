@@ -1,5 +1,6 @@
 package com.backtester.workflow;
 
+import com.backtester.config.EaParameter;
 import com.backtester.report.OptimizationResult;
 import com.backtester.report.OptimizationResult.CombinedPass;
 import com.backtester.report.OptimizationResult.Pass;
@@ -49,6 +50,42 @@ public class WorkflowDownstreamInvalidationTest {
         String before = WorkflowDownstreamInvalidation.executionSignature(task);
         task.setStartDate("2024-09-01");
         String after = WorkflowDownstreamInvalidation.executionSignature(task);
+        assertTrue(!before.equals(after));
+    }
+
+    @Test
+    public void executionSignatureChangesWhenOptimizerSearchSpaceChanges() {
+        WorkflowTask task = new WorkflowTask("Optimizer", WorkflowTask.TaskType.OPTIMIZER);
+        EaParameter parameter = new EaParameter("Inp_Grid_Step", "500");
+        parameter.setOptimizeEnabled(true);
+        parameter.setOptimizeStart("400");
+        parameter.setOptimizeStep("25");
+        parameter.setOptimizeEnd("900");
+        task.setOptimizerTargetParameters(java.util.List.of(parameter.getName()));
+        task.setOptimizerParameterSnapshot(java.util.List.of(parameter));
+        String before = WorkflowDownstreamInvalidation.executionSignature(task);
+
+        parameter.setOptimizeStep("50");
+        task.setOptimizerParameterSnapshot(java.util.List.of(parameter));
+        String after = WorkflowDownstreamInvalidation.executionSignature(task);
+
+        assertTrue(!before.equals(after));
+    }
+
+    @Test
+    public void executionSignatureChangesWhenFilterIsDisabled() {
+        WorkflowTask task = new WorkflowTask("Filter", WorkflowTask.TaskType.PRE_FILTER);
+        FilterCondition condition = new FilterCondition(
+                FilterCondition.Metric.BT_NET_PROFIT,
+                FilterCondition.Operator.GREATER_THAN,
+                0.0);
+        task.setFilterConditions(java.util.List.of(condition));
+        String before = WorkflowDownstreamInvalidation.executionSignature(task);
+
+        condition.setEnabled(false);
+        task.setFilterConditions(java.util.List.of(condition));
+        String after = WorkflowDownstreamInvalidation.executionSignature(task);
+
         assertTrue(!before.equals(after));
     }
 

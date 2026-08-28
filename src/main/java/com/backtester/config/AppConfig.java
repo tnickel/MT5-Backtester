@@ -5,6 +5,7 @@ import org.slf4j.LoggerFactory;
 
 import java.io.*;
 import java.nio.file.*;
+import java.time.ZoneId;
 import java.util.Properties;
 
 /**
@@ -27,8 +28,9 @@ public class AppConfig {
     private final Path basePath;
 
     private AppConfig() {
-        // Determine base path (where the JAR/project root is)
-        basePath = Paths.get(System.getProperty("user.dir"));
+        // Determine base path (where the JAR/project root is).
+        // Priority: system property "backtester.home" > env var BACKTESTER_HOME > user.dir
+        basePath = resolveBasePath();
         configPath = basePath.resolve(CONFIG_DIR).resolve(CONFIG_FILE);
         properties = new Properties();
 
@@ -63,6 +65,33 @@ public class AppConfig {
             instance = new AppConfig();
         }
         return instance;
+    }
+
+    /**
+     * Resolves the application base directory (backwards compatible):
+     * 1) system property {@code backtester.home},
+     * 2) environment variable {@code BACKTESTER_HOME},
+     * 3) {@code user.dir} (previous behavior).
+     * The result is always absolute and normalized.
+     */
+    private static Path resolveBasePath() {
+        String prop = System.getProperty("backtester.home");
+        String env = prop == null || prop.isBlank() ? System.getenv("BACKTESTER_HOME") : null;
+        Path base;
+        String source;
+        if (prop != null && !prop.isBlank()) {
+            base = Paths.get(prop);
+            source = "system property backtester.home";
+        } else if (env != null && !env.isBlank()) {
+            base = Paths.get(env);
+            source = "environment variable BACKTESTER_HOME";
+        } else {
+            base = Paths.get(System.getProperty("user.dir"));
+            source = "user.dir";
+        }
+        Path normalized = base.toAbsolutePath().normalize();
+        log.info("Using base path: {} (from {})", normalized, source);
+        return normalized;
     }
 
     private void ensureDirectories() {
@@ -219,6 +248,26 @@ public class AppConfig {
         return getInt("broker.timezone.offset", 2);
     }
 
+    /**
+     * Optional IANA zone of the Dukascopy broker (e.g. "Europe/Helsinki"), backed by the
+     * optional property key {@code dukascopy.broker.zone}. When set, CsvConverter converts
+     * tick timestamps with zone rules (DST-aware); an empty or missing value (or an invalid
+     * zone id) returns null, which keeps the legacy fixed-offset behavior of
+     * {@link #getBrokerTimezoneOffset()}.
+     */
+    public ZoneId getDukascopyBrokerZone() {
+        String zone = get("dukascopy.broker.zone", "");
+        if (zone == null || zone.isBlank()) {
+            return null;
+        }
+        try {
+            return ZoneId.of(zone.trim());
+        } catch (Exception e) {
+            log.warn("Invalid dukascopy.broker.zone value '{}' - ignoring, using fixed offset instead", zone);
+            return null;
+        }
+    }
+
     public Path getBasePath() {
         return basePath;
     }
@@ -230,8 +279,6 @@ public class AppConfig {
         return Paths.get(getMt5TerminalPath()).getParent();
     }
 
-    /**
-     * Returns true if the selected terminal is MetaTrader 4 (terminal.exe)
     /**
      * Returns the active platform configuration based on the EA version.
      */

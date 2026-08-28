@@ -134,6 +134,18 @@ public class PdfReportGeneratorTest {
     }
 
     @Test
+    public void failedGenerationRemovesPartialPdf() throws Exception {
+        WorkflowEngine engine = new WorkflowEngine(null);
+        try {
+            PdfReportGenerator.generateReport(engine, null, tempPdfFile);
+            fail("Expected invalid report input to fail");
+        } catch (Exception expected) {
+            // The important contract is that the opened output is closed and the partial file removed.
+        }
+        assertFalse("Partial PDF must not remain after generation failure", tempPdfFile.exists());
+    }
+
+    @Test
     public void testGeneratePortfolioReport() throws Exception {
         // 1. Setup workflow engine mock state
         WorkflowEngine engine = new WorkflowEngine(null);

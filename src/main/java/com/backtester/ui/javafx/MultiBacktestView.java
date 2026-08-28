@@ -606,7 +606,10 @@ public class MultiBacktestView {
         for (String tf : tfs) {
             CheckBox cb = new CheckBox(tf);
             cb.getStyleClass().add("check-box");
-            cb.setOnAction(e -> updateTimeframesPaneTitle());
+            cb.setOnAction(e -> {
+                updateTimeframesPaneTitle();
+                applyChartPeriodToParamTable();
+            });
             timeframeBoxes.add(cb);
             grid.add(cb, col, row);
             col++;
@@ -626,6 +629,26 @@ public class MultiBacktestView {
         String summary = sel.isEmpty() ? "(None)" : String.join(", ", sel);
         if (summary.length() > 40) summary = summary.substring(0, 37) + "...";
         if (timeframesPane != null) timeframesPane.setText("Timeframes: " + summary);
+    }
+
+    /**
+     * Pins the batch's timeframe on the parameter table so timeframe cells resolve
+     * against it instead of the global context. With zero or several timeframes
+     * selected there is no single "current" period, so the pin is removed and the
+     * table falls back to the global context.
+     */
+    private void applyChartPeriodToParamTable() {
+        if (paramTable == null) return;
+        java.util.List<String> selectedTfs = new java.util.ArrayList<>();
+        for (CheckBox cb : timeframeBoxes) {
+            if (cb.isSelected()) selectedTfs.add(cb.getText());
+        }
+        if (selectedTfs.size() == 1) {
+            paramTable.getProperties().put(EaParameterUiContext.CHART_PERIOD_TABLE_KEY, selectedTfs.get(0));
+        } else {
+            paramTable.getProperties().remove(EaParameterUiContext.CHART_PERIOD_TABLE_KEY);
+        }
+        paramTable.refresh();
     }
 
     private VBox createResultsBox() {
@@ -729,7 +752,9 @@ public class MultiBacktestView {
             if (e.getClickCount() == 2) {
                 com.backtester.report.BacktestResult sel = resultsTable.getSelectionModel().getSelectedItem();
                 if (sel != null && sel.getOutputDirectory() != null) {
-                    com.backtester.ui.ReportViewerDialog.showForDirectory(null, sel.getOutputDirectory());
+                    javax.swing.SwingUtilities.invokeLater(() ->
+                            com.backtester.ui.ReportViewerDialog.showForDirectory(
+                                    null, sel.getOutputDirectory()));
                 }
             }
         });
@@ -746,7 +771,9 @@ public class MultiBacktestView {
         showReportBtn.setOnAction(e -> {
             com.backtester.report.BacktestResult sel = resultsTable.getSelectionModel().getSelectedItem();
             if (sel != null && sel.getOutputDirectory() != null) {
-                com.backtester.ui.ReportViewerDialog.showForDirectory(null, sel.getOutputDirectory());
+                javax.swing.SwingUtilities.invokeLater(() ->
+                        com.backtester.ui.ReportViewerDialog.showForDirectory(
+                                null, sel.getOutputDirectory()));
             }
         });
 
@@ -871,6 +898,7 @@ public class MultiBacktestView {
             }
         }
         updateTimeframesPaneTitle();
+        applyChartPeriodToParamTable();
 
         String mod = config.get("multibacktest.model", "Every tick");
         try {
@@ -1089,6 +1117,7 @@ public class MultiBacktestView {
 
         updateSymbolsPaneTitle();
         updateTimeframesPaneTitle();
+        applyChartPeriodToParamTable();
 
         if (sel.getEaParameters() != null && !sel.getEaParameters().isEmpty() && paramTable != null) {
             java.util.List<com.backtester.config.EaParameter> tableCopy = new java.util.ArrayList<>();

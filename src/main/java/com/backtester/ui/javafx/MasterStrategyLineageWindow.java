@@ -1,6 +1,11 @@
 package com.backtester.ui.javafx;
 
+import com.backtester.config.EaParameter;
+import com.backtester.config.EaParameterManager;
+import com.backtester.engine.BacktestConfig;
 import com.backtester.report.MasterStrategyLineageReportGenerator;
+import com.backtester.report.OptimizationResult.CombinedPass;
+import com.backtester.report.OptimizationResult.Pass;
 import com.backtester.workflow.CustomProject;
 import com.backtester.workflow.MasterStrategyEntry;
 import com.backtester.workflow.MasterStrategyLineageService;
@@ -16,6 +21,7 @@ import javafx.scene.chart.NumberAxis;
 import javafx.scene.chart.XYChart;
 import javafx.scene.control.Alert;
 import javafx.scene.control.Button;
+import javafx.scene.control.ButtonType;
 import javafx.scene.control.CheckBox;
 import javafx.scene.control.Label;
 import javafx.scene.control.ScrollPane;
@@ -36,14 +42,21 @@ import javafx.scene.text.FontWeight;
 import javafx.stage.Modality;
 import javafx.stage.Stage;
 import javafx.stage.Window;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeParseException;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.function.Consumer;
 
 /**
@@ -55,6 +68,8 @@ import java.util.function.Consumer;
  * numbers with the delta against the best previous entry.
  */
 public final class MasterStrategyLineageWindow {
+
+    private static final Logger log = LoggerFactory.getLogger(MasterStrategyLineageWindow.class);
 
     private static final DateTimeFormatter TIMESTAMP =
             DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm").withZone(ZoneId.systemDefault());
@@ -82,7 +97,9 @@ public final class MasterStrategyLineageWindow {
         BorderPane root = new BorderPane();
         root.setPadding(new Insets(14));
         root.setStyle("-fx-background-color: #0b0d13;");
-        root.setPrefSize(1500, 820);
+        root.setPrefSize(1950, 1066);
+        stage.setMinWidth(1400);
+        stage.setMinHeight(800);
 
         Label title = new Label("Master-Strategie-Verlauf");
         title.setFont(Font.font("Segoe UI", FontWeight.BOLD, 17));
@@ -108,7 +125,18 @@ public final class MasterStrategyLineageWindow {
                 + "-fx-font-weight: bold; -fx-background-radius: 5; -fx-cursor: hand;");
         reportBtn.setOnAction(e -> generateAndOpenReport());
 
-        HBox headerRow = new HBox(16, title, autoBacktestToggle, reportBtn);
+        Button backtestSelectedBtn = new Button("▶ Auswahl backtesten");
+        backtestSelectedBtn.setStyle("-fx-background-color: #123024; -fx-text-fill: #e6e9f0; "
+                + "-fx-border-color: #00e676; -fx-border-radius: 5; -fx-background-radius: 5; "
+                + "-fx-font-weight: bold; -fx-cursor: hand;");
+
+        Button backtestMasterBtn = new Button("▶ Bestätigten Master backtesten");
+        backtestMasterBtn.setStyle("-fx-background-color: #0d2230; -fx-text-fill: #e6e9f0; "
+                + "-fx-border-color: #00e5ff; -fx-border-radius: 5; -fx-background-radius: 5; "
+                + "-fx-font-weight: bold; -fx-cursor: hand;");
+        backtestMasterBtn.setOnAction(e -> runBacktestForConfirmedMaster());
+
+        HBox headerRow = new HBox(16, title, autoBacktestToggle, backtestSelectedBtn, backtestMasterBtn, reportBtn);
         headerRow.setAlignment(Pos.CENTER_LEFT);
         root.setTop(new VBox(8, headerRow, subtitleLabel, verdictBanner));
 
@@ -119,6 +147,8 @@ public final class MasterStrategyLineageWindow {
         table.setPlaceholder(new Label("Noch kein Referenz-Backtest vorhanden"));
         buildColumns();
         table.getSelectionModel().selectedItemProperty().addListener((obs, o, n) -> showEntry(n));
+        backtestSelectedBtn.setOnAction(e ->
+                runBacktestForEntry(table.getSelectionModel().getSelectedItem()));
 
         trendChart = createTrendChart();
         VBox leftBox = new VBox(10, table, trendChart);
@@ -184,15 +214,15 @@ public final class MasterStrategyLineageWindow {
         MasterStrategyEntry previouslySelected = table.getSelectionModel().getSelectedItem();
         items.setAll(lineage);
         autoBacktestToggle.setSelected(project == null || project.isReferenceBacktestEnabled());
+        BacktestConfig reference = MasterStrategyLineageService.buildReferenceConfig(project, "");
+        String referenceRange = reference.getFromDate() + " bis " + reference.getToDate();
 
         subtitleLabel.setText(lineage.isEmpty()
                 ? "Jeder Hand-Pick wird unter festen Referenzbedingungen nachgetestet ("
-                        + MasterStrategyLineageService.REFERENCE_FROM + " bis "
-                        + MasterStrategyLineageService.REFERENCE_TO + ", 1 minute OHLC). "
+                        + referenceRange + ", " + reference.getModelName() + "). "
                         + "Sobald ein Pass übernommen wurde, erscheint hier der erste Messpunkt."
                 : lineage.size() + " Messpunkte · Referenzzeitraum "
-                        + MasterStrategyLineageService.REFERENCE_FROM + " bis "
-                        + MasterStrategyLineageService.REFERENCE_TO
+                        + referenceRange
                         + " · Bewertung nach Profit/Drawdown, weil Stage-Scores untereinander nicht vergleichbar sind.");
 
         updateVerdictBanner(lineage);
@@ -349,15 +379,25 @@ public final class MasterStrategyLineageWindow {
         }
 
         detailBox.getChildren().add(sectionTitle(entryStatusText(entry, confirmedMasterSequence)));
+
+        Button detailBacktestBtn = new Button("▶ Diese Master-Strategie im MT5 backtesten");
+        detailBacktestBtn.setMaxWidth(Double.MAX_VALUE);
+        detailBacktestBtn.setStyle("-fx-background-color: #123024; -fx-text-fill: #e6e9f0; "
+                + "-fx-border-color: #00e676; -fx-border-radius: 5; -fx-background-radius: 5; "
+                + "-fx-font-weight: bold; -fx-cursor: hand; -fx-padding: 8 12;");
+        MasterStrategyEntry selectedEntry = entry;
+        detailBacktestBtn.setOnAction(e -> runBacktestForEntry(selectedEntry));
+        detailBox.getChildren().add(detailBacktestBtn);
+
         equityBox.getChildren().add(sectionTitle("Equitykurve — " + entry.getShortLabel()));
         if (!entry.getEquityCurve().isEmpty()) {
             equityBox.getChildren().add(createEquityChart(entry));
         }
         Path png = entry.getEquityImagePath().isBlank() ? null : Path.of(entry.getEquityImagePath());
         if (png != null && Files.isRegularFile(png)) {
-            ImageView view = new ImageView(new Image(png.toUri().toString(), 900, 0, true, true));
+            ImageView view = new ImageView(new Image(png.toUri().toString(), 1100, 0, true, true));
             view.setPreserveRatio(true);
-            view.setFitWidth(900);
+            view.setFitWidth(1100);
             equityBox.getChildren().addAll(sectionTitle("MetaTrader-Grafik"), view);
         } else if (entry.getEquityCurve().isEmpty()) {
             equityBox.getChildren().add(hint(entry.isBacktestSucceeded()
@@ -615,6 +655,184 @@ public final class MasterStrategyLineageWindow {
     private static String num(double value) {
         if (!Double.isFinite(value)) return "—";
         return String.format(Locale.US, "%.2f", value);
+    }
+
+    private void runBacktestForConfirmedMaster() {
+        if (project == null || items.isEmpty()) {
+            info("Kein bestätigter Master vorhanden.");
+            return;
+        }
+        MasterStrategyEntry confirmed = null;
+        for (MasterStrategyEntry entry : items) {
+            if (entry != null && entry.getSequence() == confirmedMasterSequence) {
+                confirmed = entry;
+                break;
+            }
+        }
+        if (confirmed == null) {
+            info("Es ist noch kein Master bestätigt. Bitte einen Messpunkt in der Liste auswählen.");
+            return;
+        }
+        runBacktestForEntry(confirmed);
+    }
+
+    private void runBacktestForEntry(MasterStrategyEntry entry) {
+        if (entry == null) {
+            info("Bitte zuerst einen Messpunkt in der Liste auswählen.");
+            return;
+        }
+        try {
+            CombinedPass fromDatabank = findCombinedPass(entry);
+            if (fromDatabank != null) {
+                SingleBacktestHelper.runSingleBacktestInMetaTrader(
+                        fromDatabank, entry.getSourceDatabank(), project, stage);
+                return;
+            }
+
+            Pass pass = passFromSetfile(entry);
+            if (pass == null) {
+                info("Für #" + entry.getSequence() + " fehlen Setfile und Databank-Pass — "
+                        + "Backtest nicht möglich.");
+                return;
+            }
+
+            LocalDate from = parseDate(entry.getFromDate());
+            LocalDate to = parseDate(entry.getToDate());
+            if (from == null) from = LocalDate.now().minusYears(1);
+            if (to == null) to = LocalDate.now();
+
+            String expert = !entry.getExpert().isBlank()
+                    ? entry.getExpert()
+                    : (project != null ? project.getExpert() : "");
+            String symbol = !entry.getSymbol().isBlank()
+                    ? entry.getSymbol()
+                    : (project != null ? project.getSymbol() : "EURUSD");
+            String period = !entry.getPeriod().isBlank()
+                    ? entry.getPeriod()
+                    : (project != null ? project.getPeriod() : "M5");
+            int modelId = resolveModelId(entry);
+
+            SingleBacktestHelper.runSingleBacktestInMetaTrader(
+                    pass, expert, symbol, period, from, to, stage, modelId);
+        } catch (Exception ex) {
+            log.error("Master-Strategie-Backtest fehlgeschlagen", ex);
+            Alert alert = new Alert(Alert.AlertType.ERROR, ex.getMessage(), ButtonType.OK);
+            alert.setTitle("Backtest");
+            alert.setHeaderText("Backtest konnte nicht gestartet werden");
+            alert.initOwner(stage);
+            alert.showAndWait();
+        }
+    }
+
+    private CombinedPass findCombinedPass(MasterStrategyEntry entry) {
+        if (project == null || project.getDatabanks() == null) {
+            return null;
+        }
+        String db = entry.getSourceDatabank();
+        int passNumber = entry.getSourcePassNumber();
+        if (db == null || db.isBlank() || passNumber < 0) {
+            return null;
+        }
+        List<CombinedPass> bank = project.getDatabanks().get(db);
+        if (bank == null || bank.isEmpty()) {
+            for (var e : project.getDatabanks().entrySet()) {
+                if (e.getKey() != null && e.getKey().equalsIgnoreCase(db)) {
+                    bank = e.getValue();
+                    break;
+                }
+            }
+        }
+        if (bank == null) {
+            return null;
+        }
+        for (CombinedPass pass : bank) {
+            if (pass != null && pass.getPassNumber() == passNumber) {
+                return pass;
+            }
+        }
+        return null;
+    }
+
+    private Pass passFromSetfile(MasterStrategyEntry entry) throws Exception {
+        String content = entry.getSetfileContent();
+        if (content == null || content.isBlank()) {
+            return null;
+        }
+        Path temp = Files.createTempFile("master_lineage_bt_", ".set");
+        try {
+            Files.writeString(temp, content, StandardCharsets.UTF_8);
+            List<EaParameter> params = new EaParameterManager().readSetFile(temp);
+            if (params == null || params.isEmpty()) {
+                return null;
+            }
+            Pass pass = new Pass();
+            pass.setPassNumber(Math.max(0, entry.getSourcePassNumber()));
+            Map<String, String> values = new LinkedHashMap<>();
+            for (EaParameter parameter : params) {
+                if (parameter == null || parameter.getName() == null || parameter.getName().isBlank()) {
+                    continue;
+                }
+                values.put(parameter.getName(), parameter.getValue() != null ? parameter.getValue() : "");
+            }
+            pass.setParameterValues(values);
+            if (!entry.getFromDate().isBlank()) pass.setFromDate(entry.getFromDate());
+            if (!entry.getToDate().isBlank()) pass.setToDate(entry.getToDate());
+            if (!entry.getTickModel().isBlank()) pass.setTickModel(entry.getTickModel());
+            return pass;
+        } finally {
+            try {
+                Files.deleteIfExists(temp);
+            } catch (Exception ignored) {
+                // temp cleanup is best-effort
+            }
+        }
+    }
+
+    private static int resolveModelId(MasterStrategyEntry entry) {
+        if (entry.getModel() >= 0) {
+            return entry.getModel();
+        }
+        String tick = entry.getTickModel();
+        if (tick == null || tick.isBlank()) {
+            return 0;
+        }
+        String[] names = BacktestConfig.MODEL_NAMES;
+        for (int i = 0; i < names.length; i++) {
+            if (tick.equalsIgnoreCase(names[i]) || tick.toLowerCase(Locale.ROOT).contains(
+                    names[i].toLowerCase(Locale.ROOT))) {
+                return i;
+            }
+        }
+        if (tick.toLowerCase(Locale.ROOT).contains("every")) return 0;
+        if (tick.toLowerCase(Locale.ROOT).contains("1 minute")
+                || tick.toLowerCase(Locale.ROOT).contains("ohlc")) return 1;
+        return 0;
+    }
+
+    private static LocalDate parseDate(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return null;
+        }
+        String value = raw.trim();
+        for (DateTimeFormatter formatter : List.of(
+                DateTimeFormatter.ISO_LOCAL_DATE,
+                DateTimeFormatter.ofPattern("yyyy.MM.dd"),
+                DateTimeFormatter.ofPattern("dd.MM.yyyy"))) {
+            try {
+                return LocalDate.parse(value, formatter);
+            } catch (DateTimeParseException ignored) {
+                // try next
+            }
+        }
+        return null;
+    }
+
+    private void info(String message) {
+        Alert alert = new Alert(Alert.AlertType.INFORMATION, message, ButtonType.OK);
+        alert.setTitle("Master-Strategie-Verlauf");
+        alert.setHeaderText(null);
+        alert.initOwner(stage);
+        alert.showAndWait();
     }
 
     private void generateAndOpenReport() {

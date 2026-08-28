@@ -9,6 +9,7 @@ import com.backtester.config.EaParameter;
 import com.backtester.config.AppConfig;
 import com.backtester.report.OptimizationResult;
 import com.backtester.report.OptimizationResult.CombinedPass;
+import javafx.animation.PauseTransition;
 import javafx.application.Platform;
 import javafx.beans.property.SimpleStringProperty;
 import javafx.concurrent.Task;
@@ -87,6 +88,10 @@ public class OptimizationView {
     private javafx.scene.web.WebView kiWebView;
     private OptimizationKiPanel kiPanel;
     private OptimizationCombinedPanel combinedPanel;
+    private final PauseTransition parameterLoadDebounce =
+            new PauseTransition(javafx.util.Duration.millis(300));
+    private final java.util.concurrent.atomic.AtomicBoolean sensitivityRefreshPending =
+            new java.util.concurrent.atomic.AtomicBoolean(false);
 
     // Search and Master List for Selected tab
     private final javafx.collections.ObservableList<CombinedPass> masterSelectedList = javafx.collections.FXCollections.observableArrayList();
@@ -162,13 +167,16 @@ public class OptimizationView {
         root.setCenter(mainLayout);
 
         loadPreferences();
-        expertField.textProperty().addListener((obs, oldVal, newVal) -> loadParameters());
+        expertField.textProperty().addListener((obs, oldVal, newVal) -> scheduleParameterLoad());
 
-        symbolCombo.valueProperty().addListener((obs, oldVal, newVal) -> loadParameters());
+        symbolCombo.valueProperty().addListener((obs, oldVal, newVal) -> scheduleParameterLoad());
         periodCombo.valueProperty().addListener((obs, oldVal, newVal) -> {
-            if (newVal != null) EaParameterUiContext.setChartPeriod(newVal);
-            loadParameters();
+            if (newVal != null) applyChartPeriod(newVal);
+            scheduleParameterLoad();
         });
+        // loadPreferences() runs before the listeners are installed. Load once after
+        // symbol and period have reached their final persisted values.
+        scheduleParameterLoad();
 
         // Load state from DB after UI is built
         Platform.runLater(this::loadStateFromDb);
@@ -690,32 +698,54 @@ public class OptimizationView {
     }
 
     private void loadStateFromDb() {
-        try {
-            String[] state = com.backtester.database.DatabaseManager.getInstance().getOptimizationState();
-            if (state == null) return;
+        // DB-Read + Gson-Deserialisierung des kompletten States laufen im
+        // Hintergrund (wird beim Start ausgeführt); die Tabellenbefüllung
+        // läuft in succeeded auf dem FX-Thread.
+        record LoadedState(OptimizationResult optResult, List<Integer> selectedPassIds,
+                           List<com.backtester.report.SensitivityResult> senResults) {}
 
-            Gson gson = buildGson();
+        Task<LoadedState> loadTask = new Task<>() {
+            @Override
+            protected LoadedState call() throws Exception {
+                String[] state = com.backtester.database.DatabaseManager.getInstance().getOptimizationState();
+                if (state == null) return null;
 
-            // 1. Load lastOptResult
-            if (state[0] != null && !state[0].isEmpty()) {
-                lastOptResult = gson.fromJson(state[0], OptimizationResult.class);
-                if (lastOptResult != null) {
-                    resultTable.setItems(FXCollections.observableArrayList(lastOptResult.getPasses()));
-                    if (lastOptResult.hasForwardResults()) {
-                        forwardTable.setItems(FXCollections.observableArrayList(lastOptResult.getForwardPasses()));
-                    }
-                    applyCombinedFilter();
+                Gson gson = buildGson();
+                OptimizationResult opt = null;
+                if (state[0] != null && !state[0].isEmpty()) {
+                    opt = gson.fromJson(state[0], OptimizationResult.class);
                 }
+                List<Integer> selectedIds = null;
+                if (state[1] != null && !state[1].isEmpty() && opt != null) {
+                    Type listType = new TypeToken<List<Integer>>(){}.getType();
+                    selectedIds = gson.fromJson(state[1], listType);
+                }
+                List<com.backtester.report.SensitivityResult> sen = null;
+                if (state[2] != null && !state[2].isEmpty()) {
+                    Type senListType = new TypeToken<List<com.backtester.report.SensitivityResult>>(){}.getType();
+                    sen = gson.fromJson(state[2], senListType);
+                }
+                return new LoadedState(opt, selectedIds, sen);
             }
+        };
+        loadTask.setOnSucceeded(e -> {
+            LoadedState loaded = loadTask.getValue();
+            if (loaded == null) return;
 
-            // 2. Load Selected Passes
-            if (state[1] != null && !state[1].isEmpty() && lastOptResult != null) {
-                Type listType = new TypeToken<List<Integer>>(){}.getType();
-                List<Integer> selectedPassIds = gson.fromJson(state[1], listType);
-                if (selectedPassIds != null && !selectedPassIds.isEmpty()) {
+            // 1. Apply lastOptResult
+            if (loaded.optResult() != null) {
+                lastOptResult = loaded.optResult();
+                resultTable.setItems(FXCollections.observableArrayList(lastOptResult.getPasses()));
+                if (lastOptResult.hasForwardResults()) {
+                    forwardTable.setItems(FXCollections.observableArrayList(lastOptResult.getForwardPasses()));
+                }
+                applyCombinedFilter();
+
+                // 2. Apply Selected Passes
+                if (loaded.selectedPassIds() != null && !loaded.selectedPassIds().isEmpty()) {
                     List<CombinedPass> allCombined = lastOptResult.buildCombinedPasses(combinedPanel.isOnlyMatchedSelected(), OptimizationResult.ScoreWeights.defaults());
                     masterSelectedList.clear();
-                    for (Integer id : selectedPassIds) {
+                    for (Integer id : loaded.selectedPassIds()) {
                         for (CombinedPass cp : allCombined) {
                             if (cp.getPassNumber() == id) {
                                 masterSelectedList.add(cp);
@@ -727,24 +757,21 @@ public class OptimizationView {
                 }
             }
 
-            // 3. Load Sensitivity Results
-            if (state[2] != null && !state[2].isEmpty()) {
-                Type senListType = new TypeToken<List<com.backtester.report.SensitivityResult>>(){}.getType();
-                List<com.backtester.report.SensitivityResult> senResults = gson.fromJson(state[2], senListType);
-                if (senResults != null) {
-                    sensitivityTable.setItems(FXCollections.observableArrayList(senResults));
-                    kiPanel.updateAnalyzeButtonState(!senResults.isEmpty());
-                } else {
-                    kiPanel.updateAnalyzeButtonState(false);
-                }
+            // 3. Apply Sensitivity Results
+            if (loaded.senResults() != null) {
+                sensitivityTable.setItems(FXCollections.observableArrayList(loaded.senResults()));
+                kiPanel.updateAnalyzeButtonState(!loaded.senResults().isEmpty());
             } else {
                 kiPanel.updateAnalyzeButtonState(false);
             }
 
             logView.log("INFO", "Optimization state loaded from database.");
-        } catch (Exception e) {
-            logView.log("ERROR", "Failed to load optimization state: " + e.getMessage());
-        }
+        });
+        loadTask.setOnFailed(e ->
+                logView.log("ERROR", "Failed to load optimization state: " + loadTask.getException().getMessage()));
+        Thread th = new Thread(loadTask);
+        th.setDaemon(true);
+        th.start();
     }
 
     private void clearCurrentTab() {
@@ -1482,10 +1509,16 @@ public class OptimizationView {
             progressBar.setProgress(pct / 100.0);
             progressLabel.setText("Sensitivity Scan: " + pct + "%");
         }));
-        currentSensitivityRunner.setResultUpdateCallback(res -> Platform.runLater(() -> {
-            sensitivityTable.refresh();
-            saveStateToDb();
-        }));
+        currentSensitivityRunner.setResultUpdateCallback(res -> {
+            // A sweep can publish hundreds of intermediate updates. Keep at most one
+            // refresh queued and persist the complete state once after Task success.
+            if (sensitivityRefreshPending.compareAndSet(false, true)) {
+                Platform.runLater(() -> {
+                    sensitivityRefreshPending.set(false);
+                    sensitivityTable.refresh();
+                });
+            }
+        });
 
         List<EaParameter> allParams = eaParamManager.getEffectiveParameters(baseConfig.getExpert());
 
@@ -1650,8 +1683,13 @@ public class OptimizationView {
                 expertField.setText(path);
             }
             savePreferences();
-            loadParameters();
         }
+    }
+
+    private void scheduleParameterLoad() {
+        parameterLoadDebounce.stop();
+        parameterLoadDebounce.setOnFinished(event -> loadParameters());
+        parameterLoadDebounce.playFromStart();
     }
 
     private void loadParameters() {
@@ -1691,17 +1729,24 @@ public class OptimizationView {
         }
     }
 
+    /** Keeps the global context AND this tab's parameter table in sync with the selected period. */
+    private void applyChartPeriod(String period) {
+        if (period == null) return;
+        EaParameterUiContext.setChartPeriod(period);
+        paramTable.getProperties().put(EaParameterUiContext.CHART_PERIOD_TABLE_KEY, period.trim());
+        paramTable.refresh();
+    }
+
     private void loadPreferences() {
         com.backtester.config.AppConfig config = com.backtester.config.AppConfig.getInstance();
         String exp = config.get("optimization.expert", "");
         if (!exp.isEmpty()) {
             expertField.setText(exp);
-            loadParameters();
         }
 
         symbolCombo.setValue(config.get("optimization.symbol", "EURUSD"));
         periodCombo.setValue(config.get("optimization.period", "H1"));
-        EaParameterUiContext.setChartPeriod(periodCombo.getValue());
+        applyChartPeriod(periodCombo.getValue());
 
         String savedModel = config.get("optimization.model", "Every tick");
         if (!modelCombo.getItems().contains(savedModel)) modelCombo.getSelectionModel().select(0);
@@ -2197,35 +2242,13 @@ public class OptimizationView {
             return;
         }
 
-        List<EaParameter> allParams = eaParamManager.getEffectiveParameters(expert);
-        if (allParams == null || allParams.isEmpty()) {
-            new Alert(Alert.AlertType.ERROR, "Konnte Parameter für den Expert Advisor nicht laden.").show();
-            return;
-        }
+        final CombinedPass combined = new CombinedPass(pass, null, 0.0, 0.0, "");
 
-        // Parameterwerte aus dem gewählten Pass in die EA-Parameterliste schreiben und Optimierung deaktivieren
-        java.util.Map<String, String> passVals = pass.getParameterValues();
-        for (EaParameter param : allParams) {
-            if (passVals.containsKey(param.getName())) {
-                param.setValue(passVals.get(param.getName()));
-            }
-            param.setOptimizeEnabled(false);
-        }
-
-        // Parameter direkt in das Tester-Profilverzeichnis schreiben
-        String eaName = EaParameterManager.extractEaBaseName(expert);
-        String presetFileName = "Backtester_" + eaName + "_Verify.set";
-        java.nio.file.Path presetsDir = config.getTesterProfilesDir(expert);
-        try {
-            java.nio.file.Files.createDirectories(presetsDir);
-        } catch (java.io.IOException ex) {
-            log.error("Failed to create Tester directory", ex);
-            new Alert(Alert.AlertType.ERROR, "Fehler beim Erstellen des Presets-Verzeichnisses: " + ex.getMessage()).show();
-            return;
-        }
-
-        java.nio.file.Path destFile = presetsDir.resolve(presetFileName);
-        eaParamManager.writeSetFile(destFile, allParams, expert);
+        // Parameter werden direkt in das Tester-Profilverzeichnis geschrieben —
+        // das passiert zusammen mit der Preset-Auflösung im Hintergrund-Task unten.
+        final String eaName = EaParameterManager.extractEaBaseName(expert);
+        final String presetFileName = "Backtester_" + eaName + "_Verify_Pass" + pass.getPassNumber() + ".set";
+        final java.nio.file.Path presetsDir = config.getTesterProfilesDir(expert);
 
         // BacktestConfig erstellen
         BacktestConfig btConfig = new BacktestConfig();
@@ -2265,6 +2288,32 @@ public class OptimizationView {
         Task<com.backtester.report.BacktestResult> task = new Task<>() {
             @Override
             protected com.backtester.report.BacktestResult call() throws Exception {
+                // Preset-Auflösung und Set-Datei-Schreibung sind Disk-IO und laufen
+                // deshalb hier im Hintergrund — Reihenfolge: resolve → write → verify → run.
+                com.backtester.report.PassPresetResolver.Resolution resolution =
+                        com.backtester.report.PassPresetResolver.resolveForExecutionWithFallback(
+                                combined, expert, eaParamManager.getEffectiveParameters(expert));
+                List<EaParameter> allParams = resolution.parameters();
+                if (allParams == null || allParams.isEmpty()) {
+                    throw new java.io.IOException("Konnte Parameter für den Expert Advisor nicht laden.");
+                }
+                if (resolution.warning() != null) {
+                    Platform.runLater(() -> new Alert(Alert.AlertType.WARNING, resolution.warning()).show());
+                }
+
+                // Parameter direkt in das Tester-Profilverzeichnis schreiben
+                try {
+                    java.nio.file.Files.createDirectories(presetsDir);
+                    java.nio.file.Path destFile = presetsDir.resolve(presetFileName);
+                    java.nio.file.Files.deleteIfExists(destFile);
+                    eaParamManager.writeSetFile(destFile, allParams, expert);
+                    com.backtester.workflow.MasterStrategyLineageService
+                            .verifyPresetWritten(destFile, allParams);
+                } catch (Exception ex) {
+                    log.error("Failed to write verification preset", ex);
+                    throw new java.io.IOException("Fehler beim Erstellen der Preset-Datei: " + ex.getMessage(), ex);
+                }
+
                 return runner.runBacktest(btConfig);
             }
         };

@@ -16,6 +16,26 @@ public class OptimizationResultMoreTest {
     }
 
     @Test
+    public void combinedPassCopyPreservesIndependentStrategySetfile() {
+        OptimizationResult.Pass bt = new OptimizationResult.Pass();
+        bt.setPassNumber(42);
+        bt.setParameterSetLines(List.of(
+                "Inp_Grid_Step=350||||||N",
+                "Inp_Order_Comment=2proz_Pass42"));
+        OptimizationResult.CombinedPass original =
+                new OptimizationResult.CombinedPass(bt, null, 80.0, 1.0, "details");
+
+        OptimizationResult.CombinedPass copy = original.copy();
+
+        assertEquals(original.getBacktestPass().getParameterSetLines(),
+                copy.getBacktestPass().getParameterSetLines());
+        original.getBacktestPass().getParameterSetLines().set(0,
+                "Inp_Grid_Step=999||||||N");
+        assertEquals("Inp_Grid_Step=350||||||N",
+                copy.getBacktestPass().getParameterSetLines().get(0));
+    }
+
+    @Test
     public void testCombinedPassBtConvenienceGetters() {
         OptimizationResult.Pass bt = new OptimizationResult.Pass();
         bt.setPassNumber(100);
@@ -70,6 +90,23 @@ public class OptimizationResultMoreTest {
         assertEquals(1.5, cp.getFwSharpe(), 0.001);
         assertEquals(4.2, cp.getFwRecovery(), 0.001);
         assertEquals(6.67, cp.getFwExpectedPayoff(), 0.001);
+    }
+
+    @Test
+    public void testCombinedPassMt5BalanceColumnsAddDeposit() {
+        OptimizationResult.Pass bt = new OptimizationResult.Pass();
+        bt.setProfit(110.79);
+        bt.setBalance(10110.79);
+
+        OptimizationResult.Pass fw = new OptimizationResult.Pass();
+        fw.setProfit(33762.76);
+
+        OptimizationResult.CombinedPass cp = new OptimizationResult.CombinedPass(bt, fw, 90.0, 1.2, "details");
+        assertEquals(10000.0, cp.getDeposit(), 0.001);
+        assertEquals(10110.79, cp.getBtBacktestBalance(), 0.001);
+        assertEquals(43762.76, cp.getFwForwardBalance(), 0.001);
+        assertEquals(110.79, cp.getBtProfit(), 0.001);
+        assertEquals(33762.76, cp.getFwProfit(), 0.001);
     }
 
     @Test

@@ -40,6 +40,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.File;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.text.SimpleDateFormat;
@@ -753,9 +754,29 @@ public class ControllingView {
     }
 
     public void refreshResults() {
-        allLoadedStrategies.clear();
-        tableItems.clear();
+        // DB-Query + JSON-Parsing der kompletten Historie laufen im Hintergrund;
+        // nur die Tabellenbefüllung (applyFilter) läuft auf dem FX-Thread. Wird
+        // bei jedem Tab-Wechsel aufgerufen und darf die UI nicht blockieren.
+        Task<List<ControllingStrategy>> loadTask = new Task<>() {
+            @Override
+            protected List<ControllingStrategy> call() {
+                return loadStrategiesFromHistory();
+            }
+        };
+        loadTask.setOnSucceeded(e -> {
+            allLoadedStrategies.clear();
+            allLoadedStrategies.addAll(loadTask.getValue());
+            applyFilter();
+        });
+        loadTask.setOnFailed(e ->
+                log.error("Loading strategy history failed", loadTask.getException()));
+        Thread th = new Thread(loadTask);
+        th.setDaemon(true);
+        th.start();
+    }
 
+    private List<ControllingStrategy> loadStrategiesFromHistory() {
+        List<ControllingStrategy> loaded = new ArrayList<>();
         List<HistoryRun> runs = dbManager.getRunsByType("Workflow");
         Gson gson = buildGson();
 
@@ -855,7 +876,7 @@ public class ControllingView {
                         cs.setReviewText(rev.getReviewText());
                         cs.setColorRating(rev.getColorRating());
                     }
-                    allLoadedStrategies.add(cs);
+                    loaded.add(cs);
                 }
 
             } catch (Exception e) {
@@ -863,7 +884,7 @@ public class ControllingView {
             }
         }
 
-        applyFilter();
+        return loaded;
     }
 
     private void applyFilter() {
@@ -998,7 +1019,7 @@ public class ControllingView {
         }
 
         // Parameters table
-        List<EaParameter> finalParams = getStrategyParameters(selected.getBaseParameters(), selected.combinedPass);
+        List<EaParameter> finalParams = getStrategyParameters(selected);
         paramTable.getItems().setAll(finalParams);
 
         // Update KI Report WebView
@@ -1086,38 +1107,22 @@ public class ControllingView {
         clearMetrics2y();
     }
 
-    private List<EaParameter> getStrategyParameters(List<EaParameter> baseParams, CombinedPass cp) {
-        List<EaParameter> finalParams = new ArrayList<>();
-        if (baseParams == null) return finalParams;
-        for (EaParameter base : baseParams) {
-            EaParameter p = new EaParameter();
-            p.setName(base.getName());
-            p.setStringType(base.isStringType());
-            p.setSection(base.getSection());
-            String passVal = cp.getBacktestPass().getParameter(base.getName());
-            if (passVal != null && !passVal.isEmpty()) {
-                p.setValue(passVal);
-            } else {
-                // An optimized parameter without a report column was held constant at
-                // its optimize start; MT5 never read the value field for it.
-                p.setValue(com.backtester.report.PassPresetResolver.effectiveBaseValue(base));
-            }
-            p.setOptimizeEnabled(false);
-            finalParams.add(p);
+    private List<EaParameter> getStrategyParameters(ControllingStrategy strategy) {
+        if (strategy == null || strategy.combinedPass == null) return new ArrayList<>();
+        com.backtester.report.PassPresetResolver.Resolution resolution =
+                com.backtester.report.PassPresetResolver.resolveForExecutionWithFallback(
+                        strategy.combinedPass, strategy.getExpert(), strategy.getBaseParameters());
+        if (resolution.warning() != null) {
+            log.warn("Controlling Pass #{}: {}", strategy.getPassNumber(), resolution.warning());
         }
-        return finalParams;
+        return new ArrayList<>(resolution.parameters());
     }
 
-    private boolean isMagicNumberParameter(String name) {
-        if (name == null) return false;
-        String lower = name.toLowerCase();
-        return lower.equals("magic") || lower.equals("inpmagicnumber") || lower.equals("magicnumber");
-    }
-
-    private boolean isOrderCommentParameter(String name) {
-        if (name == null) return false;
-        String lower = name.toLowerCase();
-        return lower.equals("comment") || lower.equals("inp_order_comment") || lower.equals("ordercomment") || lower.equals("order_comment");
+    private void writeVerifiedPreset(Path destFile, List<EaParameter> params, String expert)
+            throws java.io.IOException {
+        Files.deleteIfExists(destFile);
+        eaParamManager.writeSetFile(destFile, params, expert);
+        com.backtester.workflow.MasterStrategyLineageService.verifyPresetWritten(destFile, params);
     }
 
     private void exportSettings() {
@@ -1128,47 +1133,50 @@ public class ControllingView {
             return;
         }
 
-        try {
-            List<Path> exportedPaths = new ArrayList<>();
-            for (ControllingStrategy selected : selectedItems) {
-                String eaName = EaParameterManager.extractEaBaseName(selected.getExpert());
-                String tf = selected.getPeriod().replaceAll("[^a-zA-Z0-9_.-]", "_");
-                String sym = selected.getSymbol().replaceAll("[^a-zA-Z0-9_.-]", "_");
+        // DB-Lookups + Preset-Schreiben sind Disk-IO → im Hintergrund; nur die
+        // Ergebnis-Dialoge laufen auf dem FX-Thread.
+        final List<ControllingStrategy> toExport = new ArrayList<>(selectedItems);
+        exportSettingsBtn.setDisable(true);
+        Task<List<Path>> exportTask = new Task<>() {
+            @Override
+            protected List<Path> call() throws Exception {
+                List<Path> exportedPaths = new ArrayList<>();
+                for (ControllingStrategy selected : toExport) {
+                    String eaName = EaParameterManager.extractEaBaseName(selected.getExpert());
+                    String tf = selected.getPeriod().replaceAll("[^a-zA-Z0-9_.-]", "_");
+                    String sym = selected.getSymbol().replaceAll("[^a-zA-Z0-9_.-]", "_");
 
-                double ddVal = selected.getBtDd(); // fallback
-                com.backtester.database.DatabaseManager.AutomaticReview autoReview = dbManager.getAutomaticReview(
-                    selected.getExpert(),
-                    selected.getSymbol(),
-                    selected.getPeriod(),
-                    selected.getRunTimestamp(),
-                    selected.getPassNumber()
-                );
-                if (autoReview != null && autoReview.getResult2yJson() != null && !autoReview.getResult2yJson().isEmpty()) {
-                    try {
-                        BacktestResult res2y = buildGson().fromJson(autoReview.getResult2yJson(), BacktestResult.class);
-                        if (res2y != null) {
-                            ddVal = res2y.getMaxDrawdown();
-                        }
-                    } catch (Exception ignored) {}
-                }
-                int ddPct = Double.isNaN(ddVal) ? 0 : (int) Math.round(ddVal);
-                String filename = String.format("%s_%s_%s_%dproz_Pass%d.set", eaName, sym, tf, ddPct, selected.getPassNumber());
-                
-                Path destPath = Paths.get(AppConfig.getInstance().getExportDirectory().toString()).resolve(filename);
-                
-                List<EaParameter> finalParams = getStrategyParameters(selected.getBaseParameters(), selected.combinedPass);
-                for (EaParameter p : finalParams) {
-                    if (isMagicNumberParameter(p.getName())) {
-                        p.setValue(String.valueOf(selected.getPassNumber()));
+                    double ddVal = selected.getBtDd(); // fallback
+                    com.backtester.database.DatabaseManager.AutomaticReview autoReview = dbManager.getAutomaticReview(
+                        selected.getExpert(),
+                        selected.getSymbol(),
+                        selected.getPeriod(),
+                        selected.getRunTimestamp(),
+                        selected.getPassNumber()
+                    );
+                    if (autoReview != null && autoReview.getResult2yJson() != null && !autoReview.getResult2yJson().isEmpty()) {
+                        try {
+                            BacktestResult res2y = buildGson().fromJson(autoReview.getResult2yJson(), BacktestResult.class);
+                            if (res2y != null) {
+                                ddVal = res2y.getMaxDrawdown();
+                            }
+                        } catch (Exception ignored) {}
                     }
-                    if (isOrderCommentParameter(p.getName())) {
-                        p.setValue(String.format("%dproz_Pass%d", ddPct, selected.getPassNumber()));
-                    }
+                    int ddPct = Double.isNaN(ddVal) ? 0 : (int) Math.round(ddVal);
+                    String filename = String.format("%s_%s_%s_%dproz_Pass%d.set", eaName, sym, tf, ddPct, selected.getPassNumber());
+
+                    Path destPath = Paths.get(AppConfig.getInstance().getExportDirectory().toString()).resolve(filename);
+
+                    List<EaParameter> finalParams = getStrategyParameters(selected);
+                    writeVerifiedPreset(destPath, finalParams, eaName);
+                    exportedPaths.add(destPath);
                 }
-                eaParamManager.writeSetFile(destPath, finalParams, eaName);
-                exportedPaths.add(destPath);
+                return exportedPaths;
             }
-
+        };
+        exportTask.setOnSucceeded(e -> {
+            exportSettingsBtn.setDisable(false);
+            List<Path> exportedPaths = exportTask.getValue();
             StringBuilder sb = new StringBuilder();
             if (exportedPaths.size() == 1) {
                 sb.append("Die Parameter (.set) wurden erfolgreich exportiert:\n").append(exportedPaths.get(0).toAbsolutePath().toString());
@@ -1182,12 +1190,17 @@ public class ControllingView {
             alert.setHeaderText(null);
             alert.show();
             logView.log("INFO", String.format("%d Settings exportiert.", exportedPaths.size()));
-
-        } catch (Exception ex) {
+        });
+        exportTask.setOnFailed(e -> {
+            exportSettingsBtn.setDisable(false);
+            Throwable ex = exportTask.getException();
             Alert alert = new Alert(Alert.AlertType.ERROR, "Fehler beim Exportieren der Parameter:\n" + ex.getMessage());
             alert.show();
             logView.log("ERROR", "Settings-Export fehlgeschlagen: " + ex.getMessage());
-        }
+        });
+        Thread th = new Thread(exportTask);
+        th.setDaemon(true);
+        th.start();
     }
 
     private void runVerificationBacktest() {
@@ -1241,12 +1254,9 @@ public class ControllingView {
         Path mt5Dir = AppConfig.getInstance().getMt5InstallDir();
         Path presetsDir = mt5Dir.resolve("MQL5").resolve("Profiles").resolve("Tester");
         String eaName = EaParameterManager.extractEaBaseName(selected.getExpert());
-        String presetFileName = "Backtester_" + eaName + ".set";
+        // Pass-scoped name: do not overwrite Backtester_<EA>.set (optimizer / parallel runs).
+        String presetFileName = "Backtester_" + eaName + "_Controlling_Pass" + selected.getPassNumber() + ".set";
         Path destFile = presetsDir.resolve(presetFileName);
-
-        // Write parameters to presets folder
-        List<EaParameter> finalParams = getStrategyParameters(selected.getBaseParameters(), selected.combinedPass);
-        eaParamManager.writeSetFile(destFile, finalParams, eaName);
 
         // Configure Backtest
         BacktestConfig btConfig = new BacktestConfig();
@@ -1276,6 +1286,15 @@ public class ControllingView {
         runningBacktestTask = new Task<>() {
             @Override
             protected BacktestResult call() throws Exception {
+                // Preset-Auflösung + Schreiben ist Disk-IO und läuft deshalb hier
+                // im Hintergrund — vor dem Backtest (Reihenfolge: resolve → write → run).
+                try {
+                    List<EaParameter> finalParams = getStrategyParameters(selected);
+                    writeVerifiedPreset(destFile, finalParams, eaName);
+                } catch (Exception ex) {
+                    log.error("Failed to write controlling verification preset", ex);
+                    throw new java.io.IOException("Fehler beim Schreiben der Setfile: " + ex.getMessage(), ex);
+                }
                 return runner.runBacktest(btConfig);
             }
         };
@@ -1467,7 +1486,7 @@ public class ControllingView {
             String rating = colorCombo.getValue().toLowerCase();
             
             // Save to DB
-            dbManager.saveStrategyReview(
+            boolean saved = dbManager.saveStrategyReview(
                 selected.getExpert(),
                 selected.getSymbol(),
                 selected.getPeriod(),
@@ -1476,6 +1495,14 @@ public class ControllingView {
                 text,
                 rating
             );
+            if (!saved) {
+                Alert alert = new Alert(Alert.AlertType.ERROR,
+                        "Die Strategie-Bewertung konnte nicht gespeichert werden (Datenbankfehler).\n"
+                                + "Sie ist nur bis zum Neustart sichtbar.",
+                        ButtonType.OK);
+                alert.setHeaderText("Speichern fehlgeschlagen");
+                alert.showAndWait();
+            }
 
             // Update in-memory model
             selected.setReviewText(text);
@@ -1964,8 +1991,11 @@ public class ControllingView {
                     String eaName = EaParameterManager.extractEaBaseName(strategy.getExpert());
                     String presetFileName = "AutoReview_" + eaName + "_" + strategy.getPassNumber() + ".set";
                     Path destFile = presetsDir.resolve(presetFileName);
-                    List<EaParameter> finalParams = getStrategyParameters(strategy.getBaseParameters(), strategy.combinedPass);
+                    List<EaParameter> finalParams = getStrategyParameters(strategy);
+                    Files.deleteIfExists(destFile);
                     eaParamManager.writeSetFile(destFile, finalParams, eaName);
+                    com.backtester.workflow.MasterStrategyLineageService
+                            .verifyPresetWritten(destFile, finalParams);
 
                     // 2. Configure 1-Year Backtest
                     BacktestConfig config1y = new BacktestConfig();

@@ -47,6 +47,8 @@ public final class PassPresetResolver {
     public enum Fidelity {
         /** Byte-exact preset of one concrete MT5 run — no reconstruction involved. */
         EXACT_SNAPSHOT,
+        /** Concrete pass preset embedded in the strategy/databank itself. */
+        EMBEDDED_PASS,
         /** Archived optimization preset as base, report columns overlaid. */
         OPTIMIZATION_BASE,
         /** No archived preset found; values partly guessed from the current EA config. */
@@ -65,7 +67,7 @@ public final class PassPresetResolver {
     /** Result of rebuilding a pass parameter set. */
     public record Resolution(List<EaParameter> parameters, Fidelity fidelity, Path source, String warning) {
         public boolean isExact() {
-            return fidelity == Fidelity.EXACT_SNAPSHOT;
+            return fidelity == Fidelity.EXACT_SNAPSHOT || fidelity == Fidelity.EMBEDDED_PASS;
         }
     }
 
@@ -172,11 +174,14 @@ public final class PassPresetResolver {
                     "Kein Pass übergeben.");
         }
         Pass backtestPass = combinedPass.getBacktestPass();
-        return resolve(candidateDirectories(combinedPass),
+        Resolution resolution = resolve(candidateDirectories(combinedPass),
                 backtestPass != null ? backtestPass.getParameterValues() : Collections.emptyMap(),
+                backtestPass != null ? backtestPass.getParameterSetLines() : Collections.emptyList(),
                 combinedPass.getPassNumber(),
                 backtestPass != null ? backtestPass.getDrawdownPercent() : Double.NaN,
                 expertFallback);
+        embedResolvedSetfile(backtestPass, resolution);
+        return resolution;
     }
 
     /** Rebuilds the EA input set of a bare {@link Pass} that has no combined view. */
@@ -185,8 +190,10 @@ public final class PassPresetResolver {
             return new Resolution(Collections.emptyList(), Fidelity.CURRENT_CONFIG, null,
                     "Kein Pass übergeben.");
         }
-        return resolve(List.of(pass.getReportDirectory()), pass.getParameterValues(),
+        Resolution resolution = resolve(List.of(pass.getReportDirectory()), pass.getParameterValues(), pass.getParameterSetLines(),
                 pass.getPassNumber(), pass.getDrawdownPercent(), expertFallback);
+        embedResolvedSetfile(pass, resolution);
+        return resolution;
     }
 
     /**
@@ -196,10 +203,16 @@ public final class PassPresetResolver {
      */
     public static Resolution resolve(List<String> reportDirectories,
                                      Map<String, String> reportValues,
+                                     List<String> embeddedSetLines,
                                      int passNumber,
                                      double drawdownPercent,
                                      String expertFallback) {
         if (reportValues == null) reportValues = Collections.emptyMap();
+
+        List<EaParameter> embedded = parseConcreteSetfileLines(embeddedSetLines);
+        if (!embedded.isEmpty()) {
+            return new Resolution(embedded, Fidelity.EMBEDDED_PASS, null, null);
+        }
 
         EaParameterManager manager = new EaParameterManager();
         Snapshot optimizationSnapshot = null;
@@ -341,6 +354,102 @@ public final class PassPresetResolver {
     }
 
     /**
+     * Materializes the effective values of an optimization pass as concrete .set
+     * lines and stores them on the pass itself. The snapshot is deliberately
+     * independent of the report directory.
+     *
+     * <p>This is <b>not</b> called for whole optimization populations anymore
+     * (thousands of passes × full setfile lines was an unbounded memory spike).
+     * Instead {@link #embedResolvedSetfile} embeds lazily: a pass becomes
+     * self-contained the first time it is actually resolved (execution, export,
+     * UI detail view). Callers today are tests and explicit single-pass imports.
+     */
+    public static void embedConcreteSetfile(Pass pass,
+                                            List<EaParameter> basePreset,
+                                            boolean baseIsOptimizationPreset) {
+        if (pass == null || basePreset == null || basePreset.isEmpty()) return;
+        List<EaParameter> concrete = applyPassValues(basePreset, pass.getParameterValues(),
+                baseIsOptimizationPreset, pass.getPassNumber(), pass.getDrawdownPercent());
+        pass.setParameterSetLines(toConcreteSetFileLines(concrete));
+    }
+
+    /**
+     * Lazily stores the just-resolved concrete .set lines on the pass itself, so
+     * the strategy stays reproducible even if its report directory is later
+     * deleted, moved or overwritten — but only for passes that are actually
+     * resolved (a handful), never for the full optimization population.
+     *
+     * <p>Deliberately skipped for {@link Fidelity#CURRENT_CONFIG}: that
+     * resolution is partly guessed from the mutable current EA configuration and
+     * must not be frozen into the strategy as if it were the original run's
+     * setfile. Already-embedded passes are left untouched.
+     */
+    private static void embedResolvedSetfile(Pass pass, Resolution resolution) {
+        if (pass == null || resolution == null || pass.hasParameterSetSnapshot()) return;
+        if (resolution.fidelity() != Fidelity.EXACT_SNAPSHOT
+                && resolution.fidelity() != Fidelity.OPTIMIZATION_BASE) {
+            return;
+        }
+        List<EaParameter> params = resolution.parameters();
+        if (params == null || params.isEmpty()) return;
+        List<EaParameter> snapshot = new ArrayList<>(params.size());
+        for (EaParameter parameter : params) {
+            if (parameter != null) snapshot.add(copyOf(parameter));
+        }
+        pass.setParameterSetLines(toConcreteSetFileLines(snapshot));
+        log.debug("Embedded lazily resolved setfile snapshot into pass #{} (fidelity {}).",
+                pass.getPassNumber(), resolution.fidelity());
+    }
+
+    /** Formats parameters as concrete .set lines (mutates the given copies). */
+    private static List<String> toConcreteSetFileLines(List<EaParameter> parameters) {
+        List<String> lines = new ArrayList<>();
+        for (EaParameter parameter : parameters) {
+            if (parameter == null || parameter.isSectionHeader()
+                    || parameter.getName() == null || parameter.getName().isBlank()) {
+                continue;
+            }
+            parameter.setOptimizeEnabled(false);
+            EaParameter.sanitizeTimeframeFieldsForSetFile(parameter);
+            lines.add(parameter.toSetFileLine());
+        }
+        return lines;
+    }
+
+    private static List<EaParameter> parseConcreteSetfileLines(List<String> lines) {
+        if (lines == null || lines.isEmpty()) return Collections.emptyList();
+        List<EaParameter> parameters = new ArrayList<>();
+        for (String raw : lines) {
+            if (raw == null) continue;
+            String line = raw.trim();
+            if (line.isEmpty() || line.startsWith(";")) continue;
+            int separator = line.indexOf('=');
+            if (separator <= 0) continue;
+
+            String name = line.substring(0, separator).trim();
+            String encoded = line.substring(separator + 1);
+            EaParameter parameter = new EaParameter(name, "");
+            if (encoded.contains("||")) {
+                String[] parts = encoded.split("\\|\\|", -1);
+                parameter.setValue(parts.length > 0 ? parts[0].trim() : "");
+                parameter.setDefaultValue(parameter.getValue());
+                parameter.setOptimizeStart(parts.length > 1 ? parts[1].trim() : "");
+                parameter.setOptimizeStep(parts.length > 2 ? parts[2].trim() : "");
+                parameter.setOptimizeEnd(parts.length > 3 ? parts[3].trim() : "");
+                parameter.setStringType(false);
+            } else {
+                parameter.setValue(encoded);
+                parameter.setDefaultValue(encoded);
+                parameter.setStringType(true);
+            }
+            parameter.setOptimizeEnabled(false);
+            EaParameter.sanitizeTimeframeFieldsForSetFile(parameter);
+            parameters.add(parameter);
+        }
+        return parameters;
+    }
+
+    /**
      * The value MT5 actually feeds an EA for a parameter of an optimization
      * preset: the optimize start for optimized parameters, the value field
      * otherwise. Using the value field for an optimized parameter is wrong —
@@ -358,13 +467,82 @@ public final class PassPresetResolver {
     }
 
     public static boolean isMagicNumberParameter(String name) {
-        return name != null
-                && (name.equalsIgnoreCase("Inp_Magic_Number") || name.equalsIgnoreCase("MagicNumber"));
+        if (name == null || name.isBlank()) return false;
+        String compact = name.trim().toLowerCase(Locale.ROOT).replace("_", "");
+        return compact.equals("magic")
+                || compact.equals("magicnumber")
+                || compact.equals("inpmagicnumber");
     }
 
     public static boolean isOrderCommentParameter(String name) {
-        return name != null
-                && (name.equalsIgnoreCase("Inp_Order_Comment") || name.equalsIgnoreCase("OrderComment"));
+        if (name == null || name.isBlank()) return false;
+        String compact = name.trim().toLowerCase(Locale.ROOT).replace("_", "");
+        return compact.equals("comment")
+                || compact.equals("ordercomment")
+                || compact.equals("inpordercomment");
+    }
+
+    /**
+     * Concrete, non-optimizing parameters for retest / validation / export of one pass.
+     *
+     * <p>Uses {@link #resolve} (embedded lines, archived presets) and re-stamps magic
+     * number and order comment with the pass identity. Prefer this over merging report
+     * columns onto a shared engine EA config — that silently contaminates fixed values
+     * across cluster strategies.
+     */
+    public static Resolution resolveForExecution(CombinedPass combinedPass, String expert) {
+        if (combinedPass == null) {
+            return new Resolution(Collections.emptyList(), Fidelity.CURRENT_CONFIG, null,
+                    "Kein Pass übergeben.");
+        }
+        Resolution resolved = resolve(combinedPass, expert);
+        int passNumber = combinedPass.getPassNumber();
+        double drawdownPercent = combinedPass.getBtDd();
+        int ddPercent = Double.isNaN(drawdownPercent) ? 0 : (int) Math.round(drawdownPercent);
+
+        List<EaParameter> stamped = new ArrayList<>(resolved.parameters().size());
+        for (EaParameter source : resolved.parameters()) {
+            if (source == null || source.isSectionHeader()) continue;
+            EaParameter p = copyOf(source);
+            if (isMagicNumberParameter(p.getName())) {
+                p.setValue(String.valueOf(passNumber));
+            } else if (isOrderCommentParameter(p.getName())) {
+                p.setValue(String.format(Locale.US, "%dproz_Pass%d", ddPercent, passNumber));
+            }
+            p.setOptimizeEnabled(false);
+            EaParameter.sanitizeTimeframeFieldsForSetFile(p);
+            stamped.add(p);
+        }
+        return new Resolution(stamped, resolved.fidelity(), resolved.source(), resolved.warning());
+    }
+
+    /**
+     * Like {@link #resolveForExecution}, but when no embedded/archived preset exists,
+     * overlays report columns onto {@code engineFallback} (legacy databanks / UI
+     * snapshots). Prefer embeds; the fallback is the pre-embed contamination path and
+     * must stay loud via {@link Resolution#warning()}.
+     */
+    public static Resolution resolveForExecutionWithFallback(CombinedPass combinedPass,
+                                                             String expert,
+                                                             List<EaParameter> engineFallback) {
+        Resolution resolved = resolveForExecution(combinedPass, expert);
+        if (resolved.fidelity() != Fidelity.CURRENT_CONFIG && !resolved.parameters().isEmpty()) {
+            return resolved;
+        }
+        if (combinedPass != null && engineFallback != null && !engineFallback.isEmpty()) {
+            Map<String, String> reportValues = combinedPass.getBacktestPass() != null
+                    ? combinedPass.getBacktestPass().getParameterValues()
+                    : Collections.emptyMap();
+            List<EaParameter> merged = applyPassValues(
+                    engineFallback, reportValues, true,
+                    combinedPass.getPassNumber(), combinedPass.getBtDd());
+            String warning = resolved.warning() != null ? resolved.warning()
+                    : ("Pass #" + combinedPass.getPassNumber()
+                    + ": kein archiviertes/embedded Setfile — Fallback auf geteilte Basis-Parameter.");
+            log.warn(warning);
+            return new Resolution(merged, Fidelity.CURRENT_CONFIG, null, warning);
+        }
+        return resolved;
     }
 
     private static EaParameter copyOf(EaParameter source) {

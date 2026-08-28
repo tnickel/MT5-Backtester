@@ -101,9 +101,20 @@ public class RobustnessView {
         loadPreferences();
         expertField.textProperty().addListener((obs, oldVal, newVal) -> loadParameters());
         loadResultsFromDb();
+        applyChartPeriodToParamTable();
 
         symbolCombo.valueProperty().addListener((obs, oldVal, newVal) -> loadParameters());
-        periodCombo.valueProperty().addListener((obs, oldVal, newVal) -> loadParameters());
+        periodCombo.valueProperty().addListener((obs, oldVal, newVal) -> {
+            applyChartPeriodToParamTable();
+            loadParameters();
+        });
+    }
+
+    /** Pins this tab's period on the parameter table so timeframe cells resolve against it. */
+    private void applyChartPeriodToParamTable() {
+        String period = periodCombo.getValue() != null ? periodCombo.getValue() : "H1";
+        paramTable.getProperties().put(EaParameterUiContext.CHART_PERIOD_TABLE_KEY, period.trim());
+        paramTable.refresh();
     }
 
     private VBox createConfigBox() {

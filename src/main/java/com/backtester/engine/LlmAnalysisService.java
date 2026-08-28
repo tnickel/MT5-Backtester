@@ -91,6 +91,9 @@ public class LlmAnalysisService {
             "- Begründe Kurvenform-Urteil mit konkreten Datenpunkten aus den Kennlinien";
 
     private static final String OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
+    private static final HttpClient HTTP_CLIENT = HttpClient.newBuilder()
+            .connectTimeout(Duration.ofSeconds(30))
+            .build();
 
     public LlmAnalysisService() {
         // Auto-migrate old prompts that don't include the latest format
@@ -511,10 +514,6 @@ public class LlmAnalysisService {
                     + "\"temperature\":0.0"
                     + "}";
 
-            HttpClient client = HttpClient.newBuilder()
-                    .connectTimeout(Duration.ofSeconds(30))
-                    .build();
-
             HttpRequest request = HttpRequest.newBuilder()
                     .uri(URI.create(OPENROUTER_URL))
                     .header("Content-Type", "application/json")
@@ -525,7 +524,7 @@ public class LlmAnalysisService {
                     .timeout(Duration.ofSeconds(120))
                     .build();
 
-            HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+            HttpResponse<String> response = HTTP_CLIENT.send(request, HttpResponse.BodyHandlers.ofString());
 
             if (response.statusCode() != 200) {
                 log.error("OpenRouter API error: {} - {}", response.statusCode(), response.body());

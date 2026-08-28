@@ -57,12 +57,63 @@ public class LocalBacktestHttpServer {
     private void startServer() {
         try {
             server = HttpServer.create(new InetSocketAddress("127.0.0.1", PORT), 0);
-            server.createContext("/run-backtest", new RunBacktestHandler());
+            server.createContext("/run-backtest", withHostValidation(new RunBacktestHandler()));
+            // Catch-all context so every request - including unmatched paths - is Host-validated
+            server.createContext("/", withHostValidation(exchange ->
+                    sendSimpleJson(exchange, 404, "{\"status\":\"error\",\"message\":\"Not found\"}")));
             server.setExecutor(null); // default executor
             server.start();
             log.info("LocalBacktestHttpServer started on http://127.0.0.1:{}", PORT);
         } catch (Exception e) {
             log.warn("Could not start LocalBacktestHttpServer on port {}: {}", PORT, e.getMessage());
+        }
+    }
+
+    /**
+     * DNS-rebinding protection: wraps a handler so that only requests whose Host header
+     * matches this server's local address (127.0.0.1 / localhost on our port) are served.
+     * All other requests receive 403 without touching the delegate.
+     * Also emits CORS headers only for local origins instead of a wildcard.
+     */
+    private HttpHandler withHostValidation(HttpHandler delegate) {
+        return exchange -> {
+            String host = exchange.getRequestHeaders().getFirst("Host");
+            if (!isAllowedHost(host)) {
+                log.warn("Rejected request with disallowed Host header: {}", host);
+                sendSimpleJson(exchange, 403,
+                        "{\"status\":\"error\",\"message\":\"Forbidden: invalid Host header\"}");
+                return;
+            }
+            String origin = exchange.getRequestHeaders().getFirst("Origin");
+            if (isAllowedLocalOrigin(origin)) {
+                exchange.getResponseHeaders().set("Access-Control-Allow-Origin", origin.trim());
+                exchange.getResponseHeaders().set("Access-Control-Allow-Methods", "GET, OPTIONS");
+                exchange.getResponseHeaders().set("Access-Control-Allow-Headers", "Content-Type");
+                exchange.getResponseHeaders().set("Vary", "Origin");
+            }
+            delegate.handle(exchange);
+        };
+    }
+
+    private static boolean isAllowedHost(String host) {
+        if (host == null) return false;
+        String normalized = host.trim().toLowerCase(Locale.ROOT);
+        return normalized.equals("127.0.0.1:" + PORT) || normalized.equals("localhost:" + PORT);
+    }
+
+    private static boolean isAllowedLocalOrigin(String origin) {
+        if (origin == null) return false;
+        String normalized = origin.trim().toLowerCase(Locale.ROOT);
+        return normalized.equals("http://127.0.0.1:" + PORT)
+                || normalized.equals("http://localhost:" + PORT);
+    }
+
+    private static void sendSimpleJson(HttpExchange exchange, int statusCode, String json) throws IOException {
+        byte[] bytes = json.getBytes(StandardCharsets.UTF_8);
+        exchange.getResponseHeaders().set("Content-Type", "application/json; charset=utf-8");
+        exchange.sendResponseHeaders(statusCode, bytes.length);
+        try (OutputStream os = exchange.getResponseBody()) {
+            os.write(bytes);
         }
     }
 
@@ -78,11 +129,7 @@ public class LocalBacktestHttpServer {
     private class RunBacktestHandler implements HttpHandler {
         @Override
         public void handle(HttpExchange exchange) throws IOException {
-            // Set CORS headers for browser requests
-            exchange.getResponseHeaders().set("Access-Control-Allow-Origin", "*");
-            exchange.getResponseHeaders().set("Access-Control-Allow-Methods", "GET, OPTIONS");
-            exchange.getResponseHeaders().set("Access-Control-Allow-Headers", "Content-Type");
-
+            // CORS headers are set centrally in withHostValidation() for allowed local origins
             if ("OPTIONS".equalsIgnoreCase(exchange.getRequestMethod())) {
                 exchange.sendResponseHeaders(204, -1);
                 return;

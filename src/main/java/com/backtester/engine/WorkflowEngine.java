@@ -81,7 +81,10 @@ public class WorkflowEngine {
     private int optimizationCriterion = 4; // Recovery factor
     private int forwardMode = 1; // 1/2
     private LocalDate forwardDate = LocalDate.now().minusMonths(3);
-    private OptimizationResult optResult;
+    private volatile OptimizationResult optResult;
+
+    /** Timestamp of the last {@link #saveState()} run; backs {@link #saveStateDebounced()}. */
+    private volatile long lastStateSaveMs = 0L;
 
     // Step 3 State (Diversity Filter)
     private double minBtProfit = MIN_POSITIVE_PROFIT;
@@ -107,10 +110,10 @@ public class WorkflowEngine {
     private double maxLtDd = 35.0;
     private double minLtPf = 1.10;
 
-    private List<CombinedPass> selectedDiversePasses = new ArrayList<>();
+    private volatile List<CombinedPass> selectedDiversePasses = new ArrayList<>();
 
     // Step 4 State
-    private List<SensitivityResult> sensitivityResults = new ArrayList<>();
+    private volatile List<SensitivityResult> sensitivityResults = new ArrayList<>();
     private long sensitivityRunTimestamp;
 
     // Step 5 State
@@ -122,8 +125,8 @@ public class WorkflowEngine {
     private double stabilityWeight = LlmAnalysisService.DEFAULT_STABILITY_WEIGHT;
 
     // Step 6 State
-    private List<CombinedPass> finalSelectedPasses = new ArrayList<>();
-    private int lastActiveStep = 0;
+    private volatile List<CombinedPass> finalSelectedPasses = new ArrayList<>();
+    private volatile int lastActiveStep = 0;
 
     /**
      * True when the Step-6 KI gate (KI score >= 30) filtered out ALL candidates
@@ -137,7 +140,7 @@ public class WorkflowEngine {
     private LocalDate validationFromDate = null;
     /** End of the validation window; null = derived (today). */
     private LocalDate validationToDate = null;
-    private List<ValidationResult> validationResults = new ArrayList<>();
+    private volatile List<ValidationResult> validationResults = new ArrayList<>();
 
     /** Directory of the most recent portfolio export (used to attach the validation report). */
     private String lastExportDirectory = "";
@@ -447,7 +450,19 @@ public class WorkflowEngine {
         }
     }
 
+    /**
+     * Persists the workflow state at most every 30 s. For high-frequency
+     * result callbacks only; every step boundary calls {@link #saveState()}
+     * directly, so the final state is always persisted.
+     */
+    private void saveStateDebounced() {
+        if (System.currentTimeMillis() - lastStateSaveMs >= 30_000L) {
+            saveState();
+        }
+    }
+
     public void saveState() {
+        lastStateSaveMs = System.currentTimeMillis();
         try {
             if (expert != null && !expert.isEmpty()) {
                 saveStrategyConfig(expert);
@@ -460,7 +475,7 @@ public class WorkflowEngine {
             String finalSelectedJson = gson.toJson(finalSelectedPasses);
             String validationJson = gson.toJson(validationResults);
 
-            DatabaseManager.getInstance().saveWorkflowState(
+            boolean persisted = DatabaseManager.getInstance().saveWorkflowState(
                 expert,
                 symbol,
                 period,
@@ -480,6 +495,10 @@ public class WorkflowEngine {
                 validationJson,
                 kiGateBypassed
             );
+            if (!persisted) {
+                log.error("Workflow state could NOT be persisted to the database "
+                        + "(write failed). Current workflow progress will be lost on restart.");
+            }
         } catch (Exception e) {
             log.error("Failed to save workflow state to database", e);
         }
@@ -651,8 +670,10 @@ public class WorkflowEngine {
             java.nio.file.Files.createDirectories(presetsDir);
             String presetFileName = "Backtester_" + eaName + ".set";
             java.nio.file.Path destFile = presetsDir.resolve(presetFileName);
-            
+            Files.deleteIfExists(destFile);
             eaParamManager.writeSetFile(destFile, eaParameters, expert);
+            com.backtester.workflow.MasterStrategyLineageService
+                    .verifyPresetWritten(destFile, eaParameters);
             optConfig.setExpertParameters(presetFileName);
         }
 
@@ -686,17 +707,27 @@ public class WorkflowEngine {
 
         optResult = currentOptRunner.runOptimization(optConfig);
         if (optResult == null || !optResult.isSuccess()) {
-            throw new RuntimeException("Optimierungs-Run fehlgeschlagen: " + (optResult != null ? optResult.getMessage() : "Unbekannter Fehler"));
+            throw new OptimizationExecutionException("Optimierungs-Run fehlgeschlagen: "
+                    + (optResult != null ? optResult.getMessage() : "Unbekannter Fehler"));
         }
         if (optResult.getPasses() == null || optResult.getPasses().isEmpty()) {
-            throw new RuntimeException("Optimierungs-Run lieferte keine Strategien; die Ziel-Databank bleibt unverändert.");
+            throw new OptimizationExecutionException(
+                    "Optimierungs-Run lieferte keine Strategien; die Ziel-Databank bleibt unverändert.");
         }
         if (forwardMode > 0 && (optResult.getForwardPasses() == null || optResult.getForwardPasses().isEmpty())) {
-            throw new RuntimeException("Forward-Test ist aktiviert, aber MT5 lieferte keine Forward-Ergebnisse.");
+            throw new OptimizationExecutionException(
+                    "Forward-Test ist aktiviert, aber MT5 lieferte keine Forward-Ergebnisse.");
         }
         this.lastActiveStep = Math.max(this.lastActiveStep, 2);
         saveState();
         return optResult;
+    }
+
+    /** Technical optimizer failure that must abort clustered automation immediately. */
+    public static final class OptimizationExecutionException extends RuntimeException {
+        public OptimizationExecutionException(String message) {
+            super(message);
+        }
     }
 
     /**
@@ -845,6 +876,7 @@ public class WorkflowEngine {
         } else {
             // Legacy wizard: pre-filter candidates using its configured criteria.
             for (CombinedPass cp : allPasses) {
+                if (!Double.isFinite(cp.getScore())) continue;
                 if (!isPositiveFinite(cp.getBtProfit()) || cp.getBtProfit() < minBtProfit) continue;
                 if (cp.getBtTrades() < minBtTrades) continue;
                 if (!meetsMinimum(cp.getBtRecovery(), minBtRecovery)) continue;
@@ -882,6 +914,7 @@ public class WorkflowEngine {
 
         int total = candidates.size();
         List<CombinedPass> successfulCandidates = new ArrayList<>();
+        List<java.nio.file.Path> generatedPresets = new ArrayList<>();
         try {
             for (int i = 0; i < total; i++) {
                 if (cancelRequested || Thread.currentThread().isInterrupted()) {
@@ -896,7 +929,11 @@ public class WorkflowEngine {
                 String presetFileName = "Longterm_Pass" + cp.getPassNumber() + ".set";
                 java.nio.file.Path presetFile = presetsDir.resolve(presetFileName);
                 List<EaParameter> finalParams = buildFinalParams(cp);
+                Files.deleteIfExists(presetFile);
                 eaParamManager.writeSetFile(presetFile, finalParams, expert);
+                com.backtester.workflow.MasterStrategyLineageService
+                        .verifyPresetWritten(presetFile, finalParams);
+                generatedPresets.add(presetFile);
                 String setfileContent = com.backtester.workflow.StrategyBacktestArchiveStore
                         .readSetfileContent(presetFile);
 
@@ -921,11 +958,11 @@ public class WorkflowEngine {
                     if (cancelRequested || Thread.currentThread().isInterrupted()) {
                         throw new InterruptedException("Retest abgebrochen.");
                     }
+                    requireSuccessfulRetestResult(btRes, task, cp, "Retest");
                     ltPass = toLongtermPass(cp, btConfig, btRes, effFrom, effTo);
-                    if (ltPass == null && logCallback != null) {
-                        String detail = btRes != null ? btRes.getMessage() : "kein Ergebnis";
-                        logCallback.accept(String.format("WARNUNG: Retest für Pass %d schlug fehl: %s",
-                                cp.getPassNumber(), detail));
+                    if (ltPass == null) {
+                        throw retestExecutionFailure(task, cp, "Retest",
+                                "Das erfolgreiche MT5-Ergebnis konnte nicht in einen Strategie-Pass umgewandelt werden.");
                     }
                 }
                 if (ltPass != null) {
@@ -942,6 +979,7 @@ public class WorkflowEngine {
             }
         } finally {
             currentLongtermRunner = null;
+            deleteGeneratedPresetsQuietly(generatedPresets);
         }
 
         if (progressCallback != null) {
@@ -950,6 +988,21 @@ public class WorkflowEngine {
 
         saveState();
         return successfulCandidates;
+    }
+
+    /**
+     * Generated execution presets are run inputs only (their content is archived
+     * before use); deleting them after the step keeps the shared MT5 tester
+     * profile directory from growing without bound across runs.
+     */
+    private static void deleteGeneratedPresetsQuietly(List<java.nio.file.Path> presets) {
+        for (java.nio.file.Path preset : presets) {
+            try {
+                Files.deleteIfExists(preset);
+            } catch (Exception ex) {
+                log.debug("Could not delete generated preset {}: {}", preset, ex.getMessage());
+            }
+        }
     }
 
     private BacktestConfig newBacktestConfig(String presetFileName,
@@ -1012,14 +1065,11 @@ public class WorkflowEngine {
         if (cancelRequested || Thread.currentThread().isInterrupted()) {
             throw new InterruptedException("Retest abgebrochen.");
         }
+        requireSuccessfulRetestResult(isRes, task, cp, "Tick-IS");
         OptimizationResult.Pass isPass = toLongtermPass(cp, isConfig, isRes, from, isTo);
         if (isPass == null) {
-            if (logCallback != null) {
-                String detail = isRes != null ? isRes.getMessage() : "kein Ergebnis";
-                logCallback.accept(String.format("WARNUNG: Tick-IS für Pass %d schlug fehl: %s",
-                        cp.getPassNumber(), detail));
-            }
-            return null;
+            throw retestExecutionFailure(task, cp, "Tick-IS",
+                    "Das erfolgreiche MT5-Ergebnis konnte nicht in einen Strategie-Pass umgewandelt werden.");
         }
 
         if (logCallback != null) {
@@ -1034,14 +1084,11 @@ public class WorkflowEngine {
         if (cancelRequested || Thread.currentThread().isInterrupted()) {
             throw new InterruptedException("Retest abgebrochen.");
         }
+        requireSuccessfulRetestResult(fwRes, task, cp, "Tick-FW");
         OptimizationResult.Pass fwPass = toLongtermPass(cp, fwConfig, fwRes, fwFrom, to);
         if (fwPass == null) {
-            if (logCallback != null) {
-                String detail = fwRes != null ? fwRes.getMessage() : "kein Ergebnis";
-                logCallback.accept(String.format("WARNUNG: Tick-FW für Pass %d schlug fehl: %s",
-                        cp.getPassNumber(), detail));
-            }
-            return null;
+            throw retestExecutionFailure(task, cp, "Tick-FW",
+                    "Das erfolgreiche MT5-Ergebnis konnte nicht in einen Strategie-Pass umgewandelt werden.");
         }
 
         if (!(isPass.getProfit() > 0) || !(fwPass.getProfit() > 0)) {
@@ -1053,6 +1100,38 @@ public class WorkflowEngine {
             return null;
         }
         return mergeSplitLongtermPasses(isPass, fwPass);
+    }
+
+    /**
+     * A missing/failed MT5 result is an infrastructure failure, never a strategy
+     * rejection. Abort before the next candidate so a broken terminal cannot
+     * silently drain the complete source databank.
+     */
+    static BacktestResult requireSuccessfulRetestResult(BacktestResult result,
+                                                        com.backtester.workflow.WorkflowTask task,
+                                                        CombinedPass candidate,
+                                                        String phase) {
+        if (result != null && result.isSuccess()) {
+            return result;
+        }
+        String detail = result != null && result.getMessage() != null && !result.getMessage().isBlank()
+                ? result.getMessage().trim()
+                : "MT5 lieferte kein Ergebnis";
+        throw retestExecutionFailure(task, candidate, phase, detail);
+    }
+
+    private static IllegalStateException retestExecutionFailure(
+            com.backtester.workflow.WorkflowTask task,
+            CombinedPass candidate,
+            String phase,
+            String detail) {
+        String taskName = task != null && task.getName() != null && !task.getName().isBlank()
+                ? task.getName() : "Retest";
+        int passNumber = candidate != null ? candidate.getPassNumber() : -1;
+        String passLabel = passNumber >= 0 ? "Pass " + passNumber : "unbekannter Pass";
+        return new IllegalStateException("Technischer MT5-Fehler in Task '" + taskName + "' ("
+                + phase + ", " + passLabel + "): " + detail
+                + " Der Retest wurde sofort gestoppt; die Strategie wurde nicht fachlich verworfen.");
     }
 
     private OptimizationResult.Pass toLongtermPass(CombinedPass cp,
@@ -1238,30 +1317,32 @@ public class WorkflowEngine {
         boolean useRetestTrades = !candidates.isEmpty()
                 && candidates.stream().allMatch(pass -> pass.getLongtermPass() != null);
 
-        selectedDiversePasses = new ArrayList<>();
+        List<CombinedPass> diverse = new ArrayList<>();
         List<EaParameter> effectiveParameters = comparisonParameters != null && !comparisonParameters.isEmpty()
                 ? comparisonParameters : eaParameters;
         for (CombinedPass candidate : candidates) {
-            if (selectedDiversePasses.size() >= maximumStrategies) break;
+            if (diverse.size() >= maximumStrategies) break;
 
             boolean isDiverse = true;
-            for (CombinedPass selected : selectedDiversePasses) {
+            for (CombinedPass selected : diverse) {
                 if (arePassesSimilar(candidate, selected, parameterDifferencePct, tradeDifferencePct,
                         minimumDifferentParameters, effectiveParameters, useRetestTrades)) {
                     isDiverse = false;
                     break;
                 }
             }
-            if (isDiverse) selectedDiversePasses.add(candidate);
+            if (isDiverse) diverse.add(candidate);
         }
 
         finishDiversitySelection();
         List<CombinedPass> copies = new ArrayList<>();
-        for (CombinedPass selected : selectedDiversePasses) {
+        for (CombinedPass selected : diverse) {
             if (selected != null) {
                 copies.add(selected.copy());
             }
         }
+        // volatile field: publish the complete list exactly once so concurrent
+        // readers never observe an intermediate selection state
         selectedDiversePasses = copies;
         return new ArrayList<>(selectedDiversePasses);
     }
@@ -1432,7 +1513,7 @@ public class WorkflowEngine {
                 this.sensitivityRunTimestamp = currentSensitivityRunner.getLastRunTimestamp();
                 this.sensitivityResults = new ArrayList<>(targets);
                 this.lastActiveStep = Math.max(this.lastActiveStep, 4);
-                saveState();
+                saveStateDebounced();
             }
         });
 
@@ -1789,13 +1870,16 @@ public class WorkflowEngine {
             vr.setBtProfit(cp.getBtProfit());
             vr.setFwProfit(Double.isNaN(cp.getFwProfit()) ? 0.0 : cp.getFwProfit());
 
+            java.nio.file.Path presetFile = null;
             try {
                 // Write the pass parameters as a .set file for the tester
                 String presetFileName = "Validation_Pass" + cp.getPassNumber() + ".set";
-                java.nio.file.Path presetFile = presetsDir.resolve(presetFileName);
+                presetFile = presetsDir.resolve(presetFileName);
                 List<EaParameter> finalParams = buildFinalParams(cp);
+                Files.deleteIfExists(presetFile);
                 eaParamManager.writeSetFile(presetFile, finalParams, expert);
-
+                com.backtester.workflow.MasterStrategyLineageService
+                        .verifyPresetWritten(presetFile, finalParams);
                 BacktestConfig btConfig = new BacktestConfig();
                 btConfig.setExpert(expert);
                 btConfig.setExpertParameters(presetFileName);
@@ -1841,6 +1925,16 @@ public class WorkflowEngine {
                 log.error("Validation backtest for pass " + cp.getPassNumber() + " failed", e);
                 vr.setVerdict(ValidationResult.ERROR);
                 vr.setMessage(e.getMessage());
+            } finally {
+                // The validation preset is a run input only; delete it right after the
+                // pass so the tester profile dir does not grow without bound.
+                if (presetFile != null) {
+                    try {
+                        Files.deleteIfExists(presetFile);
+                    } catch (Exception ex) {
+                        log.debug("Could not delete validation preset {}: {}", presetFile, ex.getMessage());
+                    }
+                }
             }
 
             if (logCallback != null) logCallback.accept(vr.toSummaryLine());
@@ -1869,45 +1963,24 @@ public class WorkflowEngine {
     }
 
     /**
-     * Builds the final (non-optimizing) parameter set for a pass by merging
-     * the pass values over the base EA parameters. Magic number and order
-     * comment are stamped with the pass identity — same rules as the export.
-     */
-    /**
-     * Builds the concrete preset of one pass.
+     * Builds the concrete preset of one pass via {@link com.backtester.report.PassPresetResolver}.
      *
-     * <p>The base value must come from {@link com.backtester.report.PassPresetResolver#effectiveBaseValue}:
-     * for a parameter that was optimized, MT5 ignored the value field of the .set
-     * line and used the optimize start. Parameters whose range collapsed to a
-     * single value get no report column at all, so taking the value field for them
-     * silently substituted an unrelated setting.
+     * <p>Prefer embedded / archived presets. The shared engine EA config is only a legacy
+     * fallback for databanks that predate embedded setfiles — after cluster sequences that
+     * config typically belongs to the last line and would otherwise contaminate earlier
+     * strategies' unreported fix values.
      */
     private List<EaParameter> buildFinalParams(CombinedPass cp) {
-        int passNum = cp.getPassNumber();
-        double btDd = cp.getBtDd();
-        int ddPct = Double.isNaN(btDd) ? 0 : (int) Math.round(btDd);
-
-        List<EaParameter> finalParams = new ArrayList<>();
-        for (EaParameter base : getEaParameters()) {
-            EaParameter p = new EaParameter();
-            p.setName(base.getName());
-            p.setStringType(base.isStringType());
-            String passVal = cp.getBacktestPass().getParameter(base.getName());
-            if (passVal != null && !passVal.isEmpty()) {
-                p.setValue(passVal);
-            } else {
-                p.setValue(com.backtester.report.PassPresetResolver.effectiveBaseValue(base));
-            }
-            if (isMagicNumberParameter(p.getName())) {
-                p.setValue(String.valueOf(passNum));
-            }
-            if (isOrderCommentParameter(p.getName())) {
-                p.setValue(String.format("%dproz_Pass%d", ddPct, passNum));
-            }
-            p.setOptimizeEnabled(false);
-            finalParams.add(p);
+        com.backtester.report.PassPresetResolver.Resolution resolution =
+                com.backtester.report.PassPresetResolver.resolveForExecutionWithFallback(
+                        cp, getExpert(), getEaParameters());
+        if (resolution.warning() != null
+                && resolution.fidelity()
+                == com.backtester.report.PassPresetResolver.Fidelity.CURRENT_CONFIG) {
+            // resolveForExecutionWithFallback already logged; keep a second breadcrumb on the engine.
+            log.warn("Pass #{} setfile fidelity=CURRENT_CONFIG", cp.getPassNumber());
         }
-        return finalParams;
+        return new ArrayList<>(resolution.parameters());
     }
 
     /**
@@ -1973,18 +2046,6 @@ public class WorkflowEngine {
         return bestPath.resolve("WARNUNG_Pass" + passNum + "_VALIDIERUNG_FEHLGESCHLAGEN.txt");
     }
 
-    private boolean isMagicNumberParameter(String name) {
-        if (name == null) return false;
-        String lower = name.toLowerCase();
-        return lower.equals("magic") || lower.equals("inpmagicnumber") || lower.equals("magicnumber");
-    }
-
-    private boolean isOrderCommentParameter(String name) {
-        if (name == null) return false;
-        String lower = name.toLowerCase();
-        return lower.equals("comment") || lower.equals("inp_order_comment") || lower.equals("ordercomment") || lower.equals("order_comment");
-    }
-
     /**
      * Exports all final selected strategies (sets + PDF reports) to the target directory.
      */
@@ -2033,7 +2094,10 @@ public class WorkflowEngine {
                 java.nio.file.Path setFile = exportPath.resolve(baseFileName + ".set");
                 List<EaParameter> finalParams = buildFinalParams(cp);
                 // Pass full expert path (keep .ex4/.ex5) so writeSetFile picks MT4 vs MT5 format
+                Files.deleteIfExists(setFile);
                 eaParamManager.writeSetFile(setFile, finalParams, getExpert());
+                com.backtester.workflow.MasterStrategyLineageService
+                        .verifyPresetWritten(setFile, finalParams);
                 log.info("Exported preset file to {}", setFile);
 
                 // PDF file
@@ -2375,6 +2439,7 @@ public class WorkflowEngine {
         List<CombinedPass> filtered = new ArrayList<>();
         for (CombinedPass cp : allPasses) {
             if (cp == null) continue;
+            if (!Double.isFinite(cp.getScore())) continue;
             if (!isPositiveFinite(cp.getBtProfit()) || cp.getBtProfit() < minBtProfit) continue;
             if (cp.getBtTrades() < minBtTrades) continue;
             if (!meetsMinimum(cp.getBtRecovery(), minBtRecovery)) continue;

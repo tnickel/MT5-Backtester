@@ -944,7 +944,12 @@ public class DatabaseManager {
         }
     }
 
-    public void saveWorkflowState(
+    /**
+     * @return {@code true} on success; {@code false} when the write failed (e.g.
+     *         database locked or disk full) — callers must treat the state as
+     *         NOT persisted.
+     */
+    public boolean saveWorkflowState(
             String expertName, String symbol, String period,
             String fromDate, String toDate, int deposit,
             String currency, String leverage, int tickModel,
@@ -982,8 +987,10 @@ public class DatabaseManager {
             p.setInt(18, kiGateBypassed ? 1 : 0);
             p.executeUpdate();
             log.info("Saved workflow state to database.");
+            return true;
         } catch (SQLException e) {
             log.error("Failed to save workflow state", e);
+            return false;
         }
     }
 
@@ -1072,10 +1079,10 @@ public class DatabaseManager {
     public void deleteEaParameterSettings(String expertName) {
         if (expertName == null || expertName.trim().isEmpty()) return;
         String baseName = com.backtester.config.EaParameterManager.extractEaBaseName(expertName);
-        String sql = "DELETE FROM EA_PARAMETER_SETTINGS WHERE expert_name = ? OR expert_name LIKE ?";
+        String sql = "DELETE FROM EA_PARAMETER_SETTINGS WHERE expert_name = ? OR expert_name = ?";
         try (Connection conn = connect(); PreparedStatement pstmt = conn.prepareStatement(sql)) {
             pstmt.setString(1, expertName);
-            pstmt.setString(2, "%" + baseName + "%");
+            pstmt.setString(2, baseName);
             int count = pstmt.executeUpdate();
             log.info("Deleted EA parameter settings for {} ({} records deleted)", expertName, count);
         } catch (SQLException e) {
@@ -1111,7 +1118,12 @@ public class DatabaseManager {
         public String getColorRating() { return colorRating; }
     }
 
-    public void saveStrategyReview(String expertName, String symbol, String period, long runTimestamp, int passNumber, String reviewText, String colorRating) {
+    /**
+     * @return {@code true} on success; {@code false} when the write failed —
+     *         callers should surface the failure instead of assuming the review
+     *         was stored.
+     */
+    public boolean saveStrategyReview(String expertName, String symbol, String period, long runTimestamp, int passNumber, String reviewText, String colorRating) {
         String sql = "INSERT OR REPLACE INTO STRATEGY_REVIEWS(expert_name, symbol, period, run_timestamp, pass_number, review_text, color_rating) VALUES(?,?,?,?,?,?,?)";
         try (Connection conn = connect(); PreparedStatement pstmt = conn.prepareStatement(sql)) {
             pstmt.setString(1, expertName);
@@ -1123,8 +1135,10 @@ public class DatabaseManager {
             pstmt.setString(7, colorRating);
             pstmt.executeUpdate();
             log.info("Saved strategy review for {} (Pass {}) with rating {}.", expertName, passNumber, colorRating);
+            return true;
         } catch (SQLException e) {
             log.error("Failed to save strategy review", e);
+            return false;
         }
     }
 

@@ -59,6 +59,9 @@ public class CustomProjectBackupTest {
         assertEquals("540", restored.getTasks().get(0).getOptimizerParameterSnapshot().get(0).getValue());
         assertEquals(1, restored.getDatabanks().get("g01_grid_raw").size());
         assertEquals(42, restored.getDatabanks().get("g01_grid_raw").get(0).getPassNumber());
+        assertEquals(List.of("Inp_Grid_Step=540||||||N", "Inp_VIX_Symbol=VIX"),
+                restored.getDatabanks().get("g01_grid_raw").get(0)
+                        .getBacktestPass().getParameterSetLines());
         assertEquals(1, restored.getStrategyArchives().size());
         assertEquals(3, restored.getConfirmedMasterSequence());
         assertEquals("540", restored.getProvenMasterParameters().get(0).getValue());
@@ -91,6 +94,9 @@ public class CustomProjectBackupTest {
         pass.setPassNumber(passNumber);
         pass.setProfit(100);
         pass.setTotalTrades(100);
+        pass.setParameterSetLines(List.of(
+                "Inp_Grid_Step=540||||||N",
+                "Inp_VIX_Symbol=VIX"));
         return new CombinedPass(pass, null, 50, 1, "");
     }
 

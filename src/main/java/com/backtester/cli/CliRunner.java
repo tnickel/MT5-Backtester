@@ -33,7 +33,7 @@ public class CliRunner {
         Path configPath = Paths.get(configFilePath);
         if (!Files.exists(configPath)) {
             log.error("Configuration file does not exist: {}", configFilePath);
-            System.exit(1);
+            throw new IllegalArgumentException("Configuration file does not exist: " + configFilePath);
         }
 
         // 1. Parse JSON Config
@@ -42,14 +42,12 @@ public class CliRunner {
             batchConfig = gson.fromJson(reader, BatchConfig.class);
         } catch (Exception e) {
             log.error("Failed to parse batch configuration JSON", e);
-            System.exit(1);
-            return;
+            throw new IllegalStateException("Failed to parse batch configuration JSON: " + configFilePath, e);
         }
 
         if (batchConfig == null || batchConfig.runs == null || batchConfig.runs.isEmpty()) {
             log.error("No backtest runs found in configuration.");
-            System.exit(1);
-            return;
+            throw new IllegalArgumentException("No backtest runs found in configuration: " + configFilePath);
         }
 
         // 2. Validate environment config
@@ -68,8 +66,7 @@ public class CliRunner {
             log.info("Output directory for results: {}", outputDir);
         } catch (IOException e) {
             log.error("Failed to create output directory: {}", outputDir, e);
-            System.exit(1);
-            return;
+            throw new IllegalStateException("Failed to create output directory: " + outputDir, e);
         }
 
         // 4. Resolve dates

@@ -6,10 +6,30 @@ import org.junit.Test;
 
 import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
 
 import static org.junit.Assert.*;
 
 public class DatabankManagerTest {
+
+    @Test
+    public void routingCopiesStrategySetfileWithoutSharingMutableState() {
+        DatabankManager manager = new DatabankManager();
+        CombinedPass source = pass(42, 100.0);
+        source.getBacktestPass().setParameterSetLines(List.of("Inp_Grid_Step=350||||||N"));
+        WorkflowTask task = new WorkflowTask("Copy", WorkflowTask.TaskType.PRE_FILTER);
+        task.setSourceDatabank("raw");
+        task.setTargetDatabank("quality");
+
+        manager.processTaskDatabanks(task, List.of(source));
+        CombinedPass routed = manager.getDatabank("quality").get(0);
+
+        assertEquals(List.of("Inp_Grid_Step=350||||||N"),
+                routed.getBacktestPass().getParameterSetLines());
+        source.getBacktestPass().getParameterSetLines().set(0, "Inp_Grid_Step=999||||||N");
+        assertEquals("Inp_Grid_Step=350||||||N",
+                manager.getDatabank("quality").get(0).getBacktestPass().getParameterSetLines().get(0));
+    }
 
     @Test
     public void explicitTaskOutputWinsOverNonEmptySource() {
@@ -143,6 +163,57 @@ public class DatabankManagerTest {
         List<CombinedPass> snapshot = manager.getDatabank("Results");
         snapshot.add(pass(5, 5.0));
         assertTrue(manager.getDatabank("Results").isEmpty());
+    }
+
+    @Test
+    public void loadingProjectRepairsLegacyOptimizerDateRanges() {
+        CustomProject project = new CustomProject("Imported", "EA.ex5", "AUDCAD", "M5");
+        WorkflowTask optimizer = new WorkflowTask("Optimizer", WorkflowTask.TaskType.OPTIMIZER);
+        optimizer.setTargetDatabank("raw");
+        optimizer.setStartDate("2022-08-01");
+        optimizer.setEndDate("2025-08-01");
+        optimizer.setOptimizerForwardMode(1);
+        optimizer.setOptimizerForwardDate("2024-02-01");
+        WorkflowTask quality = new WorkflowTask("Quality", WorkflowTask.TaskType.PRE_FILTER);
+        quality.setSourceDatabank("raw");
+        quality.setTargetDatabank("quality");
+        WorkflowTask isOos = new WorkflowTask("IS/OOS", WorkflowTask.TaskType.PRE_FILTER);
+        isOos.setSourceDatabank("quality");
+        isOos.setTargetDatabank("is_oos");
+        WorkflowTask shortlist = new WorkflowTask("Shortlist", WorkflowTask.TaskType.DIVERSITY_FILTER);
+        shortlist.setSourceDatabank("is_oos");
+        shortlist.setTargetDatabank("shortlist");
+        project.setTasks(List.of(optimizer, quality, isOos, shortlist));
+
+        OptimizationResult.Pass bt = new OptimizationResult.Pass();
+        bt.setPassNumber(2059);
+        bt.setFromDate("2022.08.01");
+        bt.setToDate("2025.08.01");
+        bt.setProfit(223.98);
+        OptimizationResult.Pass fw = new OptimizationResult.Pass();
+        fw.setPassNumber(2059);
+        fw.setFromDate("2022.08.01");
+        fw.setToDate("2025.08.01");
+        fw.setProfit(212.19);
+        CombinedPass imported = new CombinedPass(bt, fw, 33.6, 0.79, "imported");
+        project.setDatabanks(Map.of(
+                "raw", List.of(imported),
+                "quality", List.of(imported.copy()),
+                "is_oos", List.of(imported.copy()),
+                "shortlist", List.of(imported.copy())));
+
+        DatabankManager manager = new DatabankManager();
+        manager.loadFromProject(project);
+
+        CombinedPass repaired = manager.getDatabank("raw").get(0);
+        assertEquals("2022-08-01 - 2024-01-31", repaired.getBtDateRange());
+        assertEquals("2024-02-01 - 2025-08-01", repaired.getFwDateRange());
+        assertEquals("2022-08-01 - 2024-01-31", manager.getDatabank("quality").get(0).getBtDateRange());
+        assertEquals("2024-02-01 - 2025-08-01", manager.getDatabank("quality").get(0).getFwDateRange());
+        assertEquals("2022-08-01 - 2024-01-31", manager.getDatabank("is_oos").get(0).getBtDateRange());
+        assertEquals("2024-02-01 - 2025-08-01", manager.getDatabank("is_oos").get(0).getFwDateRange());
+        assertEquals("2022-08-01 - 2024-01-31", manager.getDatabank("shortlist").get(0).getBtDateRange());
+        assertEquals("2024-02-01 - 2025-08-01", manager.getDatabank("shortlist").get(0).getFwDateRange());
     }
 
     @Test

@@ -7,6 +7,7 @@ import java.io.BufferedReader;
 import java.io.InputStreamReader;
 import java.nio.file.Path;
 import java.util.Collections;
+import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -39,14 +40,67 @@ public class VirtualDesktopHelperTest {
         Assert.assertTrue("Timeout handling took " + elapsedMillis + " ms", elapsedMillis < 5_000);
     }
 
+    @Test
+    public void resolvesReplacementProcessWhenReportedLauncherPidHasExited() throws Exception {
+        String executable = javaExecutable();
+        Set<Long> processesBeforeLaunch = VirtualDesktopHelper.runningProcessIdsForExecutable(executable);
+        Process child = childProcess("blocking");
+
+        try {
+            Process resolved = VirtualDesktopHelper.resolveStartedProcess(
+                    Long.MAX_VALUE, executable, processesBeforeLaunch, 3_000L);
+
+            Assert.assertNotNull("Replacement process should be found", resolved);
+            Assert.assertEquals(child.pid(), resolved.pid());
+            Assert.assertTrue(resolved.isAlive());
+        } finally {
+            child.destroyForcibly();
+            child.waitFor(5, TimeUnit.SECONDS);
+        }
+    }
+
+    @Test
+    public void ignoresAliveLauncherWhoseExecutableDoesNotMatchTarget() throws Exception {
+        String executable = javaExecutable();
+        Set<Long> processesBeforeLaunch = VirtualDesktopHelper.runningProcessIdsForExecutable(executable);
+        Process launcher = nonJavaBlockingProcess();
+        Process child = childProcess("blocking");
+
+        try {
+            Process resolved = VirtualDesktopHelper.resolveStartedProcess(
+                    launcher.pid(), executable, processesBeforeLaunch, 3_000L);
+
+            Assert.assertNotNull("Exact target process should be found", resolved);
+            Assert.assertEquals(child.pid(), resolved.pid());
+            Assert.assertNotEquals("Alive launcher must not be returned", launcher.pid(), resolved.pid());
+        } finally {
+            launcher.destroyForcibly();
+            launcher.waitFor(5, TimeUnit.SECONDS);
+            child.destroyForcibly();
+            child.waitFor(5, TimeUnit.SECONDS);
+        }
+    }
+
     private static Process childProcess(String mode) throws Exception {
-        String executable = Path.of(System.getProperty("java.home"), "bin",
-                System.getProperty("os.name", "").toLowerCase().contains("win")
-                        ? "java.exe" : "java").toString();
+        String executable = javaExecutable();
         String testClasses = Path.of(VirtualDesktopHelperTest.class.getProtectionDomain()
                 .getCodeSource().getLocation().toURI()).toString();
         return new ProcessBuilder(executable, "-cp", testClasses,
                 TestChild.class.getName(), mode).redirectErrorStream(true).start();
+    }
+
+    private static String javaExecutable() {
+        return Path.of(System.getProperty("java.home"), "bin",
+                System.getProperty("os.name", "").toLowerCase().contains("win")
+                        ? "java.exe" : "java").toString();
+    }
+
+    private static Process nonJavaBlockingProcess() throws Exception {
+        if (System.getProperty("os.name", "").toLowerCase().contains("win")) {
+            return new ProcessBuilder("powershell", "-NoProfile", "-Command",
+                    "Start-Sleep -Seconds 60").start();
+        }
+        return new ProcessBuilder("sh", "-c", "sleep 60").start();
     }
 
     public static final class TestChild {

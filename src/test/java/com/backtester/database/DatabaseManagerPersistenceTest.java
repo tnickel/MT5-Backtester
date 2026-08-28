@@ -630,4 +630,19 @@ public class DatabaseManagerPersistenceTest {
         assertEquals(1, loaded.get(0).getDatabanks().get("data1").size());
         assertTrue(Double.isNaN(loaded.get(0).getDatabanks().get("data1").get(0).getBtPf()));
     }
+
+    @Test
+    public void deletingEaSettingsDoesNotTreatUnderscoreOrSubstringAsWildcard() {
+        db.saveEaParameterSettings("ToTheMoon_KI_v132", "EURUSD", "M5", "target");
+        db.saveEaParameterSettings("ToTheMoonXKI_v132", "EURUSD", "M5", "wildcard-neighbor");
+        db.saveEaParameterSettings("MyToTheMoon_KI_v132Variant", "EURUSD", "M5", "substring-neighbor");
+
+        db.deleteEaParameterSettings("ToTheMoon_KI_v132");
+
+        assertNull(db.getEaParameterSettings("ToTheMoon_KI_v132", "EURUSD", "M5"));
+        assertEquals("wildcard-neighbor",
+                db.getEaParameterSettings("ToTheMoonXKI_v132", "EURUSD", "M5"));
+        assertEquals("substring-neighbor",
+                db.getEaParameterSettings("MyToTheMoon_KI_v132Variant", "EURUSD", "M5"));
+    }
 }

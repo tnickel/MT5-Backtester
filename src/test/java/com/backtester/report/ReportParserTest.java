@@ -49,6 +49,18 @@ public class ReportParserTest {
     }
 
     @Test
+    public void testParseEnglishCommaThousandsFormat() throws IOException {
+        String html = "<table>"
+                + "<tr><td>Initial Deposit:</td><td><b>10,000.00</b></td></tr>"
+                + "<tr><td>Total Net Profit:</td><td><b>1,234.56</b></td></tr>"
+                + "</table>";
+
+        BacktestResult res = parseHtml(html);
+        assertEquals(10000.0, res.getInitialDeposit(), 0.001);
+        assertEquals(1234.56, res.getTotalProfit(), 0.001);
+    }
+
+    @Test
     public void testParseGermanNumberFormat() throws IOException {
         String html = "<table>"
                 + "<tr><td>Ersteinlage:</td><td><b>10.000,00</b></td></tr>"

@@ -1,8 +1,11 @@
 package com.backtester.workflow;
 
+import com.backtester.report.OptimizationDateRangeResolver;
+import com.backtester.report.OptimizationResult;
 import com.backtester.report.OptimizationResult.CombinedPass;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.LinkedHashMap;
@@ -39,9 +42,104 @@ public class DatabankManager {
                 }
             }
         }
+        repairPersistedOptimizerDateRanges(project);
+        repairPersistedDerivedDateRanges(project);
         // Seed tab-keyed archive from legacy longtermPass slots when missing.
         StrategyBacktestArchiveStore.migrateFromLongtermPasses(project);
         rebuildCensus(project);
+    }
+
+    /**
+     * Repairs legacy/imported optimizer passes whose MT5 report title stored the
+     * complete range on both the backtest and forward legs. Fresh optimizer runs
+     * already do this in {@code OptimizationRunner}; persisted projects need the
+     * same normalization when their databanks are loaded.
+     */
+    private void repairPersistedOptimizerDateRanges(CustomProject project) {
+        if (project == null || project.getTasks() == null) return;
+        for (WorkflowTask task : project.getTasks()) {
+            if (task == null || task.getType() != WorkflowTask.TaskType.OPTIMIZER) continue;
+            String storedName = findStoredName(task.getTargetDatabank());
+            if (storedName == null) continue;
+
+            LocalDate from = parseDate(task.getStartDate());
+            LocalDate to = parseDate(task.getEndDate());
+            if (from == null || to == null || !from.isBefore(to)) continue;
+
+            LocalDate configuredForwardDate = null;
+            if (task.getOptimizerForwardMode() == 4) {
+                configuredForwardDate = parseDate(task.getOptimizerForwardDate());
+            }
+            OptimizationDateRangeResolver.apply(
+                    databanks.get(storedName),
+                    from,
+                    to,
+                    task.getOptimizerForwardMode(),
+                    configuredForwardDate);
+        }
+    }
+
+    /**
+     * Filter and diversity tasks copy the optimizer passes into new databanks.
+     * Older saved copies still contain MT5's full-range labels, even when the
+     * optimizer source has already been repaired. Propagate the source leg
+     * ranges through those pass-through tasks without touching retest outputs,
+     * whose dates intentionally describe a new test run.
+     */
+    private void repairPersistedDerivedDateRanges(CustomProject project) {
+        if (project == null || project.getTasks() == null) return;
+        for (WorkflowTask task : project.getTasks()) {
+            if (task == null || !preservesPassDateRanges(task.getType())) continue;
+            String sourceName = findStoredName(task.getSourceDatabank());
+            String targetName = findStoredName(task.getTargetDatabank());
+            if (sourceName == null || targetName == null
+                    || sourceName.equalsIgnoreCase(targetName)) continue;
+            copyDateRanges(databanks.get(sourceName), databanks.get(targetName));
+        }
+    }
+
+    private static boolean preservesPassDateRanges(WorkflowTask.TaskType type) {
+        return type != null
+                && type != WorkflowTask.TaskType.OPTIMIZER
+                && type != WorkflowTask.TaskType.RETESTER;
+    }
+
+    private static void copyDateRanges(List<CombinedPass> source,
+                                       List<CombinedPass> target) {
+        if (source == null || target == null || source.isEmpty() || target.isEmpty()) return;
+        Map<String, CombinedPass> byIdentity = new LinkedHashMap<>();
+        Map<String, CombinedPass> byPassNumber = new LinkedHashMap<>();
+        for (CombinedPass pass : source) {
+            if (pass == null || pass.getBacktestPass() == null) continue;
+            byIdentity.put(passIdentity(pass), pass);
+            byPassNumber.putIfAbsent(passNumberKey(pass), pass);
+        }
+        for (CombinedPass pass : target) {
+            if (pass == null || pass.getBacktestPass() == null) continue;
+            CombinedPass sourcePass = byIdentity.get(passIdentity(pass));
+            if (sourcePass == null) sourcePass = byPassNumber.get(passNumberKey(pass));
+            if (sourcePass == null) continue;
+            copyDateRange(sourcePass.getBacktestPass(), pass.getBacktestPass());
+            if (sourcePass.getForwardPass() != null && pass.getForwardPass() != null) {
+                copyDateRange(sourcePass.getForwardPass(), pass.getForwardPass());
+            }
+        }
+    }
+
+    private static void copyDateRange(OptimizationResult.Pass source,
+                                      OptimizationResult.Pass target) {
+        if (source == null || target == null) return;
+        target.setFromDate(source.getFromDate());
+        target.setToDate(source.getToDate());
+    }
+
+    private static LocalDate parseDate(String value) {
+        if (value == null || value.isBlank()) return null;
+        try {
+            return LocalDate.parse(value.trim().replace('.', '-'));
+        } catch (RuntimeException ignored) {
+            return null;
+        }
     }
 
     public synchronized void saveToProject(CustomProject project) {

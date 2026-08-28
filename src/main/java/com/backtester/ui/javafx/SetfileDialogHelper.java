@@ -283,6 +283,10 @@ public class SetfileDialogHelper {
                 text = "✓ Original-Preset des Laufs";
                 color = "#10b981";
             }
+            case EMBEDDED_PASS -> {
+                text = "✓ Strategiegebundenes Setfile";
+                color = "#10b981";
+            }
             case OPTIMIZATION_BASE -> {
                 text = "✓ Optimierungs-Preset + Report-Werte";
                 color = "#00e5ff";

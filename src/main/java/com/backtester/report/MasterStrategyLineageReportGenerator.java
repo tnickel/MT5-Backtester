@@ -1,5 +1,6 @@
 package com.backtester.report;
 
+import com.backtester.engine.BacktestConfig;
 import com.backtester.workflow.CustomProject;
 import com.backtester.workflow.MasterStrategyEntry;
 import com.backtester.workflow.MasterStrategyLineageService;
@@ -95,6 +96,7 @@ public class MasterStrategyLineageReportGenerator {
         String eaName = project != null && project.getExpert() != null ? project.getExpert() : "—";
         String symbol = project != null && project.getSymbol() != null ? project.getSymbol() : "—";
         String period = project != null && project.getPeriod() != null ? project.getPeriod() : "—";
+        BacktestConfig reference = MasterStrategyLineageService.buildReferenceConfig(project, "");
 
         MasterStrategyEntry latest = lineage.isEmpty() ? null : lineage.get(lineage.size() - 1);
         MasterStrategyEntry confirmedMaster = project != null
@@ -135,9 +137,10 @@ public class MasterStrategyLineageReportGenerator {
         sb.append("      <div class=\"meta-item\"><span class=\"meta-label\">EA / Strategie:</span> ").append(escapeHtml(eaName)).append("</div>\n");
         sb.append("      <div class=\"meta-item\"><span class=\"meta-label\">Symbol / Timeframe:</span> ").append(escapeHtml(symbol)).append(" / ").append(escapeHtml(period)).append("</div>\n");
         sb.append("      <div class=\"meta-item\"><span class=\"meta-label\">Referenzzeitraum:</span> ")
-                .append(MasterStrategyLineageService.REFERENCE_FROM).append(" bis ")
-                .append(MasterStrategyLineageService.REFERENCE_TO).append("</div>\n");
-        sb.append("      <div class=\"meta-item\"><span class=\"meta-label\">Modellierung:</span> 1 minute OHLC</div>\n");
+                .append(reference.getFromDate()).append(" bis ")
+                .append(reference.getToDate()).append("</div>\n");
+        sb.append("      <div class=\"meta-item\"><span class=\"meta-label\">Modellierung:</span> ")
+                .append(escapeHtml(reference.getModelName())).append("</div>\n");
         sb.append("      <div class=\"meta-item\"><span class=\"meta-label\">Erstellt am:</span> ").append(TIMESTAMP_FORMATTER.format(Instant.now())).append("</div>\n");
         sb.append("      <div class=\"meta-item\"><span class=\"meta-label\">Messpunkte Gesamt:</span> ").append(lineage.size()).append(" Picks</div>\n");
         sb.append("    </div>\n");

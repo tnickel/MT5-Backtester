@@ -1,10 +1,13 @@
 package com.backtester.ui.javafx;
 
+import com.backtester.config.AppConfig;
 import com.backtester.database.DatabaseManager;
+import com.backtester.report.OptimizationDateRangeResolver;
 import com.backtester.report.OptimizationResult.CombinedPass;
 import com.backtester.workflow.CustomProject;
 import com.backtester.workflow.DatabankManager;
 import com.backtester.workflow.GuidedOptimizationService;
+import com.backtester.workflow.Mt5OptimizationImportService;
 import com.backtester.workflow.WorkflowTask;
 import javafx.animation.PauseTransition;
 import javafx.application.Platform;
@@ -37,12 +40,17 @@ import javafx.scene.layout.FlowPane;
 import javafx.scene.layout.Pane;
 import javafx.scene.layout.Priority;
 import javafx.scene.layout.VBox;
+import javafx.stage.FileChooser;
 import javafx.stage.Window;
 
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
+import java.util.Optional;
 import java.util.Set;
 
 /**
@@ -95,6 +103,23 @@ public class ProjectWorkflowDatabankPanel {
         ComboBox<String> getRankingSourceCombo();
 
         ComboBox<String> getRankingTargetCombo();
+
+        /**
+         * Re-load the selected task into the right-hand form (dates, combos, …)
+         * after the model was changed externally (e.g. MT5 opti import).
+         */
+        void reloadSelectedTaskForm();
+
+        /**
+         * After applying settings externally to a task (e.g. import dates), adopt the
+         * new execution signature so the next save does not wipe that task's target.
+         */
+        void acknowledgeTaskExecutionSignature(WorkflowTask task);
+
+        /**
+         * Runs an action while downstream databank invalidation is suppressed (MT5 import).
+         */
+        void runSuppressingDownstreamInvalidation(Runnable action);
     }
 
     private final DatabankManager databankManager;
@@ -106,6 +131,11 @@ public class ProjectWorkflowDatabankPanel {
     private CheckBox persistDatabanksCheckBox;
     private Label parameterAdoptionBanner;
     private boolean rebuildingDatabankTabs;
+    /** Task-linked databanks: yellow tab headers; focus prefers output. */
+    private String highlightedSourceDatabank;
+    private String highlightedTargetDatabank;
+
+    private static final String TAB_HIGHLIGHT_CLASS = "databank-task-highlight";
 
     /** Fixed row height keeps VirtualFlow from inserting blank gaps after rebuilds. */
     private static final double DATABANK_ROW_HEIGHT = 28.0;
@@ -153,6 +183,31 @@ public class ProjectWorkflowDatabankPanel {
         refreshDatabanksUI(null);
     }
 
+    /**
+     * Marks the task's input/output databank tabs yellow and selects the output
+     * tab (or input if output is blank). Empty names clear the highlight.
+     */
+    public void focusTaskDatabanks(String sourceDatabank, String targetDatabank) {
+        highlightedSourceDatabank = blankToNull(sourceDatabank);
+        highlightedTargetDatabank = blankToNull(targetDatabank);
+        if (highlightedSourceDatabank != null) {
+            databankManager.createDatabank(highlightedSourceDatabank);
+        }
+        if (highlightedTargetDatabank != null) {
+            databankManager.createDatabank(highlightedTargetDatabank);
+        }
+        String focus = highlightedTargetDatabank != null
+                ? highlightedTargetDatabank
+                : highlightedSourceDatabank;
+        refreshDatabanksUI(focus);
+    }
+
+    public void clearTaskDatabankHighlight() {
+        highlightedSourceDatabank = null;
+        highlightedTargetDatabank = null;
+        applyTaskDatabankTabStyles();
+    }
+
     public void refreshDatabanksUI(String targetTabToFocus) {
         if (bottomDatabankTabPane == null) return;
 
@@ -171,6 +226,7 @@ public class ProjectWorkflowDatabankPanel {
                 List<CombinedPass> passes = databankManager.getDatabank(dbName);
                 Tab tab = new Tab(dbName + " (" + passes.size() + ")");
                 tab.setClosable(!isStandard);
+                tab.setUserData(dbName);
                 tab.setOnCloseRequest(e -> {
                     e.consume();
                     deleteDatabankByName(dbName);
@@ -185,8 +241,11 @@ public class ProjectWorkflowDatabankPanel {
                 }
             }
 
+            applyTaskDatabankTabStyles();
+
             if (tabToSelect != null) {
                 bottomDatabankTabPane.getSelectionModel().select(tabToSelect);
+                ensureTabHeaderVisible(tabToSelect);
             }
         } finally {
             rebuildingDatabankTabs = false;
@@ -195,6 +254,55 @@ public class ProjectWorkflowDatabankPanel {
         // TableViews rebuilt inside a SplitPane often get a broken VirtualFlow until
         // the next tab switch; force the same repair that a manual tab change triggers.
         Platform.runLater(() -> repairVisibleDatabankTable(true));
+    }
+
+    private void applyTaskDatabankTabStyles() {
+        if (bottomDatabankTabPane == null) {
+            return;
+        }
+        for (Tab tab : bottomDatabankTabPane.getTabs()) {
+            String dbName = databankNameOf(tab);
+            boolean highlight = dbName != null && (
+                    (highlightedSourceDatabank != null && dbName.equalsIgnoreCase(highlightedSourceDatabank))
+                            || (highlightedTargetDatabank != null && dbName.equalsIgnoreCase(highlightedTargetDatabank)));
+            tab.getStyleClass().remove(TAB_HIGHLIGHT_CLASS);
+            if (highlight) {
+                tab.getStyleClass().add(TAB_HIGHLIGHT_CLASS);
+            }
+        }
+    }
+
+    private void ensureTabHeaderVisible(Tab tab) {
+        if (tab == null || bottomDatabankTabPane == null) {
+            return;
+        }
+        Platform.runLater(() -> {
+            // Selecting already scrolls most TabPanes; re-select after layout for long tab strips.
+            if (bottomDatabankTabPane.getTabs().contains(tab)) {
+                bottomDatabankTabPane.getSelectionModel().select(tab);
+            }
+        });
+    }
+
+    private static String databankNameOf(Tab tab) {
+        if (tab == null) {
+            return null;
+        }
+        if (tab.getUserData() instanceof String name && !name.isBlank()) {
+            return name;
+        }
+        String text = tab.getText();
+        if (text == null || text.isBlank()) {
+            return null;
+        }
+        return text.replaceAll("\\s*\\(\\d+\\)$", "");
+    }
+
+    private static String blankToNull(String value) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        return value.trim();
     }
 
     private TableView<CombinedPass> createDatabankTable(String dbName,
@@ -242,18 +350,18 @@ public class ProjectWorkflowDatabankPanel {
             }
 
             if (visibleCols.contains(DatabankColumnChooserDialog.DatabankColumn.BT_PROFIT)) {
-                TableColumn<CombinedPass, Double> btProf = new TableColumn<>("BT Profit");
-                btProf.setCellValueFactory(c -> new SimpleObjectProperty<>(c.getValue().getBtProfit()));
+                TableColumn<CombinedPass, Double> btProf = new TableColumn<>("BT Backtest");
+                btProf.setCellValueFactory(c -> new SimpleObjectProperty<>(c.getValue().getBtBacktestBalance()));
                 btProf.setComparator(nanSafeDoubleComparator());
-                btProf.setPrefWidth(90);
+                btProf.setPrefWidth(100);
                 table.getColumns().add(btProf);
             }
 
             if (visibleCols.contains(DatabankColumnChooserDialog.DatabankColumn.FW_PROFIT)) {
-                TableColumn<CombinedPass, Double> fwProf = new TableColumn<>("FW Profit");
-                fwProf.setCellValueFactory(c -> new SimpleObjectProperty<>(c.getValue().getFwProfit()));
+                TableColumn<CombinedPass, Double> fwProf = new TableColumn<>("FW Forward");
+                fwProf.setCellValueFactory(c -> new SimpleObjectProperty<>(c.getValue().getFwForwardBalance()));
                 fwProf.setComparator(nanSafeDoubleComparator());
-                fwProf.setPrefWidth(90);
+                fwProf.setPrefWidth(100);
                 table.getColumns().add(fwProf);
             }
 
@@ -665,6 +773,13 @@ public class ProjectWorkflowDatabankPanel {
                     () -> refreshDatabanksUI(currentDbName));
         });
 
+        Button importMt5OptiBtn = new Button("📥 MT5 Opti importieren");
+        importMt5OptiBtn.setStyle("-fx-background-color: transparent; -fx-text-fill: #69f0ae; -fx-font-weight: bold; -fx-cursor: hand;");
+        importMt5OptiBtn.setTooltip(new Tooltip(
+                "Liest OptimizationReport.xml/.htm aus MetaTrader in die aktuelle Databank.\n"
+                        + "Nur Dateilesen — MetaTrader wird dabei weder gestartet noch beendet."));
+        importMt5OptiBtn.setOnAction(e -> importMt5OptimizationIntoCurrentDatabank());
+
         Button backupBtn = new Button("💾 Backup");
         backupBtn.setStyle("-fx-background-color: transparent; -fx-text-fill: #b388ff; -fx-font-weight: bold; -fx-cursor: hand;");
         backupBtn.setTooltip(new Tooltip("Vollstaendiges Projekt-Backup: Tasks, Einstellungen, Databanken, Archive, Lineage"));
@@ -676,7 +791,8 @@ public class ProjectWorkflowDatabankPanel {
         restoreBtn.setOnAction(e -> host.restoreProject());
 
         bar.getChildren().addAll(newDatabankBtn, clearCurrentDbBtn, clearAllBtn, deleteDatabankBtn,
-                deleteSelectedStratsBtn, configColumnsBtn, scoreWeightsBtn, compareDatabanksBtn, showEquityCurvesBtn, backupBtn, restoreBtn, persistDatabanksCheckBox);
+                deleteSelectedStratsBtn, importMt5OptiBtn, configColumnsBtn, scoreWeightsBtn,
+                compareDatabanksBtn, showEquityCurvesBtn, backupBtn, restoreBtn, persistDatabanksCheckBox);
 
         bottomDatabankTabPane = new TabPane();
         VBox.setVgrow(bottomDatabankTabPane, Priority.ALWAYS);
@@ -751,6 +867,314 @@ public class ProjectWorkflowDatabankPanel {
             refreshDatabanksUI("Results");
         });
         host.logToConsole("DATABANK", "Databank '" + dbName + "' wurde gelöscht.");
+    }
+
+    private void importMt5OptimizationIntoCurrentDatabank() {
+        String dbName = currentDatabankName();
+        if (dbName == null || dbName.isBlank()) {
+            infoAlert("MT5 Opti importieren", "Bitte zuerst eine Databank-Tab auswählen (z. B. g01_grid_raw).");
+            return;
+        }
+
+        ButtonType fromMt5 = new ButtonType("Aus MT5-Ordner");
+        ButtonType chooseFile = new ButtonType("Datei wählen…");
+        ButtonType cancel = ButtonType.CANCEL;
+        Alert source = new Alert(Alert.AlertType.CONFIRMATION);
+        source.setTitle("MT5 Opti importieren");
+        source.setHeaderText("Optimierungsergebnisse in Databank '" + dbName + "' laden");
+        source.setContentText(
+                "Quelle wählen.\n\n"
+                        + "Wichtig: MetaTrader wird dabei NICHT beendet oder gestartet — "
+                        + "nur die Report-Datei wird gelesen.\n"
+                        + "Wenn die Optimierung noch läuft, kann der Report unvollständig sein.");
+        source.getButtonTypes().setAll(fromMt5, chooseFile, cancel);
+        Window owner = host.getOwnerWindow();
+        if (owner != null) source.initOwner(owner);
+
+        Optional<ButtonType> choice = source.showAndWait();
+        if (choice.isEmpty() || choice.get() == cancel) {
+            return;
+        }
+
+        try {
+            Mt5OptimizationImportService.ImportResult imported;
+            if (choice.get() == fromMt5) {
+                Path mtDir = resolveConfiguredMtInstallDir();
+                if (mtDir == null) {
+                    infoAlert("MT5 Opti importieren",
+                            "Kein MT5-Installationspfad in der Konfiguration gefunden.\n"
+                                    + "Bitte Datei manuell wählen oder mt5.terminal.path setzen.");
+                    return;
+                }
+                host.logToConsole("IMPORT", "Lese OptimizationReport aus MT5-Ordner (ohne Prozess-Eingriff): " + mtDir);
+                imported = Mt5OptimizationImportService.importFromMt5Install(mtDir);
+            } else {
+                FileChooser chooser = new FileChooser();
+                chooser.setTitle("OptimizationReport wählen");
+                chooser.getExtensionFilters().addAll(
+                        new FileChooser.ExtensionFilter("MT5/MT4 Reports", "*.xml", "*.htm", "*.html"),
+                        new FileChooser.ExtensionFilter("Alle Dateien", "*.*"));
+                Path mtDir = resolveConfiguredMtInstallDir();
+                if (mtDir != null) {
+                    chooser.setInitialDirectory(mtDir.toFile());
+                }
+                java.io.File file = chooser.showOpenDialog(owner);
+                if (file == null) {
+                    return;
+                }
+                Path main = file.toPath();
+                Path forward = main.getParent() != null
+                        ? main.getParent().resolve(Mt5OptimizationImportService.FORWARD_XML)
+                        : null;
+                host.logToConsole("IMPORT", "Lese Report-Datei (ohne Prozess-Eingriff): " + main);
+                imported = Mt5OptimizationImportService.importFromReportFiles(main, forward);
+            }
+
+            applyImportedPasses(dbName, imported);
+        } catch (Exception ex) {
+            host.logToConsole("IMPORT", "Import fehlgeschlagen: " + ex.getMessage());
+            Alert err = new Alert(Alert.AlertType.ERROR,
+                    "Import fehlgeschlagen:\n\n" + ex.getMessage(),
+                    ButtonType.OK);
+            err.setTitle("MT5 Opti importieren");
+            err.setHeaderText(null);
+            if (owner != null) err.initOwner(owner);
+            err.showAndWait();
+        }
+    }
+
+    private void applyImportedPasses(String dbName, Mt5OptimizationImportService.ImportResult imported) {
+        int existing = databankManager.getDatabank(dbName).size();
+        WorkflowTask optimizer = findOptimizerForTargetDatabank(dbName);
+        String identityError = validateImportedReportIdentity(optimizer, imported);
+        if (!identityError.isBlank()) {
+            host.logToConsole("IMPORT", "Import abgebrochen: " + identityError);
+            errorAlert("MT5 Opti importieren", identityError);
+            return;
+        }
+        String dateNote = imported.hasDateRange()
+                ? "\nStart/End day aus Report: " + imported.fromDate() + " → " + imported.toDate()
+                + (optimizer != null
+                ? "\n(wird an Task '" + optimizer.getName() + "' übernommen)"
+                : "\n(kein Optimizer-Task mit Ziel '" + dbName + "' gefunden — Daten nur in Passes)")
+                : "\nKein Zeitraum im Report gefunden — Start/End day bleiben unverändert.";
+
+        ButtonType replace = new ButtonType("Ersetzen");
+        ButtonType merge = new ButtonType("Hinzufügen");
+        ButtonType cancel = ButtonType.CANCEL;
+        Alert mode = new Alert(Alert.AlertType.CONFIRMATION);
+        mode.setTitle("Import bestätigen");
+        mode.setHeaderText(imported.passCount() + " Pass(es) → Databank '" + dbName + "'");
+        mode.setContentText(
+                imported.message() + "\n\n"
+                        + "Quelle: " + imported.mainReport() + "\n"
+                        + (imported.forwardReport() != null
+                        ? "Forward: " + imported.forwardReport() + "\n"
+                        : "Forward: (keine)\n")
+                        + "Aktuell in Databank: " + existing + " Strategie(n)"
+                        + dateNote + "\n\n"
+                        + "Ersetzen = Databank leeren und neu füllen\n"
+                        + "Hinzufügen = bestehende behalten, neue dazumergen");
+        mode.getButtonTypes().setAll(replace, merge, cancel);
+        Window owner = host.getOwnerWindow();
+        if (owner != null) mode.initOwner(owner);
+
+        Optional<ButtonType> decided = mode.showAndWait();
+        if (decided.isEmpty() || decided.get() == cancel) {
+            return;
+        }
+
+        final boolean doReplace = decided.get() == replace;
+        host.runSuppressingDownstreamInvalidation(() -> {
+            String dateApplyMsg = applyImportedDatesToOptimizer(optimizer, imported);
+            host.acknowledgeTaskExecutionSignature(optimizer);
+
+            if (doReplace) {
+                databankManager.setDatabankContent(dbName, imported.passes());
+            } else {
+                databankManager.addPassesToDatabank(dbName, imported.passes());
+            }
+
+            int after = databankManager.getDatabank(dbName).size();
+            // Reloading the task form recomputes forward dates and fires control
+            // listeners, so the wipe guard must also cover this async continuation.
+            host.flushProjectSaveAsync(() -> host.runSuppressingDownstreamInvalidation(() -> {
+                host.refreshTaskChain();
+                host.reloadSelectedTaskForm();
+                host.acknowledgeTaskExecutionSignature(optimizer);
+                refreshDatabanksUI(dbName);
+                int stillThere = databankManager.getDatabank(dbName).size();
+                host.logToConsole("IMPORT",
+                        "Import OK: " + imported.passCount() + " Pass(es) → '" + dbName
+                                + "' (" + (doReplace ? "ersetzt" : "hinzugefügt")
+                                + ", jetzt " + stillThere + "). MetaTrader wurde nicht angefasst."
+                                + (dateApplyMsg.isBlank() ? "" : " " + dateApplyMsg));
+                if (stillThere != after) {
+                    host.logToConsole("IMPORT",
+                            "Warnung: Databank '" + dbName + "' Größe nach Save geändert: "
+                                    + after + " → " + stillThere + ".");
+                }
+                infoAlert("MT5 Opti importieren",
+                        imported.passCount() + " Strategie(n) in '" + dbName + "' geladen.\n"
+                                + "Databank enthält jetzt " + stillThere + " Einträge.\n"
+                                + (dateApplyMsg.isBlank() ? "" : dateApplyMsg + "\n")
+                                + "\nMetaTrader wurde weder gestartet noch beendet.");
+            }));
+        });
+    }
+
+    private String validateImportedReportIdentity(WorkflowTask optimizer,
+                                                   Mt5OptimizationImportService.ImportResult imported) {
+        if (optimizer == null || imported == null) return "";
+        String reportSymbol = normalizeIdentity(imported.reportSymbol());
+        String reportPeriod = normalizeIdentity(imported.reportPeriod());
+        if (reportSymbol.isBlank() && reportPeriod.isBlank()) return "";
+
+        String expectedSymbol = normalizeIdentity(optimizer.getRetestSymbol());
+        String expectedPeriod = normalizeIdentity(optimizer.getRetestPeriod());
+        if (expectedSymbol.isBlank()) {
+            CustomProject project = host.getProject();
+            expectedSymbol = project != null ? normalizeIdentity(project.getSymbol()) : "";
+        }
+        if (expectedPeriod.isBlank()) {
+            CustomProject project = host.getProject();
+            expectedPeriod = project != null ? normalizeIdentity(project.getPeriod()) : "";
+        }
+
+        List<String> mismatches = new ArrayList<>();
+        if (!reportSymbol.isBlank() && !expectedSymbol.isBlank()
+                && !reportSymbol.equals(expectedSymbol)) {
+            mismatches.add("Symbol: Report " + imported.reportSymbol()
+                    + ", Projekt erwartet " + expectedSymbol);
+        }
+        if (!reportPeriod.isBlank() && !expectedPeriod.isBlank()
+                && !reportPeriod.equals(expectedPeriod)) {
+            mismatches.add("Zeiteinheit: Report " + imported.reportPeriod()
+                    + ", Projekt erwartet " + expectedPeriod);
+        }
+        if (mismatches.isEmpty()) return "";
+        return "Import abgebrochen: Der Report gehört nicht zum gewählten Projekt.\n"
+                + String.join("\n", mismatches)
+                + "\n\nBitte den passenden MT5-Report für "
+                + (expectedSymbol.isBlank() ? "das Projekt" : expectedSymbol)
+                + (expectedPeriod.isBlank() ? "" : " " + expectedPeriod)
+                + " auswählen.";
+    }
+
+    private static String normalizeIdentity(String value) {
+        return value == null ? "" : value.trim().toUpperCase(Locale.ROOT);
+    }
+
+    private String applyImportedDatesToOptimizer(WorkflowTask optimizer,
+                                                 Mt5OptimizationImportService.ImportResult imported) {
+        if (optimizer == null || !imported.hasDateRange()) {
+            return "";
+        }
+        String oldFrom = optimizer.getStartDate();
+        String oldTo = optimizer.getEndDate();
+        optimizer.setStartDate(imported.fromDate());
+        optimizer.setEndDate(imported.toDate());
+        // Must use ForwardSplit: any deviation makes the task look "changed" on the
+        // next form reload, which would wipe the databank we just filled.
+        int forwardMode = optimizer.getOptimizerForwardMode();
+        if (forwardMode > 0 && forwardMode != 4) {
+            try {
+                LocalDate forwardStart = com.backtester.engine.ForwardSplit.computeForwardStartDate(
+                        LocalDate.parse(imported.fromDate()),
+                        LocalDate.parse(imported.toDate()),
+                        forwardMode,
+                        null);
+                optimizer.setOptimizerForwardDate(forwardStart != null ? forwardStart.toString() : "");
+            } catch (Exception ignored) {
+                // Leave existing forward date if parse fails.
+            }
+        }
+
+        // MT5 puts the complete optimization range in both report titles. Apply
+        // the configured IS/OOS split to the imported pass legs before they are
+        // persisted; otherwise the Strategy Details dialog shows the same dates
+        // for Backtest (IS) and Forward (OOS).
+        try {
+            LocalDate from = LocalDate.parse(imported.fromDate());
+            LocalDate to = LocalDate.parse(imported.toDate());
+            LocalDate configuredForwardDate = null;
+            if (forwardMode == 4 && !optimizer.getOptimizerForwardDate().isBlank()) {
+                configuredForwardDate = LocalDate.parse(optimizer.getOptimizerForwardDate());
+            }
+            OptimizationDateRangeResolver.apply(
+                    imported.passes(), from, to, forwardMode, configuredForwardDate);
+        } catch (Exception ignored) {
+            // Keep the imported dates when the report/task range is malformed.
+        }
+        return "Start/End day an '" + optimizer.getName() + "': "
+                + oldFrom + "…" + oldTo + " → "
+                + imported.fromDate() + "…" + imported.toDate() + ".";
+    }
+
+    private WorkflowTask findOptimizerForTargetDatabank(String dbName) {
+        if (dbName == null || dbName.isBlank()) return null;
+        CustomProject project = host.getProject();
+        if (project != null && project.getTasks() != null) {
+            for (WorkflowTask task : project.getTasks()) {
+                if (task == null || task.getType() != WorkflowTask.TaskType.OPTIMIZER) continue;
+                String tgt = task.getTargetDatabank();
+                if (tgt != null && tgt.equalsIgnoreCase(dbName)) {
+                    return task;
+                }
+            }
+        }
+        WorkflowTask selected = host.getSelectedTask();
+        if (selected != null && selected.getType() == WorkflowTask.TaskType.OPTIMIZER) {
+            return selected;
+        }
+        return null;
+    }
+
+    private String currentDatabankName() {
+        if (bottomDatabankTabPane == null) return null;
+        Tab active = bottomDatabankTabPane.getSelectionModel().getSelectedItem();
+        if (active == null) return null;
+        return active.getText().replaceAll("\\s*\\(\\d+\\)$", "");
+    }
+
+    private Path resolveConfiguredMtInstallDir() {
+        try {
+            AppConfig cfg = AppConfig.getInstance();
+            CustomProject project = host.getProject();
+            String expert = project != null ? project.getExpert() : null;
+            if (expert != null && !expert.isBlank()) {
+                Path dir = cfg.getMtInstallDir(expert);
+                if (dir != null) {
+                    return dir;
+                }
+            }
+            String terminal = cfg.getMt5TerminalPath();
+            if (terminal == null || terminal.isBlank()) {
+                return null;
+            }
+            Path parent = Paths.get(terminal).getParent();
+            return parent;
+        } catch (Exception ex) {
+            return null;
+        }
+    }
+
+    private void infoAlert(String title, String message) {
+        Alert alert = new Alert(Alert.AlertType.INFORMATION, message, ButtonType.OK);
+        alert.setTitle(title);
+        alert.setHeaderText(null);
+        Window owner = host.getOwnerWindow();
+        if (owner != null) alert.initOwner(owner);
+        alert.showAndWait();
+    }
+
+    private void errorAlert(String title, String message) {
+        Alert alert = new Alert(Alert.AlertType.ERROR, message, ButtonType.OK);
+        alert.setTitle(title);
+        alert.setHeaderText(null);
+        Window owner = host.getOwnerWindow();
+        if (owner != null) alert.initOwner(owner);
+        alert.showAndWait();
     }
 
     private boolean confirmDestructiveAction(String title, String message) {

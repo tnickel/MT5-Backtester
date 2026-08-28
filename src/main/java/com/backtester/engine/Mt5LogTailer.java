@@ -24,6 +24,8 @@ import java.util.stream.Stream;
 public class Mt5LogTailer implements Runnable {
 
     private static final Logger log = LoggerFactory.getLogger(Mt5LogTailer.class);
+    static final int MAX_LOG_READ_BYTES = 256 * 1024;
+    private static final String AGENT_PASS_MARKER = "OnTester result";
 
     private final Path mt5Dir;
     private final MetaTraderPlatform platform;
@@ -53,6 +55,7 @@ public class Mt5LogTailer implements Runnable {
     private Path testerLogPath;
 
     private final java.util.Map<Path, Long> agentLogPositions = new java.util.HashMap<>();
+    private final java.util.Map<Path, String> agentLogMarkerSuffixes = new java.util.HashMap<>();
     private int agentTotalPasses = 0;
 
     public Mt5LogTailer(Path mt5Dir, MetaTraderPlatform platform, Consumer<String> logCallback) {
@@ -81,7 +84,9 @@ public class Mt5LogTailer implements Runnable {
         if (running.compareAndSet(false, true)) {
             // Clear agent log tracking state on start
             agentLogPositions.clear();
+            agentLogMarkerSuffixes.clear();
             agentTotalPasses = 0;
+            initializeExistingAgentLogPositions();
 
             // Initialize positions to current file lengths so we only tail NEW logs
             terminalLogLastPos = getFileLengthSafely(terminalLogPath);
@@ -162,15 +167,8 @@ public class Mt5LogTailer implements Runnable {
 
             if (length > lastPos) {
                 raf.seek(lastPos);
-                int bytesToRead = (int) (length - lastPos);
-                
-                // Ensure we read an even number of bytes for UTF-16LE
-                // If it's odd, MT5 might be mid-write. We'll leave the last byte for next time.
-                if (platform.getLogCharset() == StandardCharsets.UTF_16LE) {
-                    if (bytesToRead % 2 != 0) {
-                        bytesToRead--;
-                    }
-                }
+                int bytesToRead = boundedReadSize(length - lastPos,
+                        platform.getLogCharset() == StandardCharsets.UTF_16LE);
                 
                 if (bytesToRead > 0) {
                     byte[] buffer = new byte[bytesToRead];
@@ -208,6 +206,33 @@ public class Mt5LogTailer implements Runnable {
         }
     }
 
+    static int boundedReadSize(long remainingBytes, boolean utf16) {
+        int size = (int) Math.min(Math.max(0L, remainingBytes), MAX_LOG_READ_BYTES);
+        return utf16 && (size & 1) != 0 ? size - 1 : size;
+    }
+
+    /**
+     * Existing agent logs may contain all optimizations from the current day.
+     * Start at EOF for files that predate this tailer so their old passes are not
+     * counted as progress of the new run. Agent logs created afterwards still start at 0.
+     */
+    private void initializeExistingAgentLogPositions() {
+        Path testerDir = mt5Dir.resolve("Tester");
+        if (!Files.exists(testerDir)) return;
+        try (Stream<Path> stream = Files.list(testerDir)) {
+            stream.filter(Files::isDirectory)
+                    .filter(path -> path.getFileName().toString().startsWith("Agent-"))
+                    .map(path -> findNewestLogFile(path.resolve("logs")))
+                    .filter(java.util.Objects::nonNull)
+                    .forEach(path -> {
+                        long length = path.toFile().length();
+                        agentLogPositions.put(path, length - (length & 1L));
+                    });
+        } catch (IOException e) {
+            log.debug("Could not initialize existing agent-log positions", e);
+        }
+    }
+
     private void pollAgentLogs() {
         if (!platform.supportsMultiThreadAgents()) {
             return;
@@ -231,15 +256,13 @@ public class Mt5LogTailer implements Runnable {
                         
                         if (length < lastPos) {
                             lastPos = 0;
+                            agentLogMarkerSuffixes.remove(newestLog);
                         }
                         
                         if (length > lastPos) {
                             try (RandomAccessFile raf = new RandomAccessFile(newestLog.toFile(), "r")) {
                                 raf.seek(lastPos);
-                                int bytesToRead = (int) (length - lastPos);
-                                if (bytesToRead % 2 != 0) {
-                                    bytesToRead--;
-                                }
+                                int bytesToRead = boundedReadSize(length - lastPos, true);
                                 if (bytesToRead > 0) {
                                     byte[] buffer = new byte[bytesToRead];
                                     raf.readFully(buffer);
@@ -248,7 +271,11 @@ public class Mt5LogTailer implements Runnable {
                                     updateLastActivityTime();
                                     
                                     String content = new String(buffer, StandardCharsets.UTF_16LE);
-                                    int newPasses = countOccurrences(content, "OnTester result");
+                                    String searchable = agentLogMarkerSuffixes.getOrDefault(newestLog, "") + content;
+                                    int newPasses = countOccurrences(searchable, AGENT_PASS_MARKER);
+                                    int suffixLength = Math.min(AGENT_PASS_MARKER.length() - 1, searchable.length());
+                                    agentLogMarkerSuffixes.put(newestLog,
+                                            searchable.substring(searchable.length() - suffixLength));
                                     if (newPasses > 0) {
                                         agentTotalPasses += newPasses;
                                         foundNewPasses = true;

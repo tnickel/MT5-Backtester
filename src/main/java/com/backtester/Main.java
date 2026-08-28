@@ -1,13 +1,20 @@
 package com.backtester;
 
 import com.backtester.config.AppConfig;
-import com.backtester.ui.MainFrame;
+import com.backtester.engine.Mt5ProcessGuard;
 import com.formdev.flatlaf.FlatDarkLaf;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import javax.swing.*;
 import java.awt.*;
+import java.lang.reflect.InvocationTargetException;
+import java.nio.file.Path;
+import java.util.List;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Application entry point.
@@ -45,162 +52,217 @@ public class Main {
             System.exit(0);
         }
 
-        // Kill any leftover MetaTrader instances from previous runs.
-        // When the Backtester stops abruptly, MT5 may remain running (invisibly on Desktop 2).
-        killLeftoverMt5Processes();
-
-        // Initialize configuration
+        // Initialize configuration first so the leftover-process cleanup can be
+        // scoped to the configured MetaTrader installation.
         AppConfig.getInstance();
+
+        // Kill any leftover MetaTrader instances of the configured installation
+        // from previous runs. When the Backtester stops abruptly, MT5 may remain
+        // running (invisibly on Desktop 2).
+        killLeftoverMt5Processes();
 
         // Launch JavaFX UI
         com.backtester.ui.javafx.AppLauncher.main(args);
     }
 
     /**
-     * Kills any leftover terminal64.exe (MetaTrader 5) processes from previous runs.
-     * This prevents invisible MT5 instances from lingering on Desktop 2.
+     * Kills leftover MetaTrader terminal processes belonging to the configured backtester
+     * installation (parent directory of {@code mt5.terminal.path}) plus any leftover tester
+     * agents ({@code metatester64.exe}), which are never live-trading processes.
+     * <p>
+     * Terminals are only ever killed inside the configured install directory — other
+     * MetaTrader installations on this machine (e.g. a separate live-trading terminal) are
+     * never touched, and terminals are never killed machine-wide by image name. The user is
+     * asked for confirmation before anything is terminated (CLI/headless runs confirm
+     * automatically). If no terminal path is configured, the terminal kill is skipped
+     * entirely and only the tester agents are cleaned up.
+     * </p>
      */
     private static void killLeftoverMt5Processes() {
         if (!System.getProperty("os.name", "").toLowerCase().contains("win")) {
             return;
         }
+
+        Path installDir = resolveConfiguredInstallDir();
+        if (installDir == null) {
+            log.warn("No MetaTrader terminal path configured — skipping leftover terminal cleanup, killing tester agents only.");
+            killLeftoverTesterAgents();
+            return;
+        }
+
+        List<Long> terminalPids = Mt5ProcessGuard.findTerminalPidsForInstall(installDir);
+        if (terminalPids.isEmpty()) {
+            log.info("No leftover MetaTrader processes found for install: {}", installDir);
+            return;
+        }
+
+        log.info("Found running MetaTrader process(es) for install {}: {}. Asking user for confirmation before killing...",
+            installDir, terminalPids);
+        if (!confirmKillTerminals(installDir, terminalPids)) {
+            log.info("User declined to kill MetaTrader process. Keeping running instance intact.");
+            return;
+        }
+
+        log.info("Killing MetaTrader process(es) of install {} ...", installDir);
+        destroyTerminalProcesses(terminalPids);
+
+        killLeftoverTesterAgents();
+
+        // Show notification to user for 3 seconds
+        showMt5KillNotification();
+    }
+
+    /** Returns the parent directory of the configured terminal executable, or null if unavailable. */
+    private static Path resolveConfiguredInstallDir() {
         try {
-            boolean hasTerminal64 = false;
-            boolean hasTerminal = false;
-
-            // Check if any terminal64.exe processes are running
-            Process check64 = new ProcessBuilder("tasklist", "/FI", "IMAGENAME eq terminal64.exe", "/NH")
-                .redirectErrorStream(true).start();
-            String output64 = new String(check64.getInputStream().readAllBytes()).trim();
-            check64.waitFor();
-            if (output64.contains("terminal64.exe")) {
-                hasTerminal64 = true;
+            String terminalPath = AppConfig.getInstance().getMt5TerminalPath();
+            if (terminalPath == null || terminalPath.isBlank()) {
+                return null;
             }
-
-            // Check if any terminal.exe processes are running
-            Process check = new ProcessBuilder("tasklist", "/FI", "IMAGENAME eq terminal.exe", "/NH")
-                .redirectErrorStream(true).start();
-            String output = new String(check.getInputStream().readAllBytes()).trim();
-            check.waitFor();
-            if (output.contains("terminal.exe")) {
-                hasTerminal = true;
-            }
-
-            if (hasTerminal64 || hasTerminal) {
-                log.info("Found running MetaTrader process(es). Asking user for confirmation before killing...");
-                boolean isCli = "true".equals(System.getProperty("backtester.cli")) || java.awt.GraphicsEnvironment.isHeadless();
-                boolean shouldKill = false;
-
-                if (isCli) {
-                    log.info("CLI Mode: MetaTrader process running, auto-terminating for batch processing...");
-                    shouldKill = true;
-                } else {
-                    try {
-                        FlatDarkLaf.setup();
-                    } catch (Exception ignored) {}
-
-                    int choice = JOptionPane.showConfirmDialog(
-                        null,
-                        "Es wurde eine laufende MetaTrader-Instanz auf Ihrem System gefunden (terminal64.exe / terminal.exe).\n\n" +
-                        "Möchten Sie den MetaTrader-Prozess beenden?\n\n" +
-                        "⚠️ ACHTUNG: Falls im MetaTrader aktuell eine Optimierung, ein Backtest oder Trading läuft,\n" +
-                        "gehen ungespeicherte Ergebnisse verloren!",
-                        "MetaTrader 5 — Prozess beenden?",
-                        JOptionPane.YES_NO_OPTION,
-                        JOptionPane.WARNING_MESSAGE
-                    );
-                    shouldKill = (choice == JOptionPane.YES_OPTION);
-                }
-
-                if (shouldKill) {
-                    log.info("User confirmed process termination. Killing MetaTrader process(es)...");
-                    if (hasTerminal64) {
-                        Process kill64 = new ProcessBuilder("taskkill", "/F", "/IM", "terminal64.exe")
-                            .redirectErrorStream(true).start();
-                        String killOutput64 = new String(kill64.getInputStream().readAllBytes()).trim();
-                        kill64.waitFor();
-                        log.info("MT5 cleanup: {}", killOutput64);
-
-                        // Also kill any leftover metatester64.exe processes
-                        try {
-                            Process killAgents = new ProcessBuilder("taskkill", "/F", "/IM", "metatester64.exe")
-                                .redirectErrorStream(true).start();
-                            killAgents.waitFor();
-                            log.info("Tester agents cleanup completed.");
-                        } catch (Exception ex) {
-                            log.warn("Failed to kill leftover tester agents: {}", ex.getMessage());
-                        }
-                    }
-                    if (hasTerminal) {
-                        Process kill = new ProcessBuilder("taskkill", "/F", "/IM", "terminal.exe")
-                            .redirectErrorStream(true).start();
-                        String killOutput = new String(kill.getInputStream().readAllBytes()).trim();
-                        kill.waitFor();
-                        log.info("MT4 cleanup: {}", killOutput);
-                    }
-
-                    // Show notification to user for 3 seconds
-                    showMt5KillNotification();
-                } else {
-                    log.info("User declined to kill MetaTrader process. Keeping running instance intact.");
-                }
-            } else {
-                log.info("No leftover MetaTrader processes found.");
-            }
+            return Path.of(terminalPath).toAbsolutePath().normalize().getParent();
         } catch (Exception e) {
-            log.warn("Failed to check/kill leftover MetaTrader processes: {}", e.getMessage());
+            log.warn("Could not determine the configured MetaTrader installation directory: {}", e.getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * Asks the user (on the EDT) whether the leftover MetaTrader processes of the configured
+     * installation may be killed. Defaults to "no" when the dialog cannot be shown.
+     */
+    private static boolean confirmKillTerminals(Path installDir, List<Long> terminalPids) {
+        boolean isCli = "true".equals(System.getProperty("backtester.cli")) || java.awt.GraphicsEnvironment.isHeadless();
+        if (isCli) {
+            log.info("CLI Mode: MetaTrader process running, auto-terminating for batch processing...");
+            return true;
+        }
+
+        AtomicInteger choice = new AtomicInteger(JOptionPane.CLOSED_OPTION);
+        try {
+            SwingUtilities.invokeAndWait(() -> {
+                try {
+                    FlatDarkLaf.setup();
+                } catch (Exception ignored) {}
+
+                choice.set(JOptionPane.showConfirmDialog(
+                    null,
+                    "Es wurde eine laufende MetaTrader-Instanz Ihrer Backtester-Installation gefunden:\n\n"
+                    + installDir + "\nAktive Prozess-IDs: " + terminalPids + "\n\n"
+                    + "Möchten Sie den MetaTrader-Prozess beenden?\n\n"
+                    + "⚠️ ACHTUNG: Falls im MetaTrader aktuell eine Optimierung, ein Backtest oder Trading läuft,\n"
+                    + "gehen ungespeicherte Ergebnisse verloren!",
+                    "MetaTrader 5 — Prozess beenden?",
+                    JOptionPane.YES_NO_OPTION,
+                    JOptionPane.WARNING_MESSAGE
+                ));
+            });
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return false; // default to "no"
+        } catch (InvocationTargetException e) {
+            log.warn("MetaTrader confirmation dialog failed: {}", e.getCause());
+            return false; // default to "no"
+        }
+        return choice.get() == JOptionPane.YES_OPTION;
+    }
+
+    /** Destroys the given MetaTrader processes via ProcessHandle and waits up to 10 seconds each for exit. */
+    private static void destroyTerminalProcesses(List<Long> pids) {
+        for (long pid : pids) {
+            ProcessHandle.of(pid).ifPresent(handle -> {
+                try {
+                    if (!handle.isAlive()) {
+                        return;
+                    }
+                    handle.destroyForcibly();
+                    handle.onExit().get(10, TimeUnit.SECONDS);
+                    log.info("MetaTrader PID {} beendet.", pid);
+                } catch (TimeoutException e) {
+                    log.warn("MetaTrader PID {} ist nach 10 Sekunden noch aktiv.", pid);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    log.warn("Warten auf MetaTrader PID {} unterbrochen.", pid);
+                } catch (ExecutionException e) {
+                    log.info("MetaTrader PID {} wurde bereits beendet.", pid);
+                }
+            });
+        }
+    }
+
+    /**
+     * Kills leftover tester agents ({@code metatester64.exe}) machine-wide by image name —
+     * backtest agents are never live-trading processes.
+     */
+    private static void killLeftoverTesterAgents() {
+        try {
+            Process killAgents = new ProcessBuilder("taskkill", "/F", "/IM", "metatester64.exe")
+                .redirectErrorStream(true).start();
+            String killOutput = new String(killAgents.getInputStream().readAllBytes()).trim();
+            killAgents.waitFor();
+            log.info("Tester agents cleanup: {}", killOutput);
+        } catch (Exception ex) {
+            log.warn("Failed to kill leftover tester agents: {}", ex.getMessage());
         }
     }
 
     /**
      * Shows a Swing dialog for 3 seconds informing the user that leftover MT5 processes were killed.
+     * The dialog is created and shown on the EDT; a Swing timer closes it after 3 seconds.
      */
     private static void showMt5KillNotification() {
         try {
-            // Use FlatLaf dark theme for the dialog
-            FlatDarkLaf.setup();
-        } catch (Exception ignored) {}
+            javax.swing.SwingUtilities.invokeAndWait(() -> {
+                try {
+                    // Use FlatLaf dark theme for the dialog
+                    FlatDarkLaf.setup();
+                } catch (Exception ignored) {}
 
-        JDialog dialog = new JDialog((Frame) null, "MetaTrader 5 — Cleanup", false);
-        dialog.setUndecorated(false);
-        dialog.setAlwaysOnTop(true);
-        dialog.setDefaultCloseOperation(JDialog.DISPOSE_ON_CLOSE);
+                JDialog dialog = new JDialog((Frame) null, "MetaTrader 5 — Cleanup", false);
+                dialog.setUndecorated(false);
+                dialog.setAlwaysOnTop(true);
+                dialog.setDefaultCloseOperation(JDialog.DISPOSE_ON_CLOSE);
 
-        JPanel panel = new JPanel();
-        panel.setLayout(new BoxLayout(panel, BoxLayout.Y_AXIS));
-        panel.setBorder(BorderFactory.createEmptyBorder(20, 25, 20, 25));
-        panel.setBackground(new Color(26, 30, 40));
+                JPanel panel = new JPanel();
+                panel.setLayout(new BoxLayout(panel, BoxLayout.Y_AXIS));
+                panel.setBorder(BorderFactory.createEmptyBorder(20, 25, 20, 25));
+                panel.setBackground(new Color(26, 30, 40));
 
-        JLabel titleLabel = new JLabel("⚠  Alte MetaTrader-Instanz beendet");
-        titleLabel.setFont(new Font("Segoe UI", Font.BOLD, 15));
-        titleLabel.setForeground(new Color(255, 179, 0));
-        titleLabel.setAlignmentX(Component.CENTER_ALIGNMENT);
+                JLabel titleLabel = new JLabel("⚠  Alte MetaTrader-Instanz beendet");
+                titleLabel.setFont(new Font("Segoe UI", Font.BOLD, 15));
+                titleLabel.setForeground(new Color(255, 179, 0));
+                titleLabel.setAlignmentX(Component.CENTER_ALIGNMENT);
 
-        JLabel infoLabel = new JLabel("<html><center>Ein MetaTrader 5 Prozess aus einer vorherigen<br>Session wurde gefunden und beendet.</center></html>");
-        infoLabel.setFont(new Font("Segoe UI", Font.PLAIN, 13));
-        infoLabel.setForeground(new Color(180, 186, 200));
-        infoLabel.setAlignmentX(Component.CENTER_ALIGNMENT);
+                JLabel infoLabel = new JLabel("<html><center>Ein MetaTrader 5 Prozess aus einer vorherigen<br>Session wurde gefunden und beendet.</center></html>");
+                infoLabel.setFont(new Font("Segoe UI", Font.PLAIN, 13));
+                infoLabel.setForeground(new Color(180, 186, 200));
+                infoLabel.setAlignmentX(Component.CENTER_ALIGNMENT);
 
-        JLabel countdownLabel = new JLabel("Backtester startet in 3 Sekunden...");
-        countdownLabel.setFont(new Font("Segoe UI", Font.ITALIC, 11));
-        countdownLabel.setForeground(new Color(126, 136, 154));
-        countdownLabel.setAlignmentX(Component.CENTER_ALIGNMENT);
+                JLabel countdownLabel = new JLabel("Backtester startet in 3 Sekunden...");
+                countdownLabel.setFont(new Font("Segoe UI", Font.ITALIC, 11));
+                countdownLabel.setForeground(new Color(126, 136, 154));
+                countdownLabel.setAlignmentX(Component.CENTER_ALIGNMENT);
 
-        panel.add(titleLabel);
-        panel.add(Box.createVerticalStrut(12));
-        panel.add(infoLabel);
-        panel.add(Box.createVerticalStrut(8));
-        panel.add(countdownLabel);
+                panel.add(titleLabel);
+                panel.add(Box.createVerticalStrut(12));
+                panel.add(infoLabel);
+                panel.add(Box.createVerticalStrut(8));
+                panel.add(countdownLabel);
 
-        dialog.setContentPane(panel);
-        dialog.pack();
-        dialog.setLocationRelativeTo(null);
-        dialog.setVisible(true);
+                dialog.setContentPane(panel);
+                dialog.pack();
+                dialog.setLocationRelativeTo(null);
+                dialog.setVisible(true);
 
-        // Auto-close after 3 seconds (blocking)
-        try {
-            Thread.sleep(3000);
-        } catch (InterruptedException ignored) {}
-        dialog.dispose();
+                // Auto-close after 3 seconds (fires on the EDT, no Thread.sleep needed)
+                javax.swing.Timer autoClose = new javax.swing.Timer(3000, e -> dialog.dispose());
+                autoClose.setRepeats(false);
+                autoClose.start();
+            });
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            log.warn("MT5 cleanup notification interrupted");
+        } catch (InvocationTargetException e) {
+            log.warn("Failed to show MT5 cleanup notification: {}", e.getCause());
+        }
     }
 }

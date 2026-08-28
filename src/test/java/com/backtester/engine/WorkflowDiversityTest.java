@@ -240,6 +240,25 @@ public class WorkflowDiversityTest {
     }
 
     @Test
+    public void legacyDiversitySelectionRejectsNonFiniteScores() {
+        WorkflowEngine engine = new WorkflowEngine(null);
+        engine.setForwardMode(0);
+        engine.setMinBtProfit(0.01);
+        engine.setMinBtTrades(1);
+        engine.setMinBtRecovery(0.0);
+        engine.setMaxBtDd(100.0);
+        engine.setMaxStrategiesToSelect(10);
+
+        Pass valid = createSelectionPass(1, 500, 100, 2.0);
+        Pass invalid = createSelectionPass(2, 600, 100, 2.0);
+        List<CombinedPass> selected = engine.filterDiversePasses(List.of(
+                new CombinedPass(invalid, null, Double.NaN, 1.0, ""),
+                new CombinedPass(valid, null, 80.0, 1.0, "")));
+
+        assertEquals(List.of(1), selected.stream().map(CombinedPass::getPassNumber).toList());
+    }
+
+    @Test
     public void customProjectClusteringUsesOnlySourceRowsWithoutHiddenPerformanceGates() {
         WorkflowEngine engine = new WorkflowEngine(null);
         engine.setMinBtProfit(10_000);

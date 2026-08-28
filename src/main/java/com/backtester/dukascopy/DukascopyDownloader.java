@@ -26,6 +26,11 @@ public class DukascopyDownloader {
     private static final String BASE_URL = "https://datafeed.dukascopy.com/datafeed";
     private static final int MAX_PARALLEL_DOWNLOADS = 10;
     private static final int MAX_RETRIES = 3;
+    private static final int DOWNLOAD_COLLECTION_TIMEOUT_SECONDS = 120;
+    /** Fallback price point for symbols missing from PRICE_POINT_MAP */
+    private static final int DEFAULT_PRICE_POINT = 100000;
+    /** Symbols already warned about as unmapped (avoid spamming the log per tick) */
+    private static final Set<String> WARNED_UNMAPPED_SYMBOLS = java.util.concurrent.ConcurrentHashMap.newKeySet();
 
     private final HttpClient httpClient;
     private final Path dataDirectory;
@@ -115,7 +120,15 @@ public class DukascopyDownloader {
      * Get the price point multiplier for a symbol.
      */
     public static int getPricePoint(String symbol) {
-        return PRICE_POINT_MAP.getOrDefault(symbol.toUpperCase(), 100000);
+        String normalized = symbol.toUpperCase(Locale.ROOT);
+        Integer point = PRICE_POINT_MAP.get(normalized);
+        if (point == null && WARNED_UNMAPPED_SYMBOLS.add(normalized)) {
+            // Make mis-mapped symbols (e.g. legacy "GER40") visible instead of silently
+            // producing wrong spread/digit conversions.
+            log.warn("No price point mapping for symbol '{}' - assuming default {} (spread/digits may be wrong)",
+                    normalized, DEFAULT_PRICE_POINT);
+        }
+        return point != null ? point : DEFAULT_PRICE_POINT;
     }
 
     /**
@@ -129,6 +142,7 @@ public class DukascopyDownloader {
      */
     public List<Path> download(String symbol, LocalDate from, LocalDate to) throws Exception {
         cancelled = false;
+        symbol = normalizeSymbol(symbol);
         List<DownloadTask> tasks = buildTaskList(symbol, from, to);
 
         if (tasks.isEmpty()) {
@@ -156,7 +170,7 @@ public class DukascopyDownloader {
             for (Future<Path> future : futures) {
                 if (cancelled) break;
                 try {
-                    Path result = future.get(60, TimeUnit.SECONDS);
+                    Path result = future.get(DOWNLOAD_COLLECTION_TIMEOUT_SECONDS, TimeUnit.SECONDS);
                     if (result != null) {
                         downloadedFiles.add(result);
                     }
@@ -164,6 +178,7 @@ public class DukascopyDownloader {
                     updateProgress((double) completed / total);
                 } catch (TimeoutException e) {
                     log.warn("Download timed out for a file");
+                    future.cancel(true);
                     completed++;
                 } catch (Exception e) {
                     log.warn("Download failed: {}", e.getMessage());
@@ -189,10 +204,10 @@ public class DukascopyDownloader {
 
         while (!current.isAfter(to)) {
             for (int hour = 0; hour < 24; hour++) {
-                // Skip weekends (Saturday and Sunday have no data)
+                // Dukascopy resumes publishing on Sunday evening (as early as 21:00 UTC).
                 if (current.getDayOfWeek() == DayOfWeek.SATURDAY ||
-                    current.getDayOfWeek() == DayOfWeek.SUNDAY) {
-                    break;
+                    (current.getDayOfWeek() == DayOfWeek.SUNDAY && hour < 21)) {
+                    continue;
                 }
 
                 Path localPath = getLocalFilePath(symbol, current, hour);
@@ -212,7 +227,7 @@ public class DukascopyDownloader {
      * Note: Months are 0-indexed in Dukascopy URLs!
      */
     private String buildUrl(String symbol, LocalDate date, int hour) {
-        String dukaSymbol = symbol.toUpperCase();
+        String dukaSymbol = normalizeSymbol(symbol);
         if (dukaSymbol.equals("XTIUSD")) {
             dukaSymbol = "LIGHTCMDUSD";
         }
@@ -229,8 +244,9 @@ public class DukascopyDownloader {
      * Get the local file path for caching.
      */
     private Path getLocalFilePath(String symbol, LocalDate date, int hour) {
+        String safeSymbol = normalizeSymbol(symbol);
         return dataDirectory
-                .resolve(symbol.toUpperCase())
+                .resolve(safeSymbol)
                 .resolve(String.valueOf(date.getYear()))
                 .resolve(String.format("%02d", date.getMonthValue()))
                 .resolve(String.format("%02d", date.getDayOfMonth()))
@@ -276,7 +292,9 @@ public class DukascopyDownloader {
                     return task.localPath;
                 } else {
                     log.warn("HTTP {} for {} (attempt {})", response.statusCode(), task.url, attempt);
-                    if (attempt == MAX_RETRIES) {
+                    if (attempt < MAX_RETRIES) {
+                        if (!backoffBeforeRetry(attempt)) return null;
+                    } else {
                         actualErrors.incrementAndGet();
                     }
                 }
@@ -285,10 +303,7 @@ public class DukascopyDownloader {
                 if (cancelled) return null;
                 log.warn("Download failed (attempt {}): {} - {}", attempt, task.url, e.getMessage());
                 if (attempt < MAX_RETRIES) {
-                    try { Thread.sleep(1000L * attempt); } catch (InterruptedException ignored) {
-                        Thread.currentThread().interrupt();
-                        return null;
-                    }
+                    if (!backoffBeforeRetry(attempt)) return null;
                 } else {
                     actualErrors.incrementAndGet();
                 }
@@ -301,6 +316,7 @@ public class DukascopyDownloader {
      * Check which dates have been downloaded for a symbol.
      */
     public Map<LocalDate, Boolean> getDownloadedDates(String symbol, LocalDate from, LocalDate to) {
+        symbol = normalizeSymbol(symbol);
         Map<LocalDate, Boolean> result = new LinkedHashMap<>();
         LocalDate current = from;
         while (!current.isAfter(to)) {
@@ -321,6 +337,7 @@ public class DukascopyDownloader {
      * Get all .bi5 files for a symbol and date range (already downloaded).
      */
     public List<Path> getLocalFiles(String symbol, LocalDate from, LocalDate to) {
+        symbol = normalizeSymbol(symbol);
         List<Path> files = new ArrayList<>();
         LocalDate current = from;
         while (!current.isAfter(to)) {
@@ -333,6 +350,23 @@ public class DukascopyDownloader {
             current = current.plusDays(1);
         }
         return files;
+    }
+
+    private boolean backoffBeforeRetry(int attempt) {
+        try {
+            Thread.sleep(1000L * attempt);
+            return true;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return false;
+        }
+    }
+
+    private static String normalizeSymbol(String symbol) {
+        if (symbol == null || !symbol.matches("[A-Za-z0-9]{1,12}")) {
+            throw new IllegalArgumentException("Invalid Dukascopy symbol: " + symbol);
+        }
+        return symbol.toUpperCase(Locale.ROOT);
     }
 
     private void logMsg(String msg) {

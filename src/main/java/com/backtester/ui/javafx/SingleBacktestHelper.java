@@ -37,6 +37,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
@@ -220,13 +221,19 @@ public class SingleBacktestHelper {
 
         // Never rebuild from the current EA config: it lacks the parameters MT5
         // omitted from the optimization report and is rewritten by MT5 itself.
-        PassPresetResolver.Resolution resolution = PassPresetResolver.resolve(pass, expert);
+        CombinedPass combined = new CombinedPass(pass, null, 0.0, 0.0, "");
+        PassPresetResolver.Resolution resolution = PassPresetResolver.resolveForExecution(combined, expert);
         List<EaParameter> baseParams = resolution.parameters();
         if (baseParams == null || baseParams.isEmpty()) {
             Alert alert = new Alert(Alert.AlertType.ERROR, "Konnte Parameter für EA '" + expert + "' nicht laden.", ButtonType.OK);
             if (parentWindow != null) alert.initOwner(parentWindow);
             alert.showAndWait();
             return;
+        }
+        if (resolution.warning() != null) {
+            Alert alert = new Alert(Alert.AlertType.WARNING, resolution.warning(), ButtonType.OK);
+            if (parentWindow != null) alert.initOwner(parentWindow);
+            alert.showAndWait();
         }
 
         int passNum = pass.getPassNumber();
@@ -236,7 +243,10 @@ public class SingleBacktestHelper {
         try {
             Files.createDirectories(presetsDir);
             Path destFile = presetsDir.resolve(presetFileName);
+            Files.deleteIfExists(destFile);
             eaParamManager.writeSetFile(destFile, baseParams, expert);
+            com.backtester.workflow.MasterStrategyLineageService
+                    .verifyPresetWritten(destFile, baseParams);
             log.info("[SETFILE-LOG] Single Backtest Pass #{}: wrote {} parameters to {}", passNum, baseParams.size(), destFile);
             for (EaParameter p : baseParams) {
                 log.debug("[SETFILE-PARAM] SingleBacktest Pass #{} | {} = {}", passNum, p.getName(), p.getValue());
@@ -299,6 +309,7 @@ public class SingleBacktestHelper {
     private static String describeParameterSource(PassPresetResolver.Resolution resolution) {
         return switch (resolution.fidelity()) {
             case EXACT_SNAPSHOT -> "Original-Preset des Laufs (exakt)";
+            case EMBEDDED_PASS -> "strategiegebundenes Setfile (vollständig)";
             case OPTIMIZATION_BASE -> "Optimierungs-Preset + Report-Werte";
             case CURRENT_CONFIG -> "aktuelle EA-Konfiguration (unvollständig)";
         };
@@ -425,7 +436,7 @@ public class SingleBacktestHelper {
         String eaName = EaParameterManager.extractEaBaseName(expert);
         EaParameterManager eaParamManager = new EaParameterManager();
         com.backtester.report.PassPresetResolver.Resolution resolution =
-                com.backtester.report.PassPresetResolver.resolve(cp, expert);
+                com.backtester.report.PassPresetResolver.resolveForExecution(cp, expert);
         List<EaParameter> params = resolution.parameters();
         if (params != null && !params.isEmpty()) {
             Path mt5Dir = AppConfig.getInstance().getMt5InstallDir();
@@ -434,7 +445,15 @@ public class SingleBacktestHelper {
                 // A dedicated name: Backtester_<EA>.set is the optimizer's preset and
                 // overwriting it would destroy the record of the run being verified.
                 String presetFileName = "Backtester_" + eaName + "_Verify_Pass" + cp.getPassNumber() + ".set";
-                eaParamManager.writeSetFile(presetsDir.resolve(presetFileName), params, eaName);
+                Path destFile = presetsDir.resolve(presetFileName);
+                try {
+                    Files.deleteIfExists(destFile);
+                    eaParamManager.writeSetFile(destFile, params, eaName);
+                    com.backtester.workflow.MasterStrategyLineageService
+                            .verifyPresetWritten(destFile, params);
+                } catch (IOException ex) {
+                    throw new UncheckedIOException(ex);
+                }
                 btConfig.setExpertParameters(presetFileName);
             }
         }

@@ -24,7 +24,7 @@ public class OptimizationDateRangeResolverTest {
 
         assertEquals("2025-07-28", bt.getFromDate());
         assertEquals("2026-01-26", bt.getToDate());
-        assertEquals("2026-01-26", fw.getFromDate());
+        assertEquals("2026-01-27", fw.getFromDate());
         assertEquals("2026-07-28", fw.getToDate());
     }
 
@@ -40,7 +40,7 @@ public class OptimizationDateRangeResolverTest {
                 LocalDate.of(2024, 1, 1), LocalDate.of(2025, 1, 1),
                 4, LocalDate.of(2024, 10, 1));
 
-        assertEquals("2024-10-01", bt.getToDate());
+        assertEquals("2024-09-30", bt.getToDate());
         assertEquals("2024-10-01", fw.getFromDate());
     }
 

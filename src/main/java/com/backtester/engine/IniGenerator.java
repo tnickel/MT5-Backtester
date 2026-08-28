@@ -214,12 +214,18 @@ public class IniGenerator {
         if (config == null) throw new IllegalArgumentException("BacktestConfig must not be null");
         validateCommon(config.getExpert(), config.getSymbol(), config.getPeriod(),
                 config.getFromDate(), config.getToDate(), iniPath, reportPath);
+        validateIniValue("ExpertParameters", config.getExpertParameters());
+        validateIniValue("Currency", config.getCurrency());
+        validateIniValue("Leverage", config.getLeverage());
     }
 
     private static void validate(OptimizationConfig config, Path iniPath, String reportPath) {
         if (config == null) throw new IllegalArgumentException("OptimizationConfig must not be null");
         validateCommon(config.getExpert(), config.getSymbol(), config.getPeriod(),
                 config.getFromDate(), config.getToDate(), iniPath, reportPath);
+        validateIniValue("ExpertParameters", config.getExpertParameters());
+        validateIniValue("Currency", config.getCurrency());
+        validateIniValue("Leverage", config.getLeverage());
     }
 
     private static void validateCommon(String expert, String symbol, String period,
@@ -232,8 +238,19 @@ public class IniGenerator {
         if (expert == null || expert.isBlank()) throw new IllegalArgumentException("Expert must not be blank");
         if (symbol == null || symbol.isBlank()) throw new IllegalArgumentException("Symbol must not be blank");
         if (period == null || period.isBlank()) throw new IllegalArgumentException("Period must not be blank");
+        validateIniValue("Expert", expert);
+        validateIniValue("Symbol", symbol);
+        validateIniValue("Period", period);
+        validateIniValue("Report path", reportPath);
         if (fromDate == null || toDate == null || !fromDate.isBefore(toDate)) {
             throw new IllegalArgumentException("Invalid test date range: " + fromDate + " to " + toDate);
+        }
+    }
+
+    private static void validateIniValue(String name, String value) {
+        if (value != null && (value.indexOf('\r') >= 0 || value.indexOf('\n') >= 0
+                || value.indexOf('\0') >= 0)) {
+            throw new IllegalArgumentException(name + " must not contain line breaks or NUL characters");
         }
     }
 }

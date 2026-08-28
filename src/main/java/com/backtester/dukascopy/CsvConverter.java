@@ -24,12 +24,22 @@ public class CsvConverter {
     private static final DateTimeFormatter TIME_FORMAT = DateTimeFormatter.ofPattern("HH:mm");
 
     private int timezoneOffsetHours = 0; // UTC offset for broker timezone
+    private ZoneId brokerZone = null;    // IANA broker zone (DST-aware); when set it takes precedence
 
     public CsvConverter() {
     }
 
     public CsvConverter(int timezoneOffsetHours) {
         this.timezoneOffsetHours = timezoneOffsetHours;
+    }
+
+    /**
+     * DST-aware constructor. Tick timestamps are converted using the zone rules of
+     * {@code brokerZone} (e.g. "Europe/Helsinki" for EET/EEST brokers) instead of a
+     * fixed offset, so half-year DST shifts are handled correctly.
+     */
+    public CsvConverter(ZoneId brokerZone) {
+        this.brokerZone = brokerZone;
     }
 
     /**
@@ -65,6 +75,11 @@ public class CsvConverter {
      * @return list of M1 bars
      */
     public List<M1Bar> aggregateToM1(List<Bi5Decoder.Tick> ticks) {
+        return aggregateToM1(ticks, "EURUSD");
+    }
+
+    /** Aggregate tick data using the instrument's point size for spread conversion. */
+    public List<M1Bar> aggregateToM1(List<Bi5Decoder.Tick> ticks, String symbol) {
         if (ticks.isEmpty()) return Collections.emptyList();
 
         // Sort ticks by time
@@ -74,10 +89,11 @@ public class CsvConverter {
         LocalDateTime currentMinute = null;
         double open = 0, high = Double.MIN_VALUE, low = Double.MAX_VALUE, close = 0;
         int tickCount = 0;
+        int spread = 0;
 
         for (Bi5Decoder.Tick tick : ticks) {
-            // Apply timezone offset
-            LocalDateTime adjusted = tick.timestamp.plusHours(timezoneOffsetHours);
+            // Apply timezone offset (DST-aware when a broker zone is configured)
+            LocalDateTime adjusted = toBrokerTime(tick.timestamp);
             LocalDateTime minute = adjusted.withSecond(0).withNano(0);
 
             // Use bid price for candle formation (industry standard)
@@ -91,15 +107,16 @@ public class CsvConverter {
                 low = price;
                 close = price;
                 tickCount = 1;
+                spread = calculateSpread(tick, symbol);
             } else if (minute.equals(currentMinute)) {
                 // Same minute — update bar
                 high = Math.max(high, price);
                 low = Math.min(low, price);
                 close = price;
                 tickCount++;
+                spread = calculateSpread(tick, symbol);
             } else {
                 // New minute — save previous bar and start new one
-                int spread = calculateSpread(tick);
                 bars.add(new M1Bar(currentMinute, open, high, low, close, tickCount, 0, spread));
 
                 currentMinute = minute;
@@ -108,12 +125,13 @@ public class CsvConverter {
                 low = price;
                 close = price;
                 tickCount = 1;
+                spread = calculateSpread(tick, symbol);
             }
         }
 
         // Don't forget the last bar
         if (currentMinute != null && tickCount > 0) {
-            bars.add(new M1Bar(currentMinute, open, high, low, close, tickCount, 0, 0));
+            bars.add(new M1Bar(currentMinute, open, high, low, close, tickCount, 0, spread));
         }
 
         log.info("Aggregated {} ticks into {} M1 bars", ticks.size(), bars.size());
@@ -175,36 +193,36 @@ public class CsvConverter {
             return null;
         }
 
-        List<M1Bar> bars = aggregateToM1(ticks);
+        List<M1Bar> bars = aggregateToM1(ticks, symbol);
         int digits = getDigits(symbol);
         writeCsv(bars, outputCsv, digits);
 
         return outputCsv;
     }
 
-    private static final java.util.Set<String> INDEX_SYMBOLS = java.util.Set.of(
-        "AUS200", "CHINA50", "DE40", "GER40", "EU50", "FRANCE40", "HK50", "JP225", "SPAIN35", "UK100", "US30", "US500", "USTEC"
-    );
-
     /**
      * Get the number of decimal digits for a symbol.
      */
     public static int getDigits(String symbol) {
-        String s = symbol.toUpperCase();
-        if (INDEX_SYMBOLS.contains(s) || s.matches(".*(35|40|50|100|200|30|500).*")) {
-            return 2;
-        }
-        if (s.contains("JPY")) return 3;
-        if (s.contains("XTI") || s.contains("XBR")) return 3;
-        if (s.startsWith("XAU")) return 2;
-        if (s.startsWith("XAG")) return 5;
-        return 5; // Default for most forex pairs
+        int point = DukascopyDownloader.getPricePoint(symbol);
+        return Integer.toString(point).length() - 1;
     }
 
-    private int calculateSpread(Bi5Decoder.Tick tick) {
+    /**
+     * Convert a UTC tick timestamp into broker time.
+     * Tick timestamps are UTC: Dukascopy's datafeed files are keyed by UTC hour (see Bi5Decoder).
+     * When a broker zone is configured, zone rules are used so DST transitions (EET/EEST etc.)
+     * are honored; otherwise the legacy fixed-offset behavior applies.
+     */
+    private LocalDateTime toBrokerTime(LocalDateTime utcTimestamp) {
+        if (brokerZone != null) {
+            return utcTimestamp.atZone(ZoneOffset.UTC).withZoneSameInstant(brokerZone).toLocalDateTime();
+        }
+        return utcTimestamp.plusHours(timezoneOffsetHours);
+    }
+
+    private int calculateSpread(Bi5Decoder.Tick tick, String symbol) {
         double spreadRaw = Math.abs(tick.ask - tick.bid);
-        // Convert to points
-        return (int) Math.round(spreadRaw * DukascopyDownloader.getPricePoint(
-                "EURUSD")); // Approximate
+        return (int) Math.round(spreadRaw * DukascopyDownloader.getPricePoint(symbol));
     }
 }

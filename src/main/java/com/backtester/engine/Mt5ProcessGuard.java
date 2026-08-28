@@ -2,9 +2,16 @@ package com.backtester.engine;
 
 import javax.swing.*;
 import java.awt.*;
+import java.lang.reflect.InvocationTargetException;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Tracks MetaTrader processes (MT4/MT5) started by this application and provides a pre-flight check
@@ -15,21 +22,26 @@ import java.util.concurrent.ConcurrentHashMap;
  */
 public class Mt5ProcessGuard {
 
-    // Thread-safe set of PIDs we have launched
-    private static final Set<Long> ourPids = ConcurrentHashMap.newKeySet();
+    // Keep the original Process object, not only its PID. A numeric PID may be
+    // reused after MetaTrader exits; the Process object keeps the original OS identity.
+    private static final ConcurrentMap<Long, Process> ourProcesses = new ConcurrentHashMap<>();
 
     /**
      * Register a process we just started so we can track it.
      */
     public static void registerProcess(Process process) {
-        ourPids.add(process.pid());
+        if (process != null) {
+            ourProcesses.put(process.pid(), process);
+        }
     }
 
     /**
      * Unregister a process (e.g. after it has exited cleanly).
      */
     public static void unregisterProcess(Process process) {
-        ourPids.remove(process.pid());
+        if (process != null) {
+            ourProcesses.remove(process.pid(), process);
+        }
     }
 
     /**
@@ -40,15 +52,17 @@ public class Mt5ProcessGuard {
      */
     public static Set<Long> getAliveOurProcesses() {
         Set<Long> alive = ConcurrentHashMap.newKeySet();
-        for (Long pid : ourPids) {
-            ProcessHandle.of(pid).ifPresent(ph -> {
-                if (ph.isAlive()) {
-                    alive.add(pid);
-                }
-            });
+        for (var entry : ourProcesses.entrySet()) {
+            Long pid = entry.getKey();
+            Process process = entry.getValue();
+            if (process.isAlive()) {
+                alive.add(pid);
+            } else {
+                // Conditional removal cannot delete a newly registered process that
+                // happened to receive the same PID while this scan was running.
+                ourProcesses.remove(pid, process);
+            }
         }
-        // Clean up dead PIDs from our tracking set
-        ourPids.retainAll(alive);
         return alive;
     }
 
@@ -74,20 +88,19 @@ public class Mt5ProcessGuard {
         }
 
         if (autoKill) {
+            boolean allStopped = true;
             for (Long pid : alive) {
-                ProcessHandle.of(pid).ifPresent(ph -> {
-                    if (logCallback != null) {
-                        logCallback.accept("Beende alten MetaTrader-Prozess (PID " + pid + ")...");
-                    }
-                    ph.destroyForcibly();
-                });
+                if (logCallback != null) {
+                    logCallback.accept("Beende alten MetaTrader-Prozess (PID " + pid + ")...");
+                }
+                allStopped &= terminateTrackedProcess(pid, 10, TimeUnit.SECONDS);
             }
-            ourPids.removeAll(alive);
-            try { Thread.sleep(500); } catch (InterruptedException ignored) {}
             if (logCallback != null) {
-                logCallback.accept("Alte MetaTrader-Prozesse wurden automatisch beendet.");
+                logCallback.accept(allStopped
+                        ? "Alte MetaTrader-Prozesse wurden automatisch beendet."
+                        : "Mindestens ein alter MetaTrader-Prozess konnte nicht sicher beendet werden.");
             }
-            return true;
+            return allStopped;
         }
 
         boolean isCli = "true".equals(System.getProperty("backtester.cli")) || java.awt.GraphicsEnvironment.isHeadless();
@@ -103,32 +116,33 @@ public class Mt5ProcessGuard {
                 + "Aktive Prozess-IDs: " + alive + "\n\n"
                 + "Soll der alte Prozess beendet werden, bevor ein neuer gestartet wird?";
 
-        int choice = JOptionPane.showConfirmDialog(
-                parentComponent,
-                message,
-                "MetaTrader läuft noch",
-                JOptionPane.OK_CANCEL_OPTION,
-                JOptionPane.WARNING_MESSAGE
-        );
+        int choice;
+        try {
+            choice = showConfirmDialogOnEdt(parentComponent, message, "MetaTrader läuft noch",
+                    JOptionPane.OK_CANCEL_OPTION, JOptionPane.WARNING_MESSAGE);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return false;
+        } catch (InvocationTargetException e) {
+            if (logCallback != null) logCallback.accept("MetaTrader-Rückfrage fehlgeschlagen: " + e.getCause());
+            return false;
+        }
 
         if (choice == JOptionPane.OK_OPTION) {
+            boolean allStopped = true;
             for (Long pid : alive) {
-                ProcessHandle.of(pid).ifPresent(ph -> {
-                    if (logCallback != null) {
-                        logCallback.accept("Beende alten MetaTrader-Prozess (PID " + pid + ")...");
-                    }
-                    ph.destroyForcibly();
-                });
+                if (logCallback != null) {
+                    logCallback.accept("Beende alten MetaTrader-Prozess (PID " + pid + ")...");
+                }
+                allStopped &= terminateTrackedProcess(pid, 10, TimeUnit.SECONDS);
             }
-            ourPids.removeAll(alive);
-
-            // Brief wait to let OS release the process
-            try { Thread.sleep(500); } catch (InterruptedException ignored) {}
 
             if (logCallback != null) {
-                logCallback.accept("Alte MetaTrader-Prozesse wurden beendet.");
+                logCallback.accept(allStopped
+                        ? "Alte MetaTrader-Prozesse wurden beendet."
+                        : "Mindestens ein alter MetaTrader-Prozess konnte nicht sicher beendet werden.");
             }
-            return true;
+            return allStopped;
         } else {
             if (logCallback != null) {
                 logCallback.accept("Abbruch: Benutzer hat das Beenden des alten MetaTrader-Prozesses abgelehnt.");
@@ -138,10 +152,99 @@ public class Mt5ProcessGuard {
     }
 
     /**
+     * Lists live {@code terminal64.exe}/{@code terminal.exe} processes whose
+     * executable lives under {@code mtInstallDir}. Read-only — never kills.
+     */
+    public static java.util.List<Long> findTerminalPidsForInstall(Path mtInstallDir) {
+        java.util.ArrayList<Long> pids = new java.util.ArrayList<>();
+        if (mtInstallDir == null) {
+            return pids;
+        }
+        Path normalizedInstall;
+        try {
+            normalizedInstall = mtInstallDir.toAbsolutePath().normalize();
+        } catch (Exception ex) {
+            return pids;
+        }
+        for (ProcessHandle ph : ProcessHandle.allProcesses().toList()) {
+            try {
+                if (!isTerminalForInstall(ph, normalizedInstall)) {
+                    continue;
+                }
+                if (ph.isAlive()) {
+                    pids.add(ph.pid());
+                }
+            } catch (Exception ignored) {
+                // Process may have exited while iterating.
+            }
+        }
+        return pids;
+    }
+
+    /**
+     * Asks before killing terminals for this install. Never kills without
+     * confirmation unless {@code autoKill} is true (CLI / explicit opt-in).
+     *
+     * @return number killed, or {@code -1} if the user declined (caller must abort)
+     */
+    public static int confirmKillAllTerminalsForInstall(Path mtInstallDir,
+                                                        Component parentComponent,
+                                                        java.util.function.Consumer<String> logCallback,
+                                                        boolean autoKill) {
+        java.util.List<Long> alive = findTerminalPidsForInstall(mtInstallDir);
+        if (alive.isEmpty()) {
+            return 0;
+        }
+
+        if (autoKill) {
+            int killed = killAllTerminalsForInstall(mtInstallDir, logCallback);
+            return findTerminalPidsForInstall(mtInstallDir).isEmpty() ? killed : -1;
+        }
+
+        boolean isCli = "true".equals(System.getProperty("backtester.cli"))
+                || GraphicsEnvironment.isHeadless();
+        if (isCli) {
+            if (logCallback != null) {
+                logCallback.accept("CLI Mode: MetaTrader an dieser Installation läuft (PIDs: "
+                        + alive + ") — ohne autoKill wird nichts beendet. Abbruch.");
+            }
+            return -1;
+        }
+
+        String message = "MetaTrader läuft noch in dieser Installation.\n\n"
+                + "Pfad: " + mtInstallDir + "\n"
+                + "Aktive Prozess-IDs: " + alive + "\n\n"
+                + "Soll MetaTrader jetzt beendet werden?\n\n"
+                + "⚠️ ACHTUNG: Eine laufende Optimierung, ein Backtest oder Trading\n"
+                + "wird abgebrochen — ungespeicherte Ergebnisse können verloren gehen!\n\n"
+                + "Wenn gerade eine lange Optimierung läuft: NEIN wählen.";
+
+        int choice;
+        try {
+            choice = showConfirmDialogOnEdt(parentComponent, message, "MetaTrader beenden?",
+                    JOptionPane.YES_NO_OPTION, JOptionPane.WARNING_MESSAGE);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return -1;
+        } catch (InvocationTargetException e) {
+            if (logCallback != null) logCallback.accept("MetaTrader-Rückfrage fehlgeschlagen: " + e.getCause());
+            return -1;
+        }
+
+        if (choice != JOptionPane.YES_OPTION) {
+            if (logCallback != null) {
+                logCallback.accept("Abbruch: Benutzer hat das Beenden von MetaTrader abgelehnt.");
+            }
+            return -1;
+        }
+        int killed = killAllTerminalsForInstall(mtInstallDir, logCallback);
+        return findTerminalPidsForInstall(mtInstallDir).isEmpty() ? killed : -1;
+    }
+
+    /**
      * Kills every {@code terminal64.exe}/{@code terminal.exe} whose path belongs to
-     * {@code mtInstallDir}. Needed because a leftover terminal (not started by this
-     * JVM) makes the next {@code /config:…} launch exit immediately with
-     * "delegated execution" and skip Forward reports.
+     * {@code mtInstallDir}. Prefer {@link #confirmKillAllTerminalsForInstall} so the
+     * user can refuse when a valuable optimization is running.
      *
      * @return number of processes destroyed
      */
@@ -156,43 +259,116 @@ public class Mt5ProcessGuard {
         } catch (Exception ex) {
             return 0;
         }
-        int killed = 0;
+        List<ProcessHandle> targets = new ArrayList<>();
         for (ProcessHandle ph : ProcessHandle.allProcesses().toList()) {
             try {
-                var info = ph.info();
-                String cmd = info.command().orElse("");
-                if (cmd.isBlank()) continue;
-                Path exe;
-                try {
-                    exe = Path.of(cmd).toAbsolutePath().normalize();
-                } catch (Exception ex) {
-                    continue;
-                }
-                String fileName = exe.getFileName() != null
-                        ? exe.getFileName().toString().toLowerCase() : "";
-                if (!fileName.equals("terminal64.exe") && !fileName.equals("terminal.exe")) {
-                    continue;
-                }
-                Path parent = exe.getParent();
-                if (parent == null || !parent.equals(normalizedInstall)) {
+                if (!isTerminalForInstall(ph, normalizedInstall)) {
                     continue;
                 }
                 if (!ph.isAlive()) continue;
                 if (logCallback != null) {
                     logCallback.accept("Beende MetaTrader an Installationspfad (PID " + ph.pid() + ")...");
                 }
-                ph.destroyForcibly();
-                ourPids.remove(ph.pid());
-                killed++;
+                targets.add(ph);
             } catch (Exception ignored) {
                 // Process may have exited while iterating.
             }
         }
-        if (killed > 0) {
-            try { Thread.sleep(500); } catch (InterruptedException ignored) {
-                Thread.currentThread().interrupt();
+
+        for (ProcessHandle target : targets) {
+            try {
+                if (target.isAlive()) target.destroyForcibly();
+            } catch (RuntimeException ex) {
+                if (logCallback != null) {
+                    logCallback.accept("MetaTrader PID " + target.pid() + " konnte nicht beendet werden: " + ex.getMessage());
+                }
+            }
+        }
+
+        int killed = 0;
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+        for (ProcessHandle target : targets) {
+            long remaining = deadline - System.nanoTime();
+            boolean stopped = !target.isAlive();
+            if (!stopped && remaining > 0L) {
+                stopped = awaitExit(target, remaining, TimeUnit.NANOSECONDS);
+            }
+            if (stopped) {
+                ourProcesses.computeIfPresent(target.pid(), (pid, process) -> process.isAlive() ? process : null);
+                killed++;
+            } else if (logCallback != null) {
+                logCallback.accept("MetaTrader PID " + target.pid() + " ist nach 10 Sekunden noch aktiv.");
             }
         }
         return killed;
+    }
+
+    private static boolean terminateTrackedProcess(long pid, long timeout, TimeUnit unit) {
+        Process process = ourProcesses.get(pid);
+        if (process == null) return true;
+        if (!process.isAlive()) {
+            ourProcesses.remove(pid, process);
+            return true;
+        }
+        try {
+            process.destroyForcibly();
+        } catch (RuntimeException e) {
+            return false;
+        }
+        try {
+            boolean stopped = process.waitFor(timeout, unit);
+            if (stopped) ourProcesses.remove(pid, process);
+            return stopped;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return false;
+        }
+    }
+
+    static boolean awaitExit(ProcessHandle process, long timeout, TimeUnit unit) {
+        if (process == null || !process.isAlive()) return true;
+        try {
+            process.onExit().get(timeout, unit);
+            return !process.isAlive();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return false;
+        } catch (TimeoutException | java.util.concurrent.ExecutionException e) {
+            return !process.isAlive();
+        }
+    }
+
+    private static int showConfirmDialogOnEdt(Component parentComponent,
+                                              String message,
+                                              String title,
+                                              int optionType,
+                                              int messageType)
+            throws InterruptedException, InvocationTargetException {
+        if (SwingUtilities.isEventDispatchThread()) {
+            return JOptionPane.showConfirmDialog(parentComponent, message, title, optionType, messageType);
+        }
+        AtomicInteger choice = new AtomicInteger(JOptionPane.CLOSED_OPTION);
+        SwingUtilities.invokeAndWait(() -> choice.set(JOptionPane.showConfirmDialog(
+                parentComponent, message, title, optionType, messageType)));
+        return choice.get();
+    }
+
+    private static boolean isTerminalForInstall(ProcessHandle ph, Path normalizedInstall) {
+        var info = ph.info();
+        String cmd = info.command().orElse("");
+        if (cmd.isBlank()) return false;
+        Path exe;
+        try {
+            exe = Path.of(cmd).toAbsolutePath().normalize();
+        } catch (Exception ex) {
+            return false;
+        }
+        String fileName = exe.getFileName() != null
+                ? exe.getFileName().toString().toLowerCase(java.util.Locale.ROOT) : "";
+        if (!fileName.equals("terminal64.exe") && !fileName.equals("terminal.exe")) {
+            return false;
+        }
+        Path parent = exe.getParent();
+        return parent != null && parent.equals(normalizedInstall);
     }
 }

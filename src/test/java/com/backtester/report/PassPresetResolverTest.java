@@ -209,6 +209,53 @@ public class PassPresetResolverTest {
     }
 
     @Test
+    public void embeddedPassSetfileSurvivesMissingReportDirectory() {
+        List<EaParameter> base = List.of(
+                param("Inp_Grid_Step", "500", "1", "1", "6000", true),
+                param("Inp_Spread_Max", "40", "4", "1", "400", false),
+                stringParam("Inp_VIX_Symbol", "VIX"));
+        Pass pass = new Pass();
+        pass.setPassNumber(1020);
+        pass.setDrawdownPercent(2.12);
+        pass.setReportDirectory(tempFolder.getRoot().toPath().resolve("deleted-report").toString());
+        pass.setParameter("Inp_Grid_Step", "350");
+
+        PassPresetResolver.embedConcreteSetfile(pass, base, true);
+        PassPresetResolver.Resolution resolution =
+                PassPresetResolver.resolve(pass, "__no_such_expert__");
+
+        assertTrue(pass.hasParameterSetSnapshot());
+        assertEquals(PassPresetResolver.Fidelity.EMBEDDED_PASS, resolution.fidelity());
+        assertTrue(resolution.isExact());
+        assertNull(resolution.warning());
+        assertEquals("350", valueOf(resolution.parameters(), "Inp_Grid_Step"));
+        assertEquals("40", valueOf(resolution.parameters(), "Inp_Spread_Max"));
+        assertEquals("VIX", valueOf(resolution.parameters(), "Inp_VIX_Symbol"));
+        assertTrue(resolution.parameters().stream().noneMatch(EaParameter::isOptimizeEnabled));
+    }
+
+    @Test
+    public void strategiesFromSameOptimizationKeepDifferentEmbeddedSetfiles() {
+        List<EaParameter> base = List.of(
+                param("Inp_Grid_Step", "500", "1", "1", "6000", true),
+                param("Inp_Spread_Max", "40", "4", "1", "400", false));
+        Pass first = new Pass();
+        first.setPassNumber(1);
+        first.setParameter("Inp_Grid_Step", "350");
+        Pass second = new Pass();
+        second.setPassNumber(2);
+        second.setParameter("Inp_Grid_Step", "700");
+
+        PassPresetResolver.embedConcreteSetfile(first, base, true);
+        PassPresetResolver.embedConcreteSetfile(second, base, true);
+
+        assertEquals("350", valueOf(PassPresetResolver.resolve(first, "").parameters(), "Inp_Grid_Step"));
+        assertEquals("700", valueOf(PassPresetResolver.resolve(second, "").parameters(), "Inp_Grid_Step"));
+        assertEquals("40", valueOf(PassPresetResolver.resolve(first, "").parameters(), "Inp_Spread_Max"));
+        assertEquals("40", valueOf(PassPresetResolver.resolve(second, "").parameters(), "Inp_Spread_Max"));
+    }
+
+    @Test
     public void prefersExactSingleRunPresetOverOptimizationPreset() throws IOException {
         Path optDir = tempFolder.newFolder("prefers-opt").toPath();
         Files.writeString(optDir.resolve("tester.ini"),
@@ -250,8 +297,118 @@ public class PassPresetResolverTest {
         assertEquals("350", valueOf(resolution.parameters(), "Inp_Grid_Step"));
     }
 
+    @Test
+    public void resolveForExecutionUsesEmbeddedSetfileNotSharedBase() {
+        List<EaParameter> baseA = List.of(
+                param("Inp_Grid_Step", "500", "1", "1", "6000", true),
+                param("Inp_Spread_Max", "10", "4", "1", "400", false),
+                stringParam("Inp_Magic_Number", "0"),
+                stringParam("Inp_Order_Comment", "x"));
+        List<EaParameter> baseB = List.of(
+                param("Inp_Grid_Step", "500", "1", "1", "6000", true),
+                param("Inp_Spread_Max", "99", "4", "1", "400", false),
+                stringParam("Inp_Magic_Number", "0"),
+                stringParam("Inp_Order_Comment", "x"));
+
+        Pass passA = new Pass();
+        passA.setPassNumber(11);
+        passA.setDrawdownPercent(3.0);
+        passA.setParameter("Inp_Grid_Step", "350");
+        PassPresetResolver.embedConcreteSetfile(passA, baseA, true);
+
+        Pass passB = new Pass();
+        passB.setPassNumber(22);
+        passB.setDrawdownPercent(7.0);
+        passB.setParameter("Inp_Grid_Step", "700");
+        PassPresetResolver.embedConcreteSetfile(passB, baseB, true);
+
+        CombinedPass combinedA = new CombinedPass(passA, null, 0.0, 0.0, "");
+        CombinedPass combinedB = new CombinedPass(passB, null, 0.0, 0.0, "");
+
+        PassPresetResolver.Resolution execA =
+                PassPresetResolver.resolveForExecution(combinedA, "__no_such_expert__");
+        PassPresetResolver.Resolution execB =
+                PassPresetResolver.resolveForExecution(combinedB, "__no_such_expert__");
+
+        assertEquals(PassPresetResolver.Fidelity.EMBEDDED_PASS, execA.fidelity());
+        assertEquals(PassPresetResolver.Fidelity.EMBEDDED_PASS, execB.fidelity());
+        assertEquals("350", valueOf(execA.parameters(), "Inp_Grid_Step"));
+        assertEquals("700", valueOf(execB.parameters(), "Inp_Grid_Step"));
+        // Unreported fix values must stay strategy-specific (not contaminated by the other base).
+        assertEquals("10", valueOf(execA.parameters(), "Inp_Spread_Max"));
+        assertEquals("99", valueOf(execB.parameters(), "Inp_Spread_Max"));
+        assertEquals("11", valueOf(execA.parameters(), "Inp_Magic_Number"));
+        assertEquals("22", valueOf(execB.parameters(), "Inp_Magic_Number"));
+        assertEquals("3proz_Pass11", valueOf(execA.parameters(), "Inp_Order_Comment"));
+        assertEquals("7proz_Pass22", valueOf(execB.parameters(), "Inp_Order_Comment"));
+    }
+
+    @Test
+    public void resolveForExecutionWithFallbackUsesEngineBaseOnlyWhenCurrentConfig() {
+        List<EaParameter> sharedLastLine = List.of(
+                param("Inp_Grid_Step", "500", "1", "1", "6000", true),
+                param("Inp_Spread_Max", "99", "4", "1", "400", false),
+                stringParam("Inp_Magic_Number", "0"));
+
+        Pass embedded = new Pass();
+        embedded.setPassNumber(5);
+        embedded.setDrawdownPercent(2.0);
+        embedded.setParameter("Inp_Grid_Step", "350");
+        PassPresetResolver.embedConcreteSetfile(embedded, List.of(
+                param("Inp_Grid_Step", "500", "1", "1", "6000", true),
+                param("Inp_Spread_Max", "10", "4", "1", "400", false),
+                stringParam("Inp_Magic_Number", "0")), true);
+
+        Pass legacy = new Pass();
+        legacy.setPassNumber(6);
+        legacy.setDrawdownPercent(4.0);
+        legacy.setParameter("Inp_Grid_Step", "700");
+
+        CombinedPass combinedEmbedded = new CombinedPass(embedded, null, 0.0, 0.0, "");
+        CombinedPass combinedLegacy = new CombinedPass(legacy, null, 0.0, 0.0, "");
+
+        PassPresetResolver.Resolution withEmbed =
+                PassPresetResolver.resolveForExecutionWithFallback(
+                        combinedEmbedded, "__no_such_expert__", sharedLastLine);
+        PassPresetResolver.Resolution withoutEmbed =
+                PassPresetResolver.resolveForExecutionWithFallback(
+                        combinedLegacy, "__no_such_expert__", sharedLastLine);
+
+        assertEquals(PassPresetResolver.Fidelity.EMBEDDED_PASS, withEmbed.fidelity());
+        assertEquals("10", valueOf(withEmbed.parameters(), "Inp_Spread_Max"));
+        assertNull(withEmbed.warning());
+
+        assertEquals(PassPresetResolver.Fidelity.CURRENT_CONFIG, withoutEmbed.fidelity());
+        assertNotNull(withoutEmbed.warning());
+        assertEquals("700", valueOf(withoutEmbed.parameters(), "Inp_Grid_Step"));
+        // Legacy path still takes unreported fix values from the shared fallback.
+        assertEquals("99", valueOf(withoutEmbed.parameters(), "Inp_Spread_Max"));
+        assertEquals("6", valueOf(withoutEmbed.parameters(), "Inp_Magic_Number"));
+    }
+
+    @Test
+    public void magicAndOrderCommentMatchersAcceptCommonAliases() {
+        assertTrue(PassPresetResolver.isMagicNumberParameter("Inp_Magic_Number"));
+        assertTrue(PassPresetResolver.isMagicNumberParameter("MagicNumber"));
+        assertTrue(PassPresetResolver.isMagicNumberParameter("magic"));
+        assertTrue(PassPresetResolver.isMagicNumberParameter("InpMagicNumber"));
+        assertFalse(PassPresetResolver.isMagicNumberParameter("Inp_Max_Lot"));
+
+        assertTrue(PassPresetResolver.isOrderCommentParameter("Inp_Order_Comment"));
+        assertTrue(PassPresetResolver.isOrderCommentParameter("OrderComment"));
+        assertTrue(PassPresetResolver.isOrderCommentParameter("order_comment"));
+        assertTrue(PassPresetResolver.isOrderCommentParameter("comment"));
+        assertFalse(PassPresetResolver.isOrderCommentParameter("Inp_Order_Type"));
+    }
+
     private static void writePreset(Path dir, String content) throws IOException {
         Files.writeString(dir.resolve(BacktestArtifactReplayResolver.PRESET_SNAPSHOT_FILE),
                 content, StandardCharsets.UTF_8);
+    }
+
+    private static EaParameter stringParam(String name, String value) {
+        EaParameter parameter = new EaParameter(name, value);
+        parameter.setStringType(true);
+        return parameter;
     }
 }

@@ -22,7 +22,7 @@ public class ToTheMoon132TickKillWorkflowFactoryTest {
         assertEquals("ToTheMoon_KI_v132", project.getExpert());
         assertEquals("GBPJPY", project.getSymbol());
         assertEquals("M5", project.getPeriod());
-        assertEquals(46, project.getTasks().size());
+        assertEquals(47, project.getTasks().size());
 
         int optimizerCount = 0;
         int masterReferenceCount = 0;
@@ -32,14 +32,14 @@ public class ToTheMoon132TickKillWorkflowFactoryTest {
                 optimizerCount++;
                 assertEquals(WorkflowTask.MODE_OHLC_M1, task.getExecutionMode());
                 assertEquals(BacktestConfig.MODEL_OHLC_M1, task.getMt5Model());
-                assertEquals(ToTheMoon132TickKillWorkflowFactory.DEVELOPMENT_FROM, task.getStartDate());
+                assertEquals(ToTheMoon132TickKillWorkflowFactory.SEARCH_FROM, task.getStartDate());
                 assertEquals(ToTheMoon132TickKillWorkflowFactory.DEVELOPMENT_TO, task.getEndDate());
             }
             if (task.getType() == WorkflowTask.TaskType.MASTER_REFERENCE) {
                 masterReferenceCount++;
                 assertEquals(WorkflowTask.MODE_OHLC_M1, task.getExecutionMode());
                 assertEquals(BacktestConfig.MODEL_OHLC_M1, task.getMt5Model());
-                assertEquals(ToTheMoon132TickKillWorkflowFactory.DEVELOPMENT_FROM, task.getStartDate());
+                assertEquals(ToTheMoon132TickKillWorkflowFactory.SEARCH_FROM, task.getStartDate());
                 assertEquals(ToTheMoon132TickKillWorkflowFactory.DEVELOPMENT_TO, task.getEndDate());
                 assertTrue(task.getSourceDatabank().endsWith("_pick"));
                 assertTrue(task.getTargetDatabank().endsWith("_master"));
@@ -67,7 +67,8 @@ public class ToTheMoon132TickKillWorkflowFactoryTest {
                         .equals(task.getTargetDatabank()))
                 .findFirst().orElseThrow();
         assertEquals(ToTheMoon132GuidedWorkflowFactory.GRID_TICK_DATABANK, gridCluster.getSourceDatabank());
-        assertEquals(ClusterIdentity.MAX_CLUSTERS, gridCluster.getDiversityMaxStrategies());
+        assertEquals(ClusterIdentity.MAX_POOLED_STRATEGIES, gridCluster.getDiversityMaxStrategies());
+        assertTrue(gridCluster.isDiversityStampClusterIds());
         assertFalse(gridCluster.getDiversityParameterSnapshot().isEmpty());
         assertTrue(gridCluster.getDiversityParameterSnapshot().stream()
                 .anyMatch(p -> "Inp_Grid_Step".equals(p.getName()) && p.isOptimizeEnabled()));
@@ -75,16 +76,33 @@ public class ToTheMoon132TickKillWorkflowFactoryTest {
                 .anyMatch(p -> "Inp_TakeProfit".equals(p.getName()) && p.isOptimizeEnabled()));
 
         int g01Index = project.getTasks().indexOf(gridCluster);
+        WorkflowTask threeYearOhlc = findByTarget(project,
+                ToTheMoon132GuidedWorkflowFactory.GRID_3Y_OHLC_DATABANK);
+        assertEquals(WorkflowTask.TaskType.RETESTER, threeYearOhlc.getType());
+        assertEquals(ToTheMoon132GuidedWorkflowFactory.GRID_CLUSTER_DATABANK, threeYearOhlc.getSourceDatabank());
+        assertEquals(ToTheMoon132GuidedWorkflowFactory.DEVELOPMENT_FROM, threeYearOhlc.getStartDate());
+        assertEquals(ToTheMoon132GuidedWorkflowFactory.DEVELOPMENT_TO, threeYearOhlc.getEndDate());
+        assertEquals(WorkflowTask.MODE_OHLC_M1, threeYearOhlc.getExecutionMode());
+
+        WorkflowTask g01Master = project.getTasks().stream()
+                .filter(task -> task.getType() == WorkflowTask.TaskType.MASTER_REFERENCE)
+                .filter(task -> task.getName() != null && task.getName().startsWith("01 "))
+                .findFirst().orElseThrow();
         WorkflowTask g02Optimizer = project.getTasks().stream()
                 .filter(task -> task.getType() == WorkflowTask.TaskType.OPTIMIZER)
                 .filter(task -> task.getName() != null && task.getName().startsWith("02 "))
                 .findFirst().orElseThrow();
-        assertTrue(g01Index < project.getTasks().indexOf(g02Optimizer));
-        assertEquals(ToTheMoon132GuidedWorkflowFactory.GRID_CLUSTER_DATABANK, g02Optimizer.getSourceDatabank());
+        assertTrue(g01Index < project.getTasks().indexOf(g01Master));
+        assertTrue(project.getTasks().indexOf(g01Master) < project.getTasks().indexOf(threeYearOhlc));
+        assertTrue(project.getTasks().indexOf(threeYearOhlc) < project.getTasks().indexOf(g02Optimizer));
+        assertEquals(ToTheMoon132GuidedWorkflowFactory.GRID_3Y_OHLC_DATABANK, g02Optimizer.getSourceDatabank());
 
         WorkflowTask k12 = findByTarget(project, ToTheMoon132TickKillWorkflowFactory.TOP20_DATABANK);
         assertEquals(WorkflowTask.TaskType.DIVERSITY_FILTER, k12.getType());
-        assertEquals(ClusterIdentity.MAX_CLUSTERS, k12.getDiversityMaxStrategies());
+        assertEquals(ToTheMoon132TickKillWorkflowFactory.TICK_POOL_MAX, k12.getDiversityMaxStrategies());
+        assertEquals(ClusterIdentity.MAX_POOLED_STRATEGIES, k12.getDiversityMaxStrategies());
+        assertTrue(k12.isDiversityStampClusterIds());
+        assertTrue(k12.getName().contains("100"));
         assertEquals("g11_safety_pick", k12.getSourceDatabank());
         assertTrue(k12.getDiversityParameterSnapshot().stream()
                 .anyMatch(p -> "Inp_Grid_Step".equals(p.getName()) && p.isOptimizeEnabled()));

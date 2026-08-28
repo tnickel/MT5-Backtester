@@ -78,6 +78,23 @@ public class OptimizationReportParserTest {
         assertEquals(2.0, pass.getDrawdownPercent(), 0.001);
     }
 
+    @Test
+    public void parsesUtf16LeHtmlOptimizationReport() throws Exception {
+        String html = "<html><body><table>"
+                + "<tr><td>Pass</td><td>Profit</td><td>Trades</td><td>Inputs</td></tr>"
+                + "<tr><td>7</td><td>123.45</td><td>9</td><td>lot=0.20;</td></tr>"
+                + "</table></body></html>";
+        Path file = tempFolder.newFile("opt_report_utf16.htm").toPath();
+        Files.write(file, html.getBytes(java.nio.charset.StandardCharsets.UTF_16LE));
+
+        OptimizationResult result = new OptimizationResult();
+        new OptimizationReportParser().parseHtml(file, result);
+
+        assertEquals(1, result.getPasses().size());
+        assertEquals(7, result.getPasses().get(0).getPassNumber());
+        assertEquals(123.45, result.getPasses().get(0).getProfit(), 0.001);
+    }
+
     /**
      * The forward report replaces the "Result" column with "Forward Result" and
      * "Back Result". Both are MT5 metrics and must not end up in the parameter map,

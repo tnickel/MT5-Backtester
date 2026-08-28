@@ -146,8 +146,8 @@ public final class WorkflowStep6ConfigDialog {
         weightedScoreCol.setStyle("-fx-alignment: CENTER; -fx-font-weight: bold; -fx-text-fill: #00e5ff;");
         weightedScoreCol.setPrefWidth(95);
 
-        TableColumn<CombinedPass, Double> btProf = new TableColumn<>("BT Profit");
-        btProf.setCellValueFactory(c -> new javafx.beans.property.SimpleObjectProperty<>(c.getValue().getBtProfit()));
+        TableColumn<CombinedPass, Double> btProf = new TableColumn<>("BT Backtest");
+        btProf.setCellValueFactory(c -> new javafx.beans.property.SimpleObjectProperty<>(c.getValue().getBtBacktestBalance()));
         btProf.setPrefWidth(95);
         btProf.setCellFactory(col -> new TableCell<CombinedPass, Double>() {
             @Override
@@ -158,7 +158,9 @@ public final class WorkflowStep6ConfigDialog {
                     setStyle("-fx-alignment: CENTER;");
                 } else {
                     setText(String.format(Locale.US, "%.2f", item));
-                    if (item >= 0) {
+                    CombinedPass row = getTableRow() != null ? getTableRow().getItem() : null;
+                    double deposit = row != null ? row.getDeposit() : CombinedPass.DEFAULT_DEPOSIT;
+                    if (item >= deposit) {
                         setStyle("-fx-alignment: CENTER; -fx-text-fill: #00e676; -fx-font-weight: bold;");
                     } else {
                         setStyle("-fx-alignment: CENTER; -fx-text-fill: #ff5252; -fx-font-weight: bold;");
@@ -207,8 +209,8 @@ public final class WorkflowStep6ConfigDialog {
             }
         });
 
-        TableColumn<CombinedPass, Double> fwProf = new TableColumn<>("FW Profit");
-        fwProf.setCellValueFactory(c -> new javafx.beans.property.SimpleObjectProperty<>(c.getValue().getFwProfit()));
+        TableColumn<CombinedPass, Double> fwProf = new TableColumn<>("FW Forward");
+        fwProf.setCellValueFactory(c -> new javafx.beans.property.SimpleObjectProperty<>(c.getValue().getFwForwardBalance()));
         fwProf.setPrefWidth(95);
         fwProf.setCellFactory(col -> new TableCell<CombinedPass, Double>() {
             @Override
@@ -219,7 +221,9 @@ public final class WorkflowStep6ConfigDialog {
                     setStyle("-fx-alignment: CENTER;");
                 } else {
                     setText(String.format(Locale.US, "%.2f", item));
-                    if (item >= 0) {
+                    CombinedPass row = getTableRow() != null ? getTableRow().getItem() : null;
+                    double deposit = row != null ? row.getDeposit() : CombinedPass.DEFAULT_DEPOSIT;
+                    if (item >= deposit) {
                         setStyle("-fx-alignment: CENTER; -fx-text-fill: #00e676; -fx-font-weight: bold;");
                     } else {
                         setStyle("-fx-alignment: CENTER; -fx-text-fill: #ff5252; -fx-font-weight: bold;");

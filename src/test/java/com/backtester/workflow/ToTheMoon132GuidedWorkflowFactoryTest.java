@@ -23,9 +23,10 @@ public class ToTheMoon132GuidedWorkflowFactoryTest {
         assertEquals("ToTheMoon_KI_v132", project.getExpert());
         assertEquals("AUDCAD", project.getSymbol());
         assertEquals("M5", project.getPeriod());
-        assertEquals("2024-02-01", ToTheMoon132GuidedWorkflowFactory.FORWARD_FROM);
+        assertEquals("2024-08-01", ToTheMoon132GuidedWorkflowFactory.SEARCH_FROM);
+        assertEquals("2025-01-31", ToTheMoon132GuidedWorkflowFactory.FORWARD_FROM);
         assertEquals("2024-08-01", ToTheMoon132GuidedWorkflowFactory.GRID_TICK_FROM);
-        assertEquals(32, project.getTasks().size());
+        assertEquals(33, project.getTasks().size());
         assertEquals(WorkflowTask.TaskType.STRATEGY_SELECTION, project.getTasks().get(0).getType());
 
         Set<String> taskIds = new HashSet<>();
@@ -39,10 +40,10 @@ public class ToTheMoon132GuidedWorkflowFactoryTest {
                 optimizerCount++;
                 assertEquals("AUDCAD", task.getRetestSymbol());
                 assertEquals("M5", task.getRetestPeriod());
-                assertEquals(ToTheMoon132GuidedWorkflowFactory.DEVELOPMENT_FROM, task.getStartDate());
+                assertEquals(ToTheMoon132GuidedWorkflowFactory.SEARCH_FROM, task.getStartDate());
                 assertEquals(ToTheMoon132GuidedWorkflowFactory.DEVELOPMENT_TO, task.getEndDate());
                 assertEquals(1, task.getOptimizerForwardMode());
-                assertEquals("2024-02-01", task.getOptimizerForwardDate());
+                assertEquals("2025-01-31", task.getOptimizerForwardDate());
                 assertFalse(task.getOptimizerTargetParameters().isEmpty());
                 assertFalse(task.getOptimizerParameterSnapshot().isEmpty());
                 assertFalse(task.isOptimizerParameterBasisAdopted());
@@ -111,12 +112,22 @@ public class ToTheMoon132GuidedWorkflowFactoryTest {
         assertTrue(project.getTasks().indexOf(isOos) < project.getTasks().indexOf(shortlist));
         assertTrue(project.getTasks().indexOf(shortlist) < project.getTasks().indexOf(tickGate));
         assertTrue(project.getTasks().indexOf(tickGate) < project.getTasks().indexOf(gridCluster));
+        WorkflowTask threeYearOhlc = findByTarget(project,
+                ToTheMoon132GuidedWorkflowFactory.GRID_3Y_OHLC_DATABANK);
+        assertEquals(WorkflowTask.TaskType.RETESTER, threeYearOhlc.getType());
+        assertEquals(ToTheMoon132GuidedWorkflowFactory.GRID_CLUSTER_DATABANK, threeYearOhlc.getSourceDatabank());
+        assertEquals(ToTheMoon132GuidedWorkflowFactory.DEVELOPMENT_FROM, threeYearOhlc.getStartDate());
+        assertEquals(ToTheMoon132GuidedWorkflowFactory.DEVELOPMENT_TO, threeYearOhlc.getEndDate());
+        assertEquals(WorkflowTask.MODE_OHLC_M1, threeYearOhlc.getExecutionMode());
+        assertEquals(4, threeYearOhlc.getFilterConditions().size());
+
         WorkflowTask g02Optimizer = project.getTasks().stream()
                 .filter(task -> task.getType() == WorkflowTask.TaskType.OPTIMIZER)
                 .filter(task -> task.getName() != null && task.getName().startsWith("02 "))
                 .findFirst().orElseThrow();
-        assertTrue(project.getTasks().indexOf(gridCluster) < project.getTasks().indexOf(g02Optimizer));
-        assertEquals(ToTheMoon132GuidedWorkflowFactory.GRID_CLUSTER_DATABANK, g02Optimizer.getSourceDatabank());
+        assertTrue(project.getTasks().indexOf(gridCluster) < project.getTasks().indexOf(threeYearOhlc));
+        assertTrue(project.getTasks().indexOf(threeYearOhlc) < project.getTasks().indexOf(g02Optimizer));
+        assertEquals(ToTheMoon132GuidedWorkflowFactory.GRID_3Y_OHLC_DATABANK, g02Optimizer.getSourceDatabank());
 
         WorkflowTask top20 = project.getTasks().stream()
                 .filter(task -> ToTheMoon132GuidedWorkflowFactory.DEVELOPMENT_TOP20_DATABANK
@@ -132,7 +143,9 @@ public class ToTheMoon132GuidedWorkflowFactoryTest {
         assertEquals(WorkflowTask.DEFAULT_DIVERSITY_TRADE_DIFF_PCT,
                 top20.getDiversityTradeDiffPct(), 0.0);
         assertEquals(2, top20.getDiversityMinDifferentParams());
-        assertEquals(ClusterIdentity.MAX_CLUSTERS, top20.getDiversityMaxStrategies());
+        assertEquals(ClusterIdentity.MAX_POOLED_STRATEGIES, top20.getDiversityMaxStrategies());
+        assertTrue(top20.isDiversityStampClusterIds());
+        assertTrue(top20.getName().contains("100"));
         assertTrue(top20.getDiversityParameterSnapshot().stream()
                 .anyMatch(p -> "Inp_Grid_Step".equals(p.getName()) && p.isOptimizeEnabled()));
         assertTrue(top20.getDiversityParameterSnapshot().stream()

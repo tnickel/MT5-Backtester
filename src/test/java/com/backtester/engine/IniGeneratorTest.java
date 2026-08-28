@@ -100,4 +100,23 @@ public class IniGeneratorTest {
             AppConfig.getInstance().setMt5TerminalPath(originalPath);
         }
     }
+
+    @Test
+    public void rejectsLineBreaksInIniValues() throws IOException {
+        BacktestConfig config = new BacktestConfig();
+        config.setExpert("MyEA.ex5");
+        config.setSymbol("EURUSD\r\nReport=redirected.html");
+        config.setPeriod("M5");
+        config.setFromDate(LocalDate.of(2025, 1, 1));
+        config.setToDate(LocalDate.of(2025, 1, 2));
+        Path ini = tempFolder.getRoot().toPath().resolve("injected.ini");
+
+        try {
+            new IniGenerator().generate(config, ini, "safe-report.html");
+            fail("Expected INI line injection to be rejected");
+        } catch (IllegalArgumentException expected) {
+            assertTrue(expected.getMessage().contains("line breaks"));
+        }
+        assertFalse(Files.exists(ini));
+    }
 }

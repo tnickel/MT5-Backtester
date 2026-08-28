@@ -220,6 +220,8 @@ public class MasterStrategyLineageServiceTest {
 
     @Test
     public void referenceConfigPinsTheComparableConditions() {
+        assertEquals(ToTheMoon132GuidedWorkflowFactory.SEARCH_FROM,
+                MasterStrategyLineageService.REFERENCE_FROM);
         CustomProject project = new CustomProject("P", "EA", "AUDCAD", "M5");
 
         BacktestConfig config = MasterStrategyLineageService.buildReferenceConfig(project, "preset.set");
@@ -233,6 +235,24 @@ public class MasterStrategyLineageServiceTest {
         assertEquals(MasterStrategyLineageService.REFERENCE_CURRENCY, config.getCurrency());
         assertEquals(MasterStrategyLineageService.REFERENCE_LEVERAGE, config.getLeverage());
         assertEquals("preset.set", config.getExpertParameters());
+    }
+
+    @Test
+    public void referenceConfigUsesThePersistedWorkflowSearchWindow() {
+        CustomProject project = new CustomProject("P", "EA", "GBPJPY", "M15");
+        WorkflowTask optimizer = new WorkflowTask("Search", WorkflowTask.TaskType.OPTIMIZER);
+        optimizer.setStartDate("2022-08-01");
+        optimizer.setEndDate("2025-08-01");
+        optimizer.setRetestSymbol("GBPJPY");
+        optimizer.setRetestPeriod("M15");
+        optimizer.setExecutionMode(WorkflowTask.MODE_OHLC_M1);
+        project.addTask(optimizer);
+
+        BacktestConfig config = MasterStrategyLineageService.buildReferenceConfig(project, "preset.set");
+
+        assertEquals("2022-08-01", config.getFromDate().toString());
+        assertEquals("2025-08-01", config.getToDate().toString());
+        assertEquals(BacktestConfig.MODEL_OHLC_M1, config.getModel());
     }
 
     @Test

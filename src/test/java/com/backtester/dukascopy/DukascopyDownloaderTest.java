@@ -112,4 +112,24 @@ public class DukascopyDownloaderTest {
         Path expectedPath = cacheDir.resolve("EURUSD").resolve("2024").resolve("01").resolve("15").resolve("09h_ticks.bi5");
         assertEquals(expectedPath, path);
     }
+
+    @Test
+    public void sundayEveningIsIncludedButUnsafeSymbolsAreRejected() throws Exception {
+        Path cacheDir = tempFolder.newFolder("sunday-cache").toPath();
+        DukascopyDownloader downloader = new DukascopyDownloader(cacheDir);
+        java.lang.reflect.Method buildTaskList = DukascopyDownloader.class.getDeclaredMethod(
+                "buildTaskList", String.class, LocalDate.class, LocalDate.class);
+        buildTaskList.setAccessible(true);
+
+        LocalDate sunday = LocalDate.of(2026, 8, 23);
+        List<?> tasks = (List<?>) buildTaskList.invoke(downloader, "EURUSD", sunday, sunday);
+        assertEquals("21:00, 22:00 and 23:00 UTC must be considered", 3, tasks.size());
+
+        try {
+            downloader.getLocalFiles("../escape", sunday, sunday);
+            fail("Expected unsafe symbol to be rejected");
+        } catch (IllegalArgumentException expected) {
+            assertTrue(expected.getMessage().contains("Invalid Dukascopy symbol"));
+        }
+    }
 }

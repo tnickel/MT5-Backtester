@@ -31,6 +31,13 @@ public class OptimizationResult {
         private String toDate = "";
         private String tickModel = "";
         private Map<String, String> parameterValues = new LinkedHashMap<>();
+        /**
+         * Concrete, non-optimizing .set lines for exactly this pass. Unlike
+         * {@link #reportDirectory}, these lines are part of the strategy object and
+         * therefore survive databank copies, project JSON backups and missing report
+         * directories.
+         */
+        private List<String> parameterSetLines = new ArrayList<>();
 
         public String getFromDate() { return fromDate; }
         public void setFromDate(String fromDate) { this.fromDate = fromDate != null ? fromDate : ""; }
@@ -102,6 +109,20 @@ public class OptimizationResult {
         public Map<String, String> getParameterValues() { return parameterValues; }
         public void setParameterValues(Map<String, String> parameterValues) { this.parameterValues = parameterValues; }
 
+        public List<String> getParameterSetLines() {
+            if (parameterSetLines == null) parameterSetLines = new ArrayList<>();
+            return parameterSetLines;
+        }
+
+        public void setParameterSetLines(List<String> parameterSetLines) {
+            this.parameterSetLines = parameterSetLines != null
+                    ? new ArrayList<>(parameterSetLines) : new ArrayList<>();
+        }
+
+        public boolean hasParameterSetSnapshot() {
+            return parameterSetLines != null && !parameterSetLines.isEmpty();
+        }
+
         public void setParameter(String name, String value) { parameterValues.put(name, value); }
         public String getParameter(String name) { return parameterValues.getOrDefault(name, ""); }
 
@@ -129,6 +150,7 @@ public class OptimizationResult {
             copy.setReportDirectory(reportDirectory);
             copy.setParameterValues(parameterValues != null
                     ? new LinkedHashMap<>(parameterValues) : new LinkedHashMap<>());
+            copy.setParameterSetLines(parameterSetLines);
             copy.setEquityHistory(equityHistory);
             return copy;
         }
@@ -332,6 +354,33 @@ public class OptimizationResult {
         public double getLtSharpe()       { return longtermPass != null ? longtermPass.getSharpeRatio()     : Double.NaN; }
         public double getLtRecovery()     { return longtermPass != null ? longtermPass.getRecoveryFactor()  : Double.NaN; }
         public double getLtExpectedPayoff() { return longtermPass != null ? longtermPass.getExpectedPayoff() : Double.NaN; }
+
+        /** MT5 default deposit; also used when balance is missing from the report. */
+        public static final double DEFAULT_DEPOSIT = 10000.0;
+
+        /** Initial deposit inferred from report balance, or {@link #DEFAULT_DEPOSIT}. */
+        public double getDeposit() {
+            if (backtestPass != null) {
+                double fromBalance = backtestPass.getBalance() - backtestPass.getProfit();
+                if (fromBalance > 0) {
+                    return fromBalance;
+                }
+            }
+            return DEFAULT_DEPOSIT;
+        }
+
+        /** End balance after backtest — MT5 column {@code Backtest} / {@code Back Result}. */
+        public double getBtBacktestBalance() {
+            return backtestPass.getProfit() + getDeposit();
+        }
+
+        /** End balance after forward — MT5 column {@code Forward Result} / {@code Weiterleiten}. */
+        public double getFwForwardBalance() {
+            if (forwardPass == null) {
+                return Double.NaN;
+            }
+            return forwardPass.getProfit() + getDeposit();
+        }
 
         /** Returns an object-isolated copy suitable for another workflow databank. */
         public CombinedPass copy() {
