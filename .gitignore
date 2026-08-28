@@ -22,15 +22,24 @@ artifacts/
 .gemini/
 logs/
 bin/
+/config/backtester.properties
+/data/
+/tmp/
+.codex-start-test/
+__pycache__/
 
 # Temp/Export files
 export_last_test/
 export_last_test1/
+/export_last_test1.zip
 exports/
 exports_gut/
 *.zip
 stdout.txt
+/stdout.txt
 stderr.txt
+/stderr.txt
+install/*.msi
 .vscode/
 doc/tests/*.pdf
 DbReader.java

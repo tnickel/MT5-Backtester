@@ -1,0 +1,98 @@
+# MT5 Backtester Configuration - Template
+# Copy this file to config/backtester.properties and adjust the values.
+# Relative directory paths are resolved against the application base directory
+# (system property backtester.home > env BACKTESTER_HOME > current working directory).
+
+# --- Terminal installations (machine-specific) ---
+# Full path to the MT5 terminal executable (terminal64.exe)
+mt5.terminal.path=C:/Path/To/Mt5Install/terminal64.exe
+# Full path to the MT4 terminal executable (terminal.exe), used for .ex4 experts
+mt4.terminal.path=C:/Path/To/Mt4Install/terminal.exe
+# How the terminal window is launched: HEADLESS (on a hidden virtual desktop) or NORMAL
+mt5.launch.mode=HEADLESS
+# Run MT5 with the /portable flag
+mt5.portable.mode=true
+# Update-skip token cached from the terminal (leave empty; managed automatically)
+mt5.skip.update.token=
+
+# --- Directories (machine-specific if absolute; relative paths are anchored to the base dir) ---
+# Downloaded historical data / databases
+data.directory=data
+# Backtest report output
+output.directory=backtest_reports
+# Export target for single test exports
+export.directory=exports
+# Export target for "best strategies" exports
+export.best.directory=exports_gut
+
+# --- Backtest defaults (single test tab) ---
+backtest.symbol=EURUSD
+backtest.period=M5
+backtest.expert=
+backtest.deposit=10000
+backtest.currency=USD
+backtest.leverage=1\:100
+# Tick generation model, e.g. "Every tick" or "1 minute OHLC"
+backtest.model=Every tick
+backtest.dateFrom=2025-01-01
+backtest.dateTo=2026-01-01
+# Keep terminal window open after the test
+backtest.keep_open=true
+# Hard timeout per backtest run in minutes
+backtest.timeout.minutes=10
+
+# --- Broker ---
+# Broker/server timezone offset from UTC in hours (affects date filtering)
+broker.timezone.offset=2
+
+# --- Multi backtest (one expert on many symbols/timeframes) ---
+multi.experts=
+multi.symbols=EURUSD
+multi.timeframes=H1
+multi.from=2025-01-01
+multi.to=2026-01-01
+multi.deposit=10000
+# Tick generation model index (0 = every tick, 1 = 1 minute OHLC, ...)
+multi.tickmodel=1
+
+# --- Multibacktest defaults (batch matrix tab) ---
+multibacktest.expert=
+multibacktest.symbol=EURUSD
+multibacktest.timeframes=M5
+multibacktest.model=Every tick
+
+# --- Optimization tab ---
+optimization.expert=
+optimization.symbol=EURUSD
+optimization.period=M5
+optimization.fromDate=2025-01-01
+optimization.toDate=2026-01-01
+# e.g. "Slow Complete Algorithm", "Fast Genetic Algorithm"
+optimization.mode=Fast Genetic Algorithm
+optimization.model=1 minute OHLC
+# Objective, e.g. "Recovery Factor max", "Balance max"
+optimization.criterion=Recovery Factor max
+# Forward walk mode, e.g. "1/2 period", "1/3 period", "OFF"
+optimization.forwardMode=1/2 period
+
+# --- Robustness (walk-forward out-of-sample checks) ---
+robustness.expert=
+robustness.symbol=EURUSD
+robustness.period=H1
+robustness.dateFrom=2025-01-01
+robustness.dateTo=2026-01-01
+robustness.deposit=10000
+robustness.currency=USD
+robustness.leverage=1\:100
+robustness.model=1 minute OHLC
+# Ranking metric used to judge robustness, e.g. "Balance max"
+robustness.metric=Balance max
+# e.g. "Slow Complete Algorithm", "Fast Genetic Algorithm"
+robustness.optimization.mode=Slow Complete Algorithm
+# Number of shifted re-runs and the day shift applied per run
+robustness.shifts=1
+robustness.shiftdays=360
+
+# --- Databank ---
+# Store per-pass equity history in the SQLite databank
+databank.saveEquityHistory=true
