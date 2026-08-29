@@ -977,7 +977,9 @@ public class MultiBacktestView {
         batchConfig.setModel(mIdx >= 0 ? mIdx : 0);
 
         if (paramTable != null && !paramTable.getItems().isEmpty()) {
-            com.backtester.database.DatabaseManager.getInstance().saveEaParameterSettings(expert, "GLOBAL", "GLOBAL", new com.google.gson.Gson().toJson(paramTable.getItems()));
+            if (!com.backtester.database.DatabaseManager.getInstance().saveEaParameterSettings(expert, "GLOBAL", "GLOBAL", new com.google.gson.Gson().toJson(paramTable.getItems()))) {
+                logView.log("ERROR", "Failed to save EA parameter settings to DB - batch may use compiled defaults.");
+            }
             eaParamManager.saveCustomParameters(expert, new java.util.ArrayList<>(paramTable.getItems()));
         }
 
@@ -1019,39 +1021,64 @@ public class MultiBacktestView {
         ) {
             @Override
             protected void done() {
+                // Runs on the runner's plain worker thread: DB IO stays here, only
+                // UI updates are marshalled to the FX thread below.
+                // Drain the FX queue first so all pending per-result additions to
+                // newBatch.getResults() are done before we persist the list.
+                java.util.concurrent.CountDownLatch fxDrained = new java.util.concurrent.CountDownLatch(1);
+                javafx.application.Platform.runLater(fxDrained::countDown);
+                try {
+                    fxDrained.await();
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                }
+
+                try {
+                    java.nio.file.Path htmlPath = getGeneratedReportPath();
+                    if (htmlPath != null) {
+                        newBatch.setHtmlReportPath(htmlPath);
+                    }
+                } catch (Exception e) {}
+
+                // Persist batch to database
+                String dbError = null;
+                try {
+                    com.google.gson.Gson gson = new com.google.gson.Gson();
+                    String resultsJson = gson.toJson(newBatch.getResults());
+                    String htmlPathStr = newBatch.getHtmlReportPath() != null ? newBatch.getHtmlReportPath().toString() : "";
+                    if (!com.backtester.database.DatabaseManager.getInstance().saveBatch(
+                        newBatch.getName(), System.currentTimeMillis(), htmlPathStr, resultsJson)
+                        && dbError == null) {
+                        dbError = "Failed to save batch '" + newBatch.getName() + "' to DB (database error).";
+                    }
+                    // Also save individual results to HISTORY_RUNS for the History tab
+                    for (com.backtester.report.BacktestResult res : newBatch.getResults()) {
+                        if (res.isSuccess()) {
+                            String fullJson = gson.toJson(res);
+                            if (!com.backtester.database.DatabaseManager.getInstance().saveRun(
+                                "MULTI_BACKTEST", res.getExpert(), System.currentTimeMillis(),
+                                fullJson, res.getOutputDirectory())
+                                && dbError == null) {
+                                dbError = "Failed to save multi-backtest run for " + res.getExpert()
+                                        + " to DB (database error) - result will be missing from history.";
+                            }
+                        }
+                    }
+                } catch (Exception ex) {
+                    dbError = "Failed to save batch to DB: " + ex.getMessage();
+                }
+
+                final String dbErrorMsg = dbError;
                 javafx.application.Platform.runLater(() -> {
                     startBtn.setDisable(false);
                     cancelBtn.setDisable(true);
                     progress.setProgress(1.0);
-                    progressLabel.setText("Batch finished.");
-
-                    try {
-                        java.nio.file.Path htmlPath = getGeneratedReportPath();
-                        if (htmlPath != null) {
-                            newBatch.setHtmlReportPath(htmlPath);
-                        }
-                    } catch (Exception e) {}
-
-                    // Persist batch to database
-                    try {
-                        com.google.gson.Gson gson = new com.google.gson.Gson();
-                        String resultsJson = gson.toJson(newBatch.getResults());
-                        String htmlPathStr = newBatch.getHtmlReportPath() != null ? newBatch.getHtmlReportPath().toString() : "";
-                        com.backtester.database.DatabaseManager.getInstance().saveBatch(
-                            newBatch.getName(), System.currentTimeMillis(), htmlPathStr, resultsJson);
-                        // Also save individual results to HISTORY_RUNS for the History tab
-                        for (com.backtester.report.BacktestResult res : newBatch.getResults()) {
-                            if (res.isSuccess()) {
-                                String fullJson = gson.toJson(res);
-                                com.backtester.database.DatabaseManager.getInstance().saveRun(
-                                    "MULTI_BACKTEST", res.getExpert(), System.currentTimeMillis(),
-                                    fullJson, res.getOutputDirectory());
-                            }
-                        }
-                    } catch (Exception ex) {
-                        logView.log("ERROR", "Failed to save batch to DB: " + ex.getMessage());
+                    if (dbErrorMsg != null) {
+                        logView.log("ERROR", dbErrorMsg);
+                        progressLabel.setText("Batch finished (DB save failed).");
+                    } else {
+                        progressLabel.setText("Batch finished.");
                     }
-
                     batchList.refresh();
                     logView.log("INFO", "Batch execution completed.");
                 });
@@ -1460,7 +1487,9 @@ public class MultiBacktestView {
         String expert = expertField.getText().trim();
         if (expert.isEmpty()) return;
         if (paramTable != null && !paramTable.getItems().isEmpty()) {
-            com.backtester.database.DatabaseManager.getInstance().saveEaParameterSettings(expert, "GLOBAL", "GLOBAL", new com.google.gson.Gson().toJson(paramTable.getItems()));
+            if (!com.backtester.database.DatabaseManager.getInstance().saveEaParameterSettings(expert, "GLOBAL", "GLOBAL", new com.google.gson.Gson().toJson(paramTable.getItems()))) {
+                logView.log("ERROR", "Failed to save EA parameter settings to DB.");
+            }
             eaParamManager.saveCustomParameters(expert, new java.util.ArrayList<>(paramTable.getItems()));
         }
     }

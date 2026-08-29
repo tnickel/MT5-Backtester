@@ -688,7 +688,12 @@ public class OptimizationView {
                 sensitivityJson = gson.toJson(new java.util.ArrayList<>(sensitivityTable.getItems()));
             }
 
-            com.backtester.database.DatabaseManager.getInstance().saveOptimizationState(optJson, selectedJson, sensitivityJson);
+            if (!com.backtester.database.DatabaseManager.getInstance().saveOptimizationState(optJson, selectedJson, sensitivityJson)) {
+                log.error("Optimization state could NOT be persisted to database");
+                if (logView != null) {
+                    logView.log("ERROR", "Failed to save optimization state: database error");
+                }
+            }
         } catch (Throwable t) {
             log.error("Failed to save optimization state", t);
             if (logView != null) {
@@ -1859,7 +1864,10 @@ public class OptimizationView {
             String expert = expertField.getText().trim();
             String symbol = symbolCombo.getValue() != null ? symbolCombo.getValue() : "EURUSD";
             String period = periodCombo.getValue() != null ? periodCombo.getValue() : "H1";
-            com.backtester.database.DatabaseManager.getInstance().saveEaParameterSettings(expert, symbol, period, new com.google.gson.Gson().toJson(paramTable.getItems()));
+            if (!com.backtester.database.DatabaseManager.getInstance().saveEaParameterSettings(expert, symbol, period, new com.google.gson.Gson().toJson(paramTable.getItems()))) {
+                log.error("EA parameter settings for {} could NOT be persisted to database", expert);
+                logView.log("ERROR", "Failed to save EA parameter settings to DB - optimization may use compiled defaults.");
+            }
             eaParamManager.saveCustomParameters(expert, new java.util.ArrayList<>(paramTable.getItems()));
         }
 
@@ -2055,13 +2063,16 @@ public class OptimizationView {
                         com.google.gson.JsonObject metrics = new com.google.gson.JsonObject();
                         metrics.addProperty("passes", result.getPasses().size());
                         metrics.addProperty("forwardPasses", result.getForwardPasses().size());
-                        com.backtester.database.DatabaseManager.getInstance().saveRun(
+                        if (!com.backtester.database.DatabaseManager.getInstance().saveRun(
                             "OPTIMIZATION",
                             optConfig.getExpert(),
                             System.currentTimeMillis(),
                             metrics.toString(),
                             result.getOutputDirectory()
-                        );
+                        )) {
+                            logView.log("ERROR", "Failed to save optimization run to DB for "
+                                    + optConfig.getExpert() + " - result will be missing from history.");
+                        }
                     } catch (Exception ex) {
                         logView.log("ERROR", "Failed to save optimization to DB: " + ex.getMessage());
                     }
@@ -2318,35 +2329,33 @@ public class OptimizationView {
             }
         };
 
+        // setOnSucceeded/setOnFailed laufen bereits auf dem FX-Thread -> kein
+        // zusätzliches Platform.runLater nötig.
         task.setOnSucceeded(e -> {
-            Platform.runLater(() -> {
-                setUIState(false);
-                progressBar.setProgress(1.0);
-                progressLabel.setText("Backtest Pass #" + pass.getPassNumber() + " fertig");
-                com.backtester.report.BacktestResult res = task.getValue();
-                if (res != null && res.isSuccess()) {
-                    logView.log("INFO", "Verifikations-Backtest für Pass #" + pass.getPassNumber() + " erfolgreich abgeschlossen.");
-                    // Report anzeigen
-                    try {
-                        javax.swing.SwingUtilities.invokeLater(() -> {
-                            com.backtester.ui.ReportViewerDialog.showForDirectory(null, res.getOutputDirectory());
-                        });
-                    } catch (Exception ex) {
-                        logView.log("ERROR", "Fehler beim Öffnen des Reports: " + ex.getMessage());
-                    }
-                } else {
-                    logView.log("WARN", "Verifikations-Backtest für Pass #" + pass.getPassNumber() + " fehlgeschlagen oder keine Trades.");
+            setUIState(false);
+            progressBar.setProgress(1.0);
+            progressLabel.setText("Backtest Pass #" + pass.getPassNumber() + " fertig");
+            com.backtester.report.BacktestResult res = task.getValue();
+            if (res != null && res.isSuccess()) {
+                logView.log("INFO", "Verifikations-Backtest für Pass #" + pass.getPassNumber() + " erfolgreich abgeschlossen.");
+                // Report anzeigen
+                try {
+                    javax.swing.SwingUtilities.invokeLater(() -> {
+                        com.backtester.ui.ReportViewerDialog.showForDirectory(null, res.getOutputDirectory());
+                    });
+                } catch (Exception ex) {
+                    logView.log("ERROR", "Fehler beim Öffnen des Reports: " + ex.getMessage());
                 }
-            });
+            } else {
+                logView.log("WARN", "Verifikations-Backtest für Pass #" + pass.getPassNumber() + " fehlgeschlagen oder keine Trades.");
+            }
         });
 
         task.setOnFailed(e -> {
-            Platform.runLater(() -> {
-                setUIState(false);
-                progressBar.setProgress(0.0);
-                progressLabel.setText("Fehler");
-                logView.log("ERROR", "Verifikations-Backtest fehlgeschlagen: " + task.getException().getMessage());
-            });
+            setUIState(false);
+            progressBar.setProgress(0.0);
+            progressLabel.setText("Fehler");
+            logView.log("ERROR", "Verifikations-Backtest fehlgeschlagen: " + task.getException().getMessage());
         });
 
         Thread th = new Thread(task);
@@ -2368,7 +2377,9 @@ public class OptimizationView {
         if (paramTable != null && !paramTable.getItems().isEmpty()) {
             String symbol = symbolCombo.getValue() != null ? symbolCombo.getValue() : "EURUSD";
             String period = periodCombo.getValue() != null ? periodCombo.getValue() : "H1";
-            com.backtester.database.DatabaseManager.getInstance().saveEaParameterSettings(expert, symbol, period, new com.google.gson.Gson().toJson(paramTable.getItems()));
+            if (!com.backtester.database.DatabaseManager.getInstance().saveEaParameterSettings(expert, symbol, period, new com.google.gson.Gson().toJson(paramTable.getItems()))) {
+                log.error("EA parameter settings for {} could NOT be persisted to database", expert);
+            }
             eaParamManager.saveCustomParameters(expert, new java.util.ArrayList<>(paramTable.getItems()));
         }
     }

@@ -46,6 +46,9 @@ import java.nio.file.Paths;
 import java.text.SimpleDateFormat;
 import java.time.LocalDate;
 import java.util.*;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 
 /**
@@ -128,6 +131,18 @@ public class ControllingView {
     private final ObservableList<ControllingStrategy> tableItems = FXCollections.observableArrayList();
 
     private Task<BacktestResult> runningBacktestTask;
+
+    // Hintergrund-Executor + Generationszähler für das asynchrone Nachladen der
+    // Pass-Parameter (Disk-IO) bei Zeilenauswahl; verwirft veraltete Ergebnisse.
+    private final ExecutorService paramResolveExecutor = Executors.newSingleThreadExecutor(r -> {
+        Thread t = new Thread(r, "controlling-param-resolve");
+        t.setDaemon(true);
+        return t;
+    });
+    private final AtomicInteger paramResolveGeneration = new AtomicInteger();
+    // Wächter gegen überlappende refreshResults-Loads: nur der neueste Load darf
+    // allLoadedStrategies überschreiben.
+    private final AtomicInteger resultsLoadGeneration = new AtomicInteger();
 
     private final TabPane graphModeTabPane;
     private final Tab tabOriginal;
@@ -757,6 +772,8 @@ public class ControllingView {
         // DB-Query + JSON-Parsing der kompletten Historie laufen im Hintergrund;
         // nur die Tabellenbefüllung (applyFilter) läuft auf dem FX-Thread. Wird
         // bei jedem Tab-Wechsel aufgerufen und darf die UI nicht blockieren.
+        // Überlappende Loads: nur der neueste darf allLoadedStrategies überschreiben.
+        final int generation = resultsLoadGeneration.incrementAndGet();
         Task<List<ControllingStrategy>> loadTask = new Task<>() {
             @Override
             protected List<ControllingStrategy> call() {
@@ -764,6 +781,11 @@ public class ControllingView {
             }
         };
         loadTask.setOnSucceeded(e -> {
+            if (resultsLoadGeneration.get() != generation) {
+                // Ein neuerer Load ist gestartet worden -> dieses Ergebnis verwerfen.
+                log.debug("Discarding stale strategy history load (generation {})", generation);
+                return;
+            }
             allLoadedStrategies.clear();
             allLoadedStrategies.addAll(loadTask.getValue());
             applyFilter();
@@ -937,6 +959,9 @@ public class ControllingView {
 
     private void onStrategySelected(ControllingStrategy selected) {
         if (selected == null) {
+            // Laufende Parameter-Auflösungen verwerfen, damit sie die Tabelle
+            // nach einem Abwählen nicht noch mit stale Daten befüllen.
+            paramResolveGeneration.incrementAndGet();
             clearDetails();
             return;
         }
@@ -1018,9 +1043,9 @@ public class ControllingView {
             clearMetrics2y();
         }
 
-        // Parameters table
-        List<EaParameter> finalParams = getStrategyParameters(selected);
-        paramTable.getItems().setAll(finalParams);
+        // Parameters table: PassPresetResolver macht Disk-IO -> asynchron laden,
+        // damit schnelle Folgeklicks den FX-Thread nicht blockieren.
+        resolveParametersAsync(selected);
 
         // Update KI Report WebView
         String reportMarkdown = selected.getKiReportText();
@@ -1116,6 +1141,37 @@ public class ControllingView {
             log.warn("Controlling Pass #{}: {}", strategy.getPassNumber(), resolution.warning());
         }
         return new ArrayList<>(resolution.parameters());
+    }
+
+    /**
+     * Löst die effektiven Pass-Parameter im Hintergrund (PassPresetResolver macht
+     * Disk-IO) und befüllt die Parametertabelle via Platform.runLater. Der
+     * Generationszähler verwirft Ergebnisse veralteter Auflösungen, wenn schnell
+     * nacheinander andere Zeilen gewählt werden.
+     */
+    private void resolveParametersAsync(ControllingStrategy strategy) {
+        final int generation = paramResolveGeneration.incrementAndGet();
+        paramResolveExecutor.execute(() -> {
+            List<EaParameter> resolved;
+            try {
+                resolved = getStrategyParameters(strategy);
+            } catch (Exception ex) {
+                log.error("Resolving parameters for pass #{} failed", strategy.getPassNumber(), ex);
+                Platform.runLater(() -> {
+                    if (paramResolveGeneration.get() == generation) {
+                        paramTable.getItems().clear();
+                        logView.log("ERROR", "Parameter für Pass " + strategy.getPassNumber()
+                                + " konnten nicht geladen werden: " + ex.getMessage());
+                    }
+                });
+                return;
+            }
+            Platform.runLater(() -> {
+                if (paramResolveGeneration.get() == generation) {
+                    paramTable.getItems().setAll(resolved);
+                }
+            });
+        });
     }
 
     private void writeVerifiedPreset(Path destFile, List<EaParameter> params, String expert)
@@ -1307,14 +1363,16 @@ public class ControllingView {
                     // Persist run
                     try {
                         String fullJson = new Gson().toJson(res);
-                        int generatedId = DatabaseManager.getInstance().saveRun(
+                        if (!DatabaseManager.getInstance().saveRun(
                             "BACKTEST",
                             res.getExpert(),
                             System.currentTimeMillis(),
                             fullJson,
                             res.getOutputDirectory()
-                        );
-                        res.setDbId(generatedId);
+                        )) {
+                            logView.log("ERROR", "Nachtest-Resultat für " + res.getExpert()
+                                    + " konnte NICHT in der Datenbank gespeichert werden.");
+                        }
                     } catch (Exception ex) {
                         logView.log("ERROR", "Nachtest-Resultat konnte nicht in DB gespeichert werden: " + ex.getMessage());
                     }
@@ -1330,15 +1388,15 @@ public class ControllingView {
 
                     alert.showAndWait().ifPresent(response -> {
                         if (response == viewReportBtn) {
-                            Platform.runLater(() -> {
-                                try {
-                                    javax.swing.SwingUtilities.invokeLater(() -> {
-                                        com.backtester.ui.ReportViewerDialog.showForDirectory(null, res.getOutputDirectory());
-                                    });
-                                } catch (Exception ex) {
-                                    logView.log("ERROR", "HTML Report konnte nicht geöffnet werden: " + ex.getMessage());
-                                }
-                            });
+                            // Bereits auf dem FX-Thread (Task-Handler); nur den
+                            // Swing-Dialog auf den EDT heben.
+                            try {
+                                javax.swing.SwingUtilities.invokeLater(() -> {
+                                    com.backtester.ui.ReportViewerDialog.showForDirectory(null, res.getOutputDirectory());
+                                });
+                            } catch (Exception ex) {
+                                logView.log("ERROR", "HTML Report konnte nicht geöffnet werden: " + ex.getMessage());
+                            }
                         }
                     });
 
@@ -2061,7 +2119,7 @@ public class ControllingView {
                     String res1yJson = gson.toJson(res1y);
                     String res2yJson = gson.toJson(res2y);
 
-                    dbManager.saveAutomaticReview(
+                    if (dbManager.saveAutomaticReview(
                         strategy.getExpert(),
                         strategy.getSymbol(),
                         strategy.getPeriod(),
@@ -2069,9 +2127,13 @@ public class ControllingView {
                         strategy.getPassNumber(),
                         res1yJson,
                         res2yJson
-                    );
-
-                    Platform.runLater(() -> logView.log("INFO", "  Erfolgreich gespeichert."));
+                    )) {
+                        Platform.runLater(() -> logView.log("INFO", "  Erfolgreich gespeichert."));
+                    } else {
+                        Platform.runLater(() -> logView.log("ERROR", "  Automatisches Review für "
+                                + strategy.getExpert() + " (Pass " + strategy.getPassNumber()
+                                + ") konnte NICHT in der Datenbank gespeichert werden."));
+                    }
 
                     // Delete the temporary preset file
                     try {

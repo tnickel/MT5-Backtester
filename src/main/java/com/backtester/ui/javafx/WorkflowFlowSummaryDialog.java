@@ -19,6 +19,7 @@ import javafx.beans.property.SimpleStringProperty;
 import javafx.collections.FXCollections;
 import javafx.collections.ObservableList;
 import javafx.collections.transformation.FilteredList;
+import javafx.concurrent.Task;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.Scene;
@@ -81,10 +82,46 @@ public final class WorkflowFlowSummaryDialog {
         if (project != null && hasClusteredPasses(project)) {
             DatabankManager.rebuildCensus(project);
         }
-        List<FlowNode> nodes = WorkflowHandoffAuditService.buildTimeline(project, databankManager);
-        List<FlowStepSummary> stepSummaries = WorkflowFlowSummaryService.build(
-                project, databankManager, outputDirectoryResolver);
-        ClusterFlowTreeModel treeModel = ClusterFlowTreeModel.from(project, nodes);
+
+        // Timeline- und Stufen-Aufbau ziehen pro Stufe vollständige Databank-Snapshots
+        // und können bei großen Projekten Sekunden blockieren — deshalb off-FX im Task;
+        // der Dialog erscheint erst mit fertigen Daten.
+        Task<PreparedFlowData> prepTask = new Task<>() {
+            @Override
+            protected PreparedFlowData call() {
+                List<FlowNode> nodes = WorkflowHandoffAuditService.buildTimeline(project, databankManager);
+                List<FlowStepSummary> stepSummaries = WorkflowFlowSummaryService.build(
+                        project, databankManager, outputDirectoryResolver);
+                return new PreparedFlowData(nodes, stepSummaries);
+            }
+        };
+        prepTask.setOnSucceeded(ev -> {
+            PreparedFlowData prepared = prepTask.getValue();
+            ClusterFlowTreeModel treeModel = ClusterFlowTreeModel.from(project, prepared.nodes());
+            buildShowFlowDialog(stage, owner, project, databankManager, outputDirectoryResolver,
+                    prepared.nodes(), prepared.stepSummaries(), treeModel);
+        });
+        prepTask.setOnFailed(ev -> {
+            Throwable ex = prepTask.getException();
+            info(owner, "Show Flow konnte nicht aufgebaut werden: "
+                    + (ex != null && ex.getMessage() != null ? ex.getMessage() : "unbekannter Fehler"));
+        });
+        Thread prepThread = new Thread(prepTask, "workflow-flow-summary-build");
+        prepThread.setDaemon(true);
+        prepThread.start();
+    }
+
+    private record PreparedFlowData(List<FlowNode> nodes, List<FlowStepSummary> stepSummaries) {
+    }
+
+    private static void buildShowFlowDialog(Stage stage,
+                                            Window owner,
+                                            CustomProject project,
+                                            DatabankManager databankManager,
+                                            Function<WorkflowTask, String> outputDirectoryResolver,
+                                            List<FlowNode> nodes,
+                                            List<FlowStepSummary> stepSummaries,
+                                            ClusterFlowTreeModel treeModel) {
         Map<Integer, FlowStepSummary> summaryByNumber = new HashMap<>();
         for (FlowStepSummary step : stepSummaries) {
             if (step != null) summaryByNumber.put(step.getIndex(), step);

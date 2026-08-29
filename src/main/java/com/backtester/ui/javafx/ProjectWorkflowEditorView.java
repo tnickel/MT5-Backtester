@@ -418,7 +418,7 @@ public class ProjectWorkflowEditorView {
 
         Task<Path> reportTask = new Task<>() {
             @Override
-            protected Path call() {
+            protected Path call() throws java.io.IOException {
                 return MasterStrategyLineageReportGenerator.generateReport(currentProject);
             }
         };
@@ -4229,6 +4229,10 @@ public class ProjectWorkflowEditorView {
 
     /** Flushes pending project data before the application shuts down. */
     public void shutdown() {
+        // Sichtbarer Hinweis vor dem blockierenden Flush, damit der Benutzer
+        // beim Shutdown nicht eine still einfrierende UI hat (nur Logging,
+        // keine Verhaltensänderung).
+        logToConsole("DB", "Flushing project saves (bis zu " + PROJECT_SAVE_FLUSH_TIMEOUT.toSeconds() + " s)...");
         stopReferenceBacktests();
         commitCurrentTaskDataSettings();
         saveProject();

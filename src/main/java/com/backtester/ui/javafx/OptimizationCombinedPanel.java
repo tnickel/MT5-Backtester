@@ -13,6 +13,7 @@ import javafx.scene.layout.VBox;
 
 import java.util.Comparator;
 import java.util.List;
+import java.util.Locale;
 
 /**
  * Combined Analysis UI extracted from OptimizationView.
@@ -267,7 +268,7 @@ public final class OptimizationCombinedPanel {
             "Unified Score (0-100):\nGewichteter Gesamtwert aus 10 Kriterien. Klicke auf das ⓘ Symbol, um den Mindest-Score-Filter anzupassen und die Doku zu öffnen.",
             this::showScoreDoc));
         scoreCol.setCellValueFactory(c -> new SimpleStringProperty(
-                String.format("%.2f", c.getValue().getScore())));
+                String.format(Locale.US, "%.2f", c.getValue().getScore())));
         scoreCol.setStyle("-fx-alignment: CENTER;");
         scoreCol.setCellFactory(col -> new TableCell<CombinedPass, String>() {
             @Override protected void updateItem(String item, boolean empty) {

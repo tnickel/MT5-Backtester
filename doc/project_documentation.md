@@ -253,12 +253,12 @@ com.backtester
 | `backtest_reports/` | Generated backtest reports, charts, and HTML summaries |
 | `~/.mt5_backtester/history.db` | SQLite database (run history + saved EA configs) |
 | `logs/backtester.log` | Application log files (Logback, relative to app execution directory) |
-| `C:\Forex\Mt5\TickmillLifeMql5\MQL5\Logs\` | MetaTrader 5 Terminal Logs (for MT5 actions & MQL5 scripts) |
-| `C:\Forex\Mt5\TickmillLifeMql5\tester\logs\` | MetaTrader 5 Strategy Tester Logs (for CLI backtest & optimization runs) |
+| `<MT5-Installationsverzeichnis>\MQL5\Logs\` | MetaTrader 5 Terminal Logs (for MT5 actions & MQL5 scripts) |
+| `<MT5-Installationsverzeichnis>\tester\logs\` | MetaTrader 5 Strategy Tester Logs (for CLI backtest & optimization runs) |
 
 ### Logging Notes for AI & Developers
 * **Application Logs**: Standard application logs (using SLF4J and Logback) are written to `logs/backtester.log` relative to the current directory from which the JAR is executed. Daily log rotation keeps up to 30 days of history as `logs/backtester.YYYY-MM-DD.log`.
-* **MT5 Logs**: When executing backtests or optimizations via CLI, MT5 records the tester-specific execution logs in the MT5 data directory under `tester/logs/` (e.g., `C:\Forex\Mt5\TickmillLifeMql5\tester\logs\YYYYMMDD.log`). Terminal-wide messages are stored in `MQL5/Logs/`.
+* **MT5 Logs**: When executing backtests or optimizations via CLI, MT5 records the tester-specific execution logs in the MT5 data directory under `tester/logs/` (e.g., `<MT5-Installationsverzeichnis>\tester\logs\YYYYMMDD.log`). Terminal-wide messages are stored in `MQL5/Logs/`.
 * **Uncaught JavaFX Exceptions**: Any uncaught exceptions thrown on the UI thread (JavaFX Application Thread) that are not caught explicitly will be written to the standard error stream (`System.err`). They can be observed in the terminal console when starting the application via `start.bat`.
 
 

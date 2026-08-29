@@ -803,7 +803,9 @@ public class RobustnessView {
             if (paramTable != null && !paramTable.getItems().isEmpty()) {
                 String symbol = symbolCombo.getValue() != null ? symbolCombo.getValue() : "EURUSD";
                 String period = periodCombo.getValue() != null ? periodCombo.getValue() : "H1";
-                com.backtester.database.DatabaseManager.getInstance().saveEaParameterSettings(expert, symbol, period, new com.google.gson.Gson().toJson(paramTable.getItems()));
+                if (!com.backtester.database.DatabaseManager.getInstance().saveEaParameterSettings(expert, symbol, period, new com.google.gson.Gson().toJson(paramTable.getItems()))) {
+                    logView.log("ERROR", "Failed to save EA parameter settings to DB - optimization may use compiled defaults.");
+                }
             }
 
             OptimizationConfig optConfig = new OptimizationConfig();
@@ -1072,13 +1074,16 @@ public class RobustnessView {
                 metrics.addProperty("shiftDays", shiftDays);
                 metrics.addProperty("strategyName", runName);
 
-                com.backtester.database.DatabaseManager.getInstance().saveRun(
+                if (!com.backtester.database.DatabaseManager.getInstance().saveRun(
                     "ROBUSTNESS",
                     optConfig.getExpert(),
                     System.currentTimeMillis(),
                     metrics.toString(),
                     newPath.toAbsolutePath().toString()
-                );
+                )) {
+                    logView.log("ERROR", "Failed to save robustness run to DB for " + optConfig.getExpert()
+                            + " (strategy " + runName + ") - result will be missing from history.");
+                }
 
                 resultHtmlPaths.put(label, newPath.toAbsolutePath().toString());
                 java.awt.Desktop.getDesktop().open(newPath.toFile());
@@ -1173,7 +1178,9 @@ public class RobustnessView {
         if (paramTable != null && !paramTable.getItems().isEmpty()) {
             String symbol = symbolCombo.getValue() != null ? symbolCombo.getValue() : "EURUSD";
             String period = periodCombo.getValue() != null ? periodCombo.getValue() : "H1";
-            com.backtester.database.DatabaseManager.getInstance().saveEaParameterSettings(expert, symbol, period, new com.google.gson.Gson().toJson(paramTable.getItems()));
+            if (!com.backtester.database.DatabaseManager.getInstance().saveEaParameterSettings(expert, symbol, period, new com.google.gson.Gson().toJson(paramTable.getItems()))) {
+                logView.log("ERROR", "Failed to save EA parameter settings to DB.");
+            }
         }
     }
 }

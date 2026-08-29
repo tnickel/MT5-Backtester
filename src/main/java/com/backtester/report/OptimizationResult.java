@@ -838,7 +838,7 @@ public class OptimizationResult {
             debug.append(String.format("- Stichprobengröße:  %.2f (Trades=%d, Jahre=%.1f) * %.0f\n", sSample, bt.getTotalTrades(), years, w.wSampleSize));
             debug.append(String.format("- FW Trades:         %.2f (Raw=%d) * %.0f\n", sFwTrades, fw != null ? fw.getTotalTrades() : 0, w.wFwTrades));
             debug.append(String.format("- Erholungsfaktor:   %.2f (BT=%.2f, FW=%.2f) * %.0f\n", sRecovery, bt.getRecoveryFactor(), fw != null ? fw.getRecoveryFactor() : 0, w.wRecovery));
-            debug.append(String.format("\n=> Raw Score: %.3f\n", raw));
+            debug.append(String.format(Locale.US, "\n=> Raw Score: %.3f\n", raw));
         }
 
         // Soft penalty for too-few-trades strategies
@@ -849,14 +849,14 @@ public class OptimizationResult {
                 raw *= penalty;
                 if (debug != null) {
                     debug.append(String.format("\nSTRAFE: Zu wenige FW Trades (%d < Median-Schwelle %.1f).\n", n, fwTradesThreshold));
-                    debug.append(String.format("=> Score wird mit %.2f multipliziert => %.3f\n", penalty, raw));
+                    debug.append(String.format(Locale.US, "=> Score wird mit %.2f multipliziert => %.3f\n", penalty, raw));
                 }
             }
         }
 
         double finalScore = Math.round(raw * 1000.0) / 10.0;  // 0.0 – 100.0
         if (debug != null) {
-            debug.append(String.format("\nEndgültiger Unified Score: %.1f / 100", finalScore));
+            debug.append(String.format(Locale.US, "\nEndgültiger Unified Score: %.1f / 100", finalScore));
         }
         return finalScore;
     }

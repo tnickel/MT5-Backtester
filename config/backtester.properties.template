@@ -45,6 +45,11 @@ backtest.timeout.minutes=10
 # Broker/server timezone offset from UTC in hours (affects date filtering)
 broker.timezone.offset=2
 
+# --- Dukascopy ---
+# IANA-Zeitzone des Brokers fuer die Tick->CSV-Konvertierung (DST-sicher).
+# Beispiele: Europe/Helsinki, Europe/Berlin, EET (leer = Legacy-Fixed-Offset oben)
+dukascopy.broker.zone=
+
 # --- Multi backtest (one expert on many symbols/timeframes) ---
 multi.experts=
 multi.symbols=EURUSD

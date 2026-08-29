@@ -49,3 +49,6 @@ _tmp_*
 *_backup.json
 backtester.db
 data/backtester.db
+
+# Analysis results (local only)
+Ergebnisse/

@@ -371,7 +371,9 @@ public class BacktestView {
         if (paramTable != null && !paramTable.getItems().isEmpty()) {
             String symbol = symbolCombo.getValue() != null ? symbolCombo.getValue() : "EURUSD";
             String period = periodCombo.getValue() != null ? periodCombo.getValue() : "H1";
-            com.backtester.database.DatabaseManager.getInstance().saveEaParameterSettings(expert, symbol, period, new com.google.gson.Gson().toJson(paramTable.getItems()));
+            if (!com.backtester.database.DatabaseManager.getInstance().saveEaParameterSettings(expert, symbol, period, new com.google.gson.Gson().toJson(paramTable.getItems()))) {
+                logView.log("ERROR", "Failed to save EA parameter settings to DB - backtest may use compiled defaults.");
+            }
             eaParamManager.saveCustomParameters(expert, new java.util.ArrayList<>(paramTable.getItems()));
         }
 
@@ -410,14 +412,20 @@ public class BacktestView {
                     try {
                         com.google.gson.Gson gson = new com.google.gson.Gson();
                         String fullJson = gson.toJson(result);
-                        int generatedId = com.backtester.database.DatabaseManager.getInstance().saveRun(
+                        long runTimestamp = System.currentTimeMillis();
+                        if (com.backtester.database.DatabaseManager.getInstance().saveRun(
                             "BACKTEST",
                             result.getExpert(),
-                            System.currentTimeMillis(),
+                            runTimestamp,
                             fullJson,
                             result.getOutputDirectory()
-                        );
-                        result.setDbId(generatedId);
+                        )) {
+                            result.setDbId(com.backtester.database.DatabaseManager.getInstance().findRunId(
+                                "BACKTEST", result.getExpert(), runTimestamp, result.getOutputDirectory()));
+                        } else {
+                            logView.log("ERROR", "Failed to save backtest to DB - result for "
+                                    + result.getExpert() + " will be missing from history.");
+                        }
                     } catch (Exception ex) {
                         logView.log("ERROR", "Failed to save backtest to DB: " + ex.getMessage());
                     }
@@ -883,7 +891,9 @@ public class BacktestView {
         if (paramTable != null && !paramTable.getItems().isEmpty()) {
             String symbol = symbolCombo.getValue() != null ? symbolCombo.getValue() : "EURUSD";
             String period = periodCombo.getValue() != null ? periodCombo.getValue() : "H1";
-            com.backtester.database.DatabaseManager.getInstance().saveEaParameterSettings(expert, symbol, period, new com.google.gson.Gson().toJson(paramTable.getItems()));
+            if (!com.backtester.database.DatabaseManager.getInstance().saveEaParameterSettings(expert, symbol, period, new com.google.gson.Gson().toJson(paramTable.getItems()))) {
+                logView.log("ERROR", "Failed to save EA parameter settings to DB.");
+            }
             eaParamManager.saveCustomParameters(expert, new java.util.ArrayList<>(paramTable.getItems()));
         }
     }

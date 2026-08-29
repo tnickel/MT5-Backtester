@@ -4,9 +4,15 @@ cd /d "%~dp0"
 
 set "JAVA_EXE="
 set "LOCAL_JDK=%USERPROFILE%\.jdk\jdk-25"
+set "ADOPTIUM_JDK="
+for /d %%D in ("%ProgramFiles%\Eclipse Adoptium\jdk-25*") do set "ADOPTIUM_JDK=%%D"
 
 if exist "%LOCAL_JDK%\bin\java.exe" (
     call :select_java "%LOCAL_JDK%"
+)
+
+if not defined JAVA_EXE if defined ADOPTIUM_JDK if exist "%ADOPTIUM_JDK%\bin\java.exe" (
+    call :select_java "%ADOPTIUM_JDK%"
 )
 
 if not defined JAVA_EXE if defined JAVA_HOME if exist "%JAVA_HOME%\bin\java.exe" (
@@ -57,6 +63,8 @@ if not defined JAR (
 )
 
 echo Starte Backtester: %JAR%
+rem Anker fuer config/, data/, exports/ am Installationsverzeichnis (statt aktuellem Arbeitsverzeichnis)
+set "BACKTESTER_HOME=%~dp0"
 "%JAVA_EXE%" -jar "%JAR%"
 
 set "EXIT=%ERRORLEVEL%"

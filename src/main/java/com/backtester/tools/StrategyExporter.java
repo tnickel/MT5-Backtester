@@ -313,7 +313,7 @@ public class StrategyExporter {
                         performanceBonus -= sc.res2y.getMaxDrawdown() * 0.5;
 
                         sc.rankScore = baseScore + stabilityBonus - riskPenalty + performanceBonus;
-                        sc.verdictDetail = String.format("Qualifiziert! RankScore: %.2f (Base: %.1f, Stab-Bonus: +%.0f, Risiko-Malus: -%.0f, Perf-Faktoren: +%.1f)",
+                        sc.verdictDetail = String.format(Locale.US, "Qualifiziert! RankScore: %.2f (Base: %.1f, Stab-Bonus: +%.0f, Risiko-Malus: -%.0f, Perf-Faktoren: +%.1f)",
                                 sc.rankScore, baseScore, stabilityBonus, riskPenalty, performanceBonus);
                     }
                 }
@@ -335,7 +335,7 @@ public class StrategyExporter {
                     // Mark others as rejected due to better candidate
                     for (StrategyCandidate sc : candidates) {
                         if (sc != best && sc.qualified) {
-                            sc.verdictDetail = String.format("Verworfen, da Pass %d für dieses Symbol einen besseren RankScore erzielt hat (%.2f vs %.2f).",
+                            sc.verdictDetail = String.format(Locale.US, "Verworfen, da Pass %d für dieses Symbol einen besseren RankScore erzielt hat (%.2f vs %.2f).",
                                     best.combinedPass.getPassNumber(), best.rankScore, sc.rankScore);
                         }
                     }

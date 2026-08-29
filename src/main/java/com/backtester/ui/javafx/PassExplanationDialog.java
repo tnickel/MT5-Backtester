@@ -17,6 +17,8 @@ import javafx.scene.paint.Color;
 import javafx.scene.text.Font;
 import javafx.scene.text.FontWeight;
 
+import java.util.Locale;
+
 /**
  * Dialog explaining consistency/score and metrics for a combined optimization pass.
  */
@@ -129,7 +131,7 @@ public final class PassExplanationDialog {
             scoreDesc = "Durchgefallen. Profit zu gering, Drawdowns zu hoch oder Konsistenz eingebrochen.";
         }
 
-        Label scoreTitle = new Label("Gesamt-Score: " + String.format("%.1f", score) + " / 100 (" + scoreLevel + ")");
+        Label scoreTitle = new Label("Gesamt-Score: " + String.format(Locale.US, "%.1f", score) + " / 100 (" + scoreLevel + ")");
         scoreTitle.setFont(Font.font("Segoe UI", FontWeight.BOLD, 15));
         scoreTitle.setTextFill(scoreColor);
 
