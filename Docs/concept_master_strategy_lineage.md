@@ -89,7 +89,7 @@ Entscheidend: Dieser Referenz-Backtest läuft **immer mit identischen Rahmenbedi
 unabhängig von der Stufe:
 
 - gleiches Symbol / Timeframe (Projekt-Default, z. B. AUDCAD M5)
-- gleicher Zeitraum (fix konfiguriert, z. B. Dev-Range 2022-08-01 … 2025-08-01)
+- gleicher Zeitraum (fix konfiguriert, Such-Range 2024-08-01 … 2025-08-01)
 - gleiches Modelling (z. B. OHLC M1)
 - gleiche Startbedingungen (Deposit, Leverage)
 
@@ -316,8 +316,8 @@ Ergebnis beim Schließen der App verloren. Beim Shutdown wird ein laufender Refe
 abgebrochen — auf einen mehrminütigen MT5-Lauf zu warten wäre schlimmer als diese eine
 Messung zu verlieren.
 
-**Kosten:** ein zusätzlicher Backtest pro Stufe. Bei 11 Stufen und ~1–3 min pro
-OHLC-M1-Lauf über 3 Jahre sind das ~15–35 min pro Gesamtdurchlauf. Deshalb:
+**Kosten:** ein zusätzlicher Backtest pro Stufe. Seit der verkürzten Suchphase läuft
+auch die Referenz nur über das letzte Entwicklungsjahr. Deshalb:
 Schalter `Referenz-Backtest nach Hand-Pick` (Default: an) in den Projekteinstellungen.
 
 ---
@@ -330,7 +330,7 @@ Button in der Workflow-Toolbar und Kontextmenü.
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
 │ Master-Strategie-Verlauf — ToTheMoon132 AUDCAD M5                       │
-│ Referenz: 2022-08-01 … 2025-08-01 · OHLC M1 · 11 Einträge               │
+│ Referenz: 2024-08-01 … 2025-08-01 · OHLC M1 · 11 Einträge               │
 ├──────────────┬──────────────────────────────┬───────────────────────────┤
 │ Einträge     │ Equitykurve                  │ Kennzahlen                │
 │              │                              │                           │
@@ -505,7 +505,7 @@ gespeichert werden — sie ist der einzige Nachweis über den Verlauf.
 
 ## 9. Getroffene Entscheidungen
 
-1. **Referenz-Backtest:** Dev-Range (2022-08-01 … 2025-08-01, inkl. Forward-Fenster),
+1. **Referenz-Backtest:** einjähriges Suchfenster (2024-08-01 … 2025-08-01),
    Modelling **OHLC M1**. Every Tick bleibt den Retest-Stufen 13/14 vorbehalten.
 2. **Verschlechterung im Automatikmodus:** Kette **weiterlaufen lassen**, aber nie auf
    einer schlechteren Basis. Der Master bewegt sich nur vorwärts: Was die Messung nicht als

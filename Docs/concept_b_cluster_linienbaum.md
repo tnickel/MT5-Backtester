@@ -61,8 +61,11 @@ auf den Form-Parametern, nicht auf allen 20 EA-Inputs:
 - Envelope-Timeframe / Deviation (oben/unten, je nachdem was im Set steht)
 
 Ziel: nicht 126 Klone von Step 900, sondern z. B. „eng / weit / aggressiv
-Lot / anderes Envelope“. Maximal **10** Linien. Innerhalb einer Linie
-dürfen **2–3 nahe Verwandte** leben (Feintuning, nicht zweite Form).
+Lot / anderes Envelope“. Maximal **10** Form-Linien (B1–B10). Innerhalb
+der Linien dürfen **Cousins** leben — der Tick-Eingangspool (g01-Cluster /
+k12 bzw. Guided g11) darf bis **`MAX_POOLED_STRATEGIES` (100)** gestempelte
+Strategien halten, damit Smoke/1J-Tick mehr Kandidaten an den 3J-Retest
+durchreichen.
 
 ### 3.2 Improve-or-die
 
@@ -93,28 +96,38 @@ Show Flow bleibt der Ort für den Überblick. Statt nur
 Parameter-Übergänge der einen Master-Linie: **Linienbaum**.
 
 ```
-Stamm              B1 Grid-eng    B2 Grid-weit    B3 …
-g01 Grid           ● 3            ● 2             ● 1
-g02 Taktung        ● 3 ▲          ● 2             ○ 0 ✕
-…
-g09 Entry          B2 · g09 · 2
-…
-k16 OOS            ● 1 ★          ● 1             —
+                 Stamm g01..k18
+                        |
+          +-------------+-------------+
+          |                           |
+     B1 g01 n=3                  B2 g01 n=2
+          |                           |
+     B1 g02 n=3 ▲                B2 g02 0 ✕
+          …
 ```
 
 Knotenbeschriftung: **wie viele Strategien in diesem Ast gerade leben**,
-z. B. `B2 · g09 · 2`.
+z. B. `B1 g09 n=2`.
 
 | Marker | Bedeutung |
 |---|---|
 | Zahl | Lebende in der `_pick` dieser Stufe / dieses Clusters |
 | `▲` | Diese Stufe hat die Linie verbessert |
-| `0 ✕` | Tot (grau, Historie) |
+| `0 ✕` | Tot (grau, Historie) — Ast bleibt sichtbar |
 | `★` | OOS-Gewinner (k16) |
-| `—` | Stufe für diese Linie nicht mehr gelaufen |
+| `—` | Stufe für diese Linie nicht gelaufen / keine Daten — **wird nicht gezeichnet** |
 
-Klick auf einen Ast öffnet die **bestehende Equity-Galerie**, gefiltert
-auf diesen Cluster. Keine 10 000 Thumbnails im Baum.
+Leere Platzhalter (alles `—`) erzeugen keinen Linienbaum: Show Flow fällt dann auf die
+Parameter-Timeline zurück, bis Pick-Databanken echte Cluster-Zähler haben.
+
+**Darstellung:** zoombare Multipath-Grafik (Stamm vertikal, Cluster-Äste mit
+Kanten) — Top-Down-Stammbaum (Stamm oben, Gabelung zu B1/B2…, dann vertikal
+pro Linie). Start = Fit/Übersicht, Ziehen = Pan, Mausrad = Zoom.
+
+Klick auf einen **Ast-Knoten** öffnet die Knoten-Detailleiste: Anzahl +
+Strategietabelle (cluster-gefiltert), Buttons für Equity-Galerie, Details und
+Einzel-Backtest im MT5. Klick auf den **Stamm** bleibt die Parameter-Übernahme.
+Keine 10 000 Thumbnails im Baum.
 
 ---
 
@@ -133,16 +146,16 @@ genau das: clusterId → Stufe → Anzahl lebend.
 
 - Workflow-Editor: Kette wie bisher. Kein zweiter Graph zum Umsortieren
   von Tasks.
-- **Show Flow:** Baum wie oben. Grau = tot, Stern = OOS.
-- Klick Ast → Galerie nur dieser Linie.
+- **Show Flow:** zoombare Stamm-/Ast-Grafik. Grau = tot, Stern = OOS.
+- Klick Ast → Knoten-Inhalt (Strategien) + Galerie / Details / Einzel-Backtest.
 - Automatik: Top-Score **innerhalb** B3, nicht „globaler Sieger tötet
   B1–B10“.
 - Hand-Pick bleibt möglich; Cluster-ID der gewählten Strategie bleibt
   kleben.
 
 Ohne Census (alte Projekte): Show Flow bleibt die lineare Timeline.
-Mit Census: Linienbaum oben, Parameter-Board darunter wie bisher.
-Klick auf eine Cluster-Zelle öffnet die Equity-Galerie (Pick-Databank, gefiltert auf diese Linie).
+Mit Census: Linienbaum (Canvas) oben, Detailboard darunter.
+Klick auf einen Ast-Knoten zeigt die Strategien der Pick-Databank (gefiltert auf diese Linie).
 Klick auf die Stufe (Stamm) bleibt die Parameter-Übernahme.
 Phase 4: Automatik ist **pro lebender Linie**. Tote Linien bleiben im Census (`DEAD`, `0 ✕`)
 und gehen nicht in den nächsten Optimizer. Folge-Optimizer mit 2+ lebenden Linien
@@ -157,15 +170,16 @@ Damit die Doku nicht so tut, als wäre der Baum schon klickbar:
 | Phase | Inhalt | Stand |
 |---|---|---|
 | **1** | `clusterId` an `CombinedPass`; `ClusterCensus` am `CustomProject`; IDs stempeln; Tests. **Keine UI.** | erledigt |
-| **2** | Show Flow als Linienbaum (Stamm/Äste, Zähler, `▲` / `0 ✕`; `★` sobald OOS im Census) | erledigt (Show Flow → Linienbaum; ohne Census linearer Fallback) |
-| **3** | Klick auf Ast → Equity-Galerie gefiltert auf Cluster | erledigt (Zelle = Galerie auf Pick/`clusterId`; Stamm = Handoff; leere Linie = leere Galerie) |
+| **2** | Show Flow als Linienbaum (Stamm/Äste, Zähler, `▲` / `0 ✕`; `★` sobald OOS im Census) | erledigt (zoombare Multipath-Canvas; ohne Census linearer Fallback) |
+| **3** | Klick auf Ast → Inhalt + Equity-Galerie / Backtest | erledigt (Knoten-Detail mit Strategie-Tabelle; Galerie + `SingleBacktestHelper`; Stamm = Handoff) |
 | **4** | Improve-or-die in der Pipeline; Automatik **pro Cluster** | erledigt (MASTER_REFERENCE misst jede LIVE-Linie; tot → nicht adoptiert; Folge-Optimizer sequentiell pro Linie, ein Terminal; ohne Census/clusterId bleibt die alte Einzel-Automatik) |
-| **5** | Tick-Kill- und Guided-Factories stempeln Cluster-IDs ab **g01** | erledigt (nach g01-Qualitätsfilter: Diversität auf Grid-Form → `g01_grid_pick` mit B1–B10; k12/g11 Top-20 ist Re-Diversität der Überlebenden und behält `clusterId`; max. 10 Linien) |
+| **5** | Tick-Kill- und Guided-Factories stempeln Cluster-IDs ab **g01** | erledigt (B1–B10 Linien; Pool bis 100 Cousins in g01-Cluster / k12 bzw. Guided g11; Stempel kürzt nicht mehr auf 10 Passes) |
 
 Phase 5 hängt an 1+4: Ohne Stempel ab g01 gibt es in k12 wieder nur
 einen Haufen gleicher Grids. Die Factories legen dafür einen eigenen
 `DIVERSITY_FILTER` (`01 Grid-Fundament — Diversität (B-Cluster)`) zwischen
-`g01_grid_quality` und `g01_grid_pick`. g02 liest die geclusterten Picks.
+`g01_grid_quality` und `g01_grid_pick`. Danach filtert ein **3J-OHLC-Gate**
+(`g01_grid_3y_ohlc`) die Cluster-Picks; g02 liest nur diese Überlebenden.
 
 ---
 
