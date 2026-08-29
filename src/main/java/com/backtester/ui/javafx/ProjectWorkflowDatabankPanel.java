@@ -16,6 +16,7 @@ import javafx.beans.property.SimpleStringProperty;
 import javafx.collections.FXCollections;
 import javafx.collections.ObservableList;
 import javafx.collections.transformation.SortedList;
+import javafx.concurrent.Task;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.control.Alert;
@@ -43,6 +44,8 @@ import javafx.scene.layout.VBox;
 import javafx.stage.FileChooser;
 import javafx.stage.Window;
 
+import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.time.LocalDate;
@@ -52,6 +55,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
 import java.util.Set;
+import java.util.stream.Stream;
 
 /**
  * Bottom databank TabPane + toolbar for {@link ProjectWorkflowEditorView}.
@@ -129,6 +133,7 @@ public class ProjectWorkflowDatabankPanel {
     private TabPane bottomDatabankTabPane;
     private Pane databankToolbar;
     private CheckBox persistDatabanksCheckBox;
+    private Button importMt5OptiBtn;
     private Label parameterAdoptionBanner;
     private boolean rebuildingDatabankTabs;
     /** Task-linked databanks: yellow tab headers; focus prefers output. */
@@ -773,7 +778,7 @@ public class ProjectWorkflowDatabankPanel {
                     () -> refreshDatabanksUI(currentDbName));
         });
 
-        Button importMt5OptiBtn = new Button("📥 MT5 Opti importieren");
+        importMt5OptiBtn = new Button("📥 MT5 Opti importieren");
         importMt5OptiBtn.setStyle("-fx-background-color: transparent; -fx-text-fill: #69f0ae; -fx-font-weight: bold; -fx-cursor: hand;");
         importMt5OptiBtn.setTooltip(new Tooltip(
                 "Liest OptimizationReport.xml/.htm aus MetaTrader in die aktuelle Databank.\n"
@@ -896,50 +901,94 @@ public class ProjectWorkflowDatabankPanel {
             return;
         }
 
-        try {
-            Mt5OptimizationImportService.ImportResult imported;
-            if (choice.get() == fromMt5) {
-                Path mtDir = resolveConfiguredMtInstallDir();
-                if (mtDir == null) {
-                    infoAlert("MT5 Opti importieren",
-                            "Kein MT5-Installationspfad in der Konfiguration gefunden.\n"
-                                    + "Bitte Datei manuell wählen oder mt5.terminal.path setzen.");
-                    return;
-                }
-                host.logToConsole("IMPORT", "Lese OptimizationReport aus MT5-Ordner (ohne Prozess-Eingriff): " + mtDir);
-                imported = Mt5OptimizationImportService.importFromMt5Install(mtDir);
-            } else {
-                FileChooser chooser = new FileChooser();
-                chooser.setTitle("OptimizationReport wählen");
-                chooser.getExtensionFilters().addAll(
-                        new FileChooser.ExtensionFilter("MT5/MT4 Reports", "*.xml", "*.htm", "*.html"),
-                        new FileChooser.ExtensionFilter("Alle Dateien", "*.*"));
-                Path mtDir = resolveConfiguredMtInstallDir();
-                if (mtDir != null) {
-                    chooser.setInitialDirectory(mtDir.toFile());
-                }
-                java.io.File file = chooser.showOpenDialog(owner);
-                if (file == null) {
-                    return;
-                }
-                Path main = file.toPath();
-                Path forward = main.getParent() != null
-                        ? main.getParent().resolve(Mt5OptimizationImportService.FORWARD_XML)
-                        : null;
-                host.logToConsole("IMPORT", "Lese Report-Datei (ohne Prozess-Eingriff): " + main);
-                imported = Mt5OptimizationImportService.importFromReportFiles(main, forward);
+        // Parsing large reports runs in a background Task; only dialogs and
+        // table updates stay on the FX thread.
+        if (choice.get() == fromMt5) {
+            Path mtDir = resolveConfiguredMtInstallDir();
+            if (mtDir == null) {
+                infoAlert("MT5 Opti importieren",
+                        "Kein MT5-Installationspfad in der Konfiguration gefunden.\n"
+                                + "Bitte Datei manuell wählen oder mt5.terminal.path setzen.");
+                return;
             }
+            host.logToConsole("IMPORT", "Lese OptimizationReport aus MT5-Ordner (ohne Prozess-Eingriff): " + mtDir);
+            startMt5OptiImportTask(dbName, mtDir, null, null);
+        } else {
+            FileChooser chooser = new FileChooser();
+            chooser.setTitle("OptimizationReport wählen");
+            chooser.getExtensionFilters().addAll(
+                    new FileChooser.ExtensionFilter("MT5/MT4 Reports", "*.xml", "*.htm", "*.html"),
+                    new FileChooser.ExtensionFilter("Alle Dateien", "*.*"));
+            Path mtDir = resolveConfiguredMtInstallDir();
+            if (mtDir != null) {
+                chooser.setInitialDirectory(mtDir.toFile());
+            }
+            java.io.File file = chooser.showOpenDialog(owner);
+            if (file == null) {
+                return;
+            }
+            Path main = file.toPath();
+            Path forward = main.getParent() != null
+                    ? main.getParent().resolve(Mt5OptimizationImportService.FORWARD_XML)
+                    : null;
+            host.logToConsole("IMPORT", "Lese Report-Datei (ohne Prozess-Eingriff): " + main);
+            startMt5OptiImportTask(dbName, null, main, forward);
+        }
+    }
 
-            applyImportedPasses(dbName, imported);
-        } catch (Exception ex) {
-            host.logToConsole("IMPORT", "Import fehlgeschlagen: " + ex.getMessage());
-            Alert err = new Alert(Alert.AlertType.ERROR,
-                    "Import fehlgeschlagen:\n\n" + ex.getMessage(),
-                    ButtonType.OK);
-            err.setTitle("MT5 Opti importieren");
-            err.setHeaderText(null);
-            if (owner != null) err.initOwner(owner);
-            err.showAndWait();
+    /** Runs the file parsing off the FX thread; button disabled while running. */
+    private void startMt5OptiImportTask(String dbName, Path mtInstallDir, Path mainReport, Path forwardReport) {
+        if (importMt5OptiBtn != null) importMt5OptiBtn.setDisable(true);
+        Task<Mt5OptimizationImportService.ImportResult> importTask = new Task<>() {
+            @Override
+            protected Mt5OptimizationImportService.ImportResult call() throws Exception {
+                updateMessage("MT5-Report wird gelesen und geparst …");
+                return mtInstallDir != null
+                        ? Mt5OptimizationImportService.importFromMt5Install(mtInstallDir)
+                        : Mt5OptimizationImportService.importFromReportFiles(mainReport, forwardReport);
+            }
+        };
+        // Task fires property changes on the FX thread — reuse the status banner.
+        importTask.messageProperty().addListener((obs, oldMsg, newMsg) -> {
+            if (newMsg != null && !newMsg.isBlank()) {
+                showParameterAdoptionBanner(newMsg, true);
+            }
+        });
+        importTask.setOnSucceeded(e -> {
+            if (importMt5OptiBtn != null) importMt5OptiBtn.setDisable(false);
+            hideParameterAdoptionBanner();
+            try {
+                applyImportedPasses(dbName, importTask.getValue());
+            } catch (Exception ex) {
+                showImportError(ex);
+            }
+        });
+        importTask.setOnFailed(e -> {
+            if (importMt5OptiBtn != null) importMt5OptiBtn.setDisable(false);
+            hideParameterAdoptionBanner();
+            showImportError(importTask.getException());
+        });
+        Thread importThread = new Thread(importTask, "mt5-opti-import");
+        importThread.setDaemon(true);
+        importThread.start();
+    }
+
+    private void showImportError(Throwable ex) {
+        host.logToConsole("IMPORT", "Import fehlgeschlagen: " + ex.getMessage());
+        Alert err = new Alert(Alert.AlertType.ERROR,
+                "Import fehlgeschlagen:\n\n" + ex.getMessage(),
+                ButtonType.OK);
+        err.setTitle("MT5 Opti importieren");
+        err.setHeaderText(null);
+        Window owner = host.getOwnerWindow();
+        if (owner != null) err.initOwner(owner);
+        err.showAndWait();
+    }
+
+    private void hideParameterAdoptionBanner() {
+        if (parameterAdoptionBanner != null) {
+            parameterAdoptionBanner.setVisible(false);
+            parameterAdoptionBanner.setManaged(false);
         }
     }
 
@@ -948,6 +997,7 @@ public class ProjectWorkflowDatabankPanel {
         WorkflowTask optimizer = findOptimizerForTargetDatabank(dbName);
         String identityError = validateImportedReportIdentity(optimizer, imported);
         if (!identityError.isBlank()) {
+            deleteImportedSnapshotDirectory(imported);
             host.logToConsole("IMPORT", "Import abgebrochen: " + identityError);
             errorAlert("MT5 Opti importieren", identityError);
             return;
@@ -981,6 +1031,7 @@ public class ProjectWorkflowDatabankPanel {
 
         Optional<ButtonType> decided = mode.showAndWait();
         if (decided.isEmpty() || decided.get() == cancel) {
+            deleteImportedSnapshotDirectory(imported);
             return;
         }
 
@@ -1021,6 +1072,27 @@ public class ProjectWorkflowDatabankPanel {
                                 + "\nMetaTrader wurde weder gestartet noch beendet.");
             }));
         });
+    }
+
+    /**
+     * The import snapshot directory only stays on disk when the import is
+     * actually applied (it is the reportDirectory of the archived passes); on
+     * abort paths it is cleaned up again.
+     */
+    private void deleteImportedSnapshotDirectory(Mt5OptimizationImportService.ImportResult imported) {
+        Path dir = imported != null ? imported.snapshotDirectory() : null;
+        if (dir == null || !Files.isDirectory(dir)) return;
+        try (Stream<Path> paths = Files.walk(dir)) {
+            paths.sorted(Comparator.reverseOrder()).forEach(p -> {
+                try {
+                    Files.deleteIfExists(p);
+                } catch (IOException ex) {
+                    host.logToConsole("IMPORT", "Snapshot-Datei konnte nicht gelöscht werden: " + p);
+                }
+            });
+        } catch (IOException ex) {
+            host.logToConsole("IMPORT", "Snapshot-Verzeichnis konnte nicht aufgeräumt werden: " + dir);
+        }
     }
 
     private String validateImportedReportIdentity(WorkflowTask optimizer,

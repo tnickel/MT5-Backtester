@@ -311,6 +311,23 @@ public class DatabaseManagerPersistenceTest {
         assertFalse(unavailable.saveWorkflowStrategyConfig("TestEA", "{}"));
     }
 
+    @Test
+    public void testSaveRunReportsDatabaseFailure() {
+        DatabaseManager unavailable = new DatabaseManager("jdbc:unsupported:run-history");
+
+        assertFalse(unavailable.saveRun("BACKTEST", "TestEA", 1000L, "{}", ""));
+    }
+
+    @Test
+    public void testOtherSaveMethodsReportDatabaseFailure() {
+        DatabaseManager unavailable = new DatabaseManager("jdbc:unsupported:save-failures");
+
+        assertFalse(unavailable.saveOptimizationState("{}", "[]", "[]"));
+        assertFalse(unavailable.saveBatch("FailingBatch", 1000L, "", "[]"));
+        assertFalse(unavailable.saveEaParameterSettings("TestEA", "EURUSD", "M5", "{}"));
+        assertFalse(unavailable.saveAutomaticReview("TestEA", "EURUSD", "M5", 1000L, 1, "{}", "{}"));
+    }
+
     @Test(expected = DatabaseManager.DatabaseAccessException.class)
     public void testCustomProjectReadDistinguishesDatabaseFailureFromEmptyResult() {
         DatabaseManager unavailable = new DatabaseManager("jdbc:unsupported:custom-projects");

@@ -411,9 +411,15 @@ public class DatabaseManager {
         }
     }
 
-    public int saveRun(String runType, String expertName, long timestamp, String resultJson, String htmlPath) {
+    /**
+     * @return {@code true} on success; {@code false} when the run could not be
+     *         persisted (e.g. database locked or disk full) — callers must treat
+     *         the run as NOT persisted. Callers that need the generated primary
+     *         key can look it up via {@link #findRunId(String, String, long, String)}
+     *         after a successful save.
+     */
+    public boolean saveRun(String runType, String expertName, long timestamp, String resultJson, String htmlPath) {
         String sql = "INSERT INTO HISTORY_RUNS(run_type, expert_name, timestamp, result_json, html_path) VALUES(?,?,?,?,?)";
-        int generatedId = -1;
         try (Connection conn = connect(); PreparedStatement pstmt = conn.prepareStatement(sql, Statement.RETURN_GENERATED_KEYS)) {
             pstmt.setString(1, runType);
             pstmt.setString(2, expertName);
@@ -421,16 +427,46 @@ public class DatabaseManager {
             pstmt.setString(4, resultJson);
             pstmt.setString(5, htmlPath);
             pstmt.executeUpdate();
+            int generatedId = -1;
             try (ResultSet rs = pstmt.getGeneratedKeys()) {
                 if (rs.next()) {
                     generatedId = rs.getInt(1);
                 }
             }
             log.info("Saved {} run for {} to database with ID {}.", runType, expertName, generatedId);
+            return true;
         } catch (SQLException e) {
-            log.error("Failed to save run to database", e);
+            log.error("Failed to save {} run for {} to database", runType, expertName, e);
+            return false;
         }
-        return generatedId;
+    }
+
+    /**
+     * Looks up the primary key of a persisted run, e.g. right after a successful
+     * {@link #saveRun(String, String, long, String, String)} call (the save itself
+     * only reports success/failure). Matches on the exact uniqueness tuple; the
+     * newest matching row wins in the unlikely case of duplicates.
+     *
+     * @return the HISTORY_RUNS id, or -1 when no matching row exists / the lookup failed.
+     */
+    public int findRunId(String runType, String expertName, long timestamp, String htmlPath) {
+        String sql = "SELECT id FROM HISTORY_RUNS WHERE run_type = ? AND expert_name = ? AND timestamp = ? "
+                + "AND (html_path = ? OR (html_path IS NULL AND ? IS NULL)) ORDER BY id DESC";
+        try (Connection conn = connect(); PreparedStatement pstmt = conn.prepareStatement(sql)) {
+            pstmt.setString(1, runType);
+            pstmt.setString(2, expertName);
+            pstmt.setLong(3, timestamp);
+            pstmt.setString(4, htmlPath);
+            pstmt.setString(5, htmlPath);
+            try (ResultSet rs = pstmt.executeQuery()) {
+                if (rs.next()) {
+                    return rs.getInt(1);
+                }
+            }
+        } catch (SQLException e) {
+            log.error("Failed to look up run ID for {} / {}", runType, expertName, e);
+        }
+        return -1;
     }
 
     public List<HistoryRun> getAllRuns() {
@@ -537,7 +573,11 @@ public class DatabaseManager {
         }
     }
 
-    public void saveOptimizationState(String optJson, String selectedJson, String sensitivityJson) {
+    /**
+     * @return {@code true} on success; {@code false} when the state could not be
+     *         persisted — callers must treat the optimization state as NOT persisted.
+     */
+    public boolean saveOptimizationState(String optJson, String selectedJson, String sensitivityJson) {
         String sql = "INSERT OR REPLACE INTO OPTIMIZATION_STATE (id, opt_result_json, selected_passes_json, sensitivity_results_json) VALUES (1, ?, ?, ?)";
         try (Connection conn = connect(); PreparedStatement pstmt = conn.prepareStatement(sql)) {
             pstmt.setString(1, optJson);
@@ -545,8 +585,10 @@ public class DatabaseManager {
             pstmt.setString(3, sensitivityJson);
             pstmt.executeUpdate();
             log.info("Saved optimization state to database.");
+            return true;
         } catch (SQLException e) {
             log.error("Failed to save optimization state", e);
+            return false;
         }
     }
 
@@ -785,7 +827,11 @@ public class DatabaseManager {
     // MULTI_BACKTEST_BATCHES – persist multi-backtest batch runs
     // ====================================================================
 
-    public void saveBatch(String batchName, long timestamp, String htmlReportPath, String resultsJson) {
+    /**
+     * @return {@code true} on success; {@code false} when the batch could not be
+     *         persisted — callers must treat the batch as NOT persisted.
+     */
+    public boolean saveBatch(String batchName, long timestamp, String htmlReportPath, String resultsJson) {
         String sql = "INSERT INTO MULTI_BACKTEST_BATCHES (batch_name, timestamp, html_report_path, results_json) VALUES (?, ?, ?, ?)";
         try (Connection conn = connect(); PreparedStatement p = conn.prepareStatement(sql)) {
             p.setString(1, batchName);
@@ -794,8 +840,10 @@ public class DatabaseManager {
             p.setString(4, resultsJson);
             p.executeUpdate();
             log.info("Saved multi-backtest batch '{}' to database.", batchName);
+            return true;
         } catch (SQLException e) {
             log.error("Failed to save batch '{}'", batchName, e);
+            return false;
         }
     }
 
@@ -874,7 +922,11 @@ public class DatabaseManager {
         return runs;
     }
 
-    public void saveEaParameterSettings(String expertName, String symbol, String period, String parametersJson) {
+    /**
+     * @return {@code true} on success; {@code false} when the settings could not be
+     *         persisted — callers must treat the parameter settings as NOT persisted.
+     */
+    public boolean saveEaParameterSettings(String expertName, String symbol, String period, String parametersJson) {
         String sql = "INSERT OR REPLACE INTO EA_PARAMETER_SETTINGS (expert_name, symbol, period, parameters_json, updated_at) VALUES (?, ?, ?, ?, ?)";
         try (Connection conn = connect(); PreparedStatement pstmt = conn.prepareStatement(sql)) {
             pstmt.setString(1, expertName);
@@ -884,8 +936,10 @@ public class DatabaseManager {
             pstmt.setLong(5, System.currentTimeMillis());
             pstmt.executeUpdate();
             log.info("Saved EA parameter settings to DB for: {} [{}, {}]", expertName, symbol, period);
+            return true;
         } catch (SQLException e) {
             log.error("Failed to save EA parameter settings to database for: " + expertName, e);
+            return false;
         }
     }
 
@@ -1240,7 +1294,11 @@ public class DatabaseManager {
         public String getResult2yJson() { return result2yJson; }
     }
 
-    public void saveAutomaticReview(String expertName, String symbol, String period, long runTimestamp, int passNumber, String result1yJson, String result2yJson) {
+    /**
+     * @return {@code true} on success; {@code false} when the review could not be
+     *         persisted — callers must treat the automatic review as NOT persisted.
+     */
+    public boolean saveAutomaticReview(String expertName, String symbol, String period, long runTimestamp, int passNumber, String result1yJson, String result2yJson) {
         String sql = "INSERT OR REPLACE INTO STRATEGY_AUTOMATIC_REVIEWS(expert_name, symbol, period, run_timestamp, pass_number, result_1y_json, result_2y_json) VALUES(?,?,?,?,?,?,?)";
         try (Connection conn = connect(); PreparedStatement pstmt = conn.prepareStatement(sql)) {
             pstmt.setString(1, expertName);
@@ -1252,8 +1310,10 @@ public class DatabaseManager {
             pstmt.setString(7, result2yJson);
             pstmt.executeUpdate();
             log.info("Saved automatic review for {} (Pass {}).", expertName, passNumber);
+            return true;
         } catch (SQLException e) {
-            log.error("Failed to save automatic review", e);
+            log.error("Failed to save automatic review for {} (Pass {})", expertName, passNumber, e);
+            return false;
         }
     }
 
