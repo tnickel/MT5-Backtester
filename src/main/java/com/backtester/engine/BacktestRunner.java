@@ -296,13 +296,16 @@ public class BacktestRunner {
                 try {
                     com.google.gson.JsonObject metrics =
                             BacktestStatisticsArtifact.create(result, btConfig);
-                    com.backtester.database.DatabaseManager.getInstance().saveRun(
-                        "BACKTEST", 
-                        result.getExpert(), 
-                        System.currentTimeMillis(), 
-                        metrics.toString(), 
+                    if (!com.backtester.database.DatabaseManager.getInstance().saveRun(
+                        "BACKTEST",
+                        result.getExpert(),
+                        System.currentTimeMillis(),
+                        metrics.toString(),
                         reportInOutput.toAbsolutePath().toString()
-                    );
+                    )) {
+                        log.error("Backtest run for {} was NOT persisted to database - it will be missing from history",
+                                result.getExpert());
+                    }
                 } catch (Exception e) {
                     log.error("Failed to save to DB", e);
                 }
