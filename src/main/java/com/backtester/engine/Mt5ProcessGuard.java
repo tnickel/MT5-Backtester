@@ -182,6 +182,56 @@ public class Mt5ProcessGuard {
     }
 
     /**
+     * Lists live {@code metatester64.exe} processes whose executable lives under
+     * {@code mtInstallDir} (any subdirectory — tester agents run from nested
+     * "Tester Agent" folders). Read-only — never kills. Processes whose executable
+     * path is not readable are skipped, never matched by image name alone.
+     */
+    public static java.util.List<Long> findMetatesterPidsForInstall(Path mtInstallDir) {
+        java.util.ArrayList<Long> pids = new java.util.ArrayList<>();
+        if (mtInstallDir == null) {
+            return pids;
+        }
+        Path normalizedInstall;
+        try {
+            normalizedInstall = mtInstallDir.toAbsolutePath().normalize();
+        } catch (Exception ex) {
+            return pids;
+        }
+        for (ProcessHandle ph : ProcessHandle.allProcesses().toList()) {
+            try {
+                if (!isMetatesterForInstall(ph, normalizedInstall)) {
+                    continue;
+                }
+                if (ph.isAlive()) {
+                    pids.add(ph.pid());
+                }
+            } catch (Exception ignored) {
+                // Process may have exited while iterating.
+            }
+        }
+        return pids;
+    }
+
+    private static boolean isMetatesterForInstall(ProcessHandle ph, Path normalizedInstall) {
+        var info = ph.info();
+        String cmd = info.command().orElse("");
+        if (cmd.isBlank()) return false;
+        Path exe;
+        try {
+            exe = Path.of(cmd).toAbsolutePath().normalize();
+        } catch (Exception ex) {
+            return false;
+        }
+        String fileName = exe.getFileName() != null
+                ? exe.getFileName().toString().toLowerCase(java.util.Locale.ROOT) : "";
+        if (!fileName.equals("metatester64.exe")) {
+            return false;
+        }
+        return exe.startsWith(normalizedInstall);
+    }
+
+    /**
      * Asks before killing terminals for this install. Never kills without
      * confirmation unless {@code autoKill} is true (CLI / explicit opt-in).
      *

@@ -44,12 +44,12 @@ public class IniGenerator {
         if (AppConfig.getInstance().isMt4(config.getExpert())) {
             String expertName = config.getExpert();
             String expertsMarker = "mql4\\experts\\";
-            int markerIdx = expertName.toLowerCase().indexOf(expertsMarker);
+            int markerIdx = expertName.toLowerCase(java.util.Locale.ROOT).indexOf(expertsMarker);
             if (markerIdx != -1) {
                 expertName = expertName.substring(markerIdx + expertsMarker.length());
             }
             expertName = expertName.replace('/', '\\').trim();
-            if (expertName.toLowerCase().endsWith(".ex4") || expertName.toLowerCase().endsWith(".mq4")) {
+            if (expertName.toLowerCase(java.util.Locale.ROOT).endsWith(".ex4") || expertName.toLowerCase(java.util.Locale.ROOT).endsWith(".mq4")) {
                 expertName = expertName.substring(0, expertName.length() - 4).trim();
             }
             iniContent.append("TestExpert=").append(expertName).append("\r\n");
@@ -132,12 +132,12 @@ public class IniGenerator {
             if (AppConfig.getInstance().isMt4(config.getExpert())) {
                 String expertName = config.getExpert();
                 String expertsMarker = "mql4\\experts\\";
-                int markerIdx = expertName.toLowerCase().indexOf(expertsMarker);
+                int markerIdx = expertName.toLowerCase(java.util.Locale.ROOT).indexOf(expertsMarker);
                 if (markerIdx != -1) {
                     expertName = expertName.substring(markerIdx + expertsMarker.length());
                 }
                 expertName = expertName.replace('/', '\\').trim();
-                if (expertName.toLowerCase().endsWith(".ex4") || expertName.toLowerCase().endsWith(".mq4")) {
+                if (expertName.toLowerCase(java.util.Locale.ROOT).endsWith(".ex4") || expertName.toLowerCase(java.util.Locale.ROOT).endsWith(".mq4")) {
                     expertName = expertName.substring(0, expertName.length() - 4).trim();
                 }
                 writer.write("TestExpert=" + expertName + "\r\n");

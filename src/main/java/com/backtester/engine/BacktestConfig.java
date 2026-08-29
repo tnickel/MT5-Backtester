@@ -153,7 +153,7 @@ public class BacktestConfig {
             expertName = expertName.substring(expertName.lastIndexOf('/') + 1);
         }
         // Remove .ex5 or .ex4 extension if present
-        if (expertName.toLowerCase().endsWith(".ex5") || expertName.toLowerCase().endsWith(".ex4")) {
+        if (expertName.toLowerCase(java.util.Locale.ROOT).endsWith(".ex5") || expertName.toLowerCase(java.util.Locale.ROOT).endsWith(".ex4")) {
             expertName = expertName.substring(0, expertName.length() - 4);
         }
         String safePeriod = period != null ? period : "";

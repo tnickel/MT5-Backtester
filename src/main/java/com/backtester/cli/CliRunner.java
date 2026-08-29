@@ -170,6 +170,7 @@ public class CliRunner {
                     optConfig.setCurrency(settings.currency);
                     optConfig.setLeverage(settings.leverage);
                     optConfig.setModel(settings.model);
+                    optConfig.setAutoKillMt5(settings.auto_kill_mt5);
                     optConfig.setShutdownTerminal(settings.auto_kill_mt5);
                     optConfig.setOptimizationMode(settings.optimization);
                     optConfig.setOptimizationCriterion(4); // Recovery Factor max

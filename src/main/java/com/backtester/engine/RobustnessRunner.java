@@ -12,6 +12,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -25,6 +26,17 @@ import java.util.stream.Collectors;
 public class RobustnessRunner {
 
     private static final Logger log = LoggerFactory.getLogger(RobustnessRunner.class);
+    /**
+     * Memory cap for the sweep result map: it keeps every period's full
+     * {@link OptimizationResult} alive until the whole scan has finished, and a
+     * 1D sweep can produce thousands of passes (each with parameter values and
+     * archived .set lines). Consumers (HTML report, flat-parameter detection)
+     * work on the individual passes, so stored results cannot be reduced to
+     * aggregates — instead each period keeps only its best passes by the
+     * configured optimization criterion. Full reports remain on disk in the
+     * run's output directory.
+     */
+    private static final int MAX_PASSES_PER_SWEEP_PERIOD = 50;
     private final AppConfig config;
     private final EaParameterManager eaParamManager;
     private java.util.function.Consumer<String> logCallback;
@@ -188,6 +200,7 @@ public class RobustnessRunner {
                 sweepConfig.setForwardMode(baseConfig.getForwardMode());
                 sweepConfig.setForwardDate(baseConfig.getForwardDate());
                 sweepConfig.setUseLocal(baseConfig.isUseLocal());
+                sweepConfig.setAutoKillMt5(baseConfig.isAutoKillMt5());
                 
                 String periodLabel = fromDate + " to " + toDate;
                 if (i == 0) periodLabel += " (Base)";
@@ -222,6 +235,12 @@ public class RobustnessRunner {
                     int actualPasses = optResult.getPasses().size();
                     logMessage(String.format("Finished sweep for %s (%s). Produced %d / %d passes.",
                             sweepParam.getName(), periodLabel, actualPasses, expectedSteps));
+                    trimToTopPasses(optResult, baseConfig.getOptimizationCriterion());
+                    if (actualPasses > MAX_PASSES_PER_SWEEP_PERIOD) {
+                        logMessage(String.format(
+                                "Memory guard: kept top %d of %d passes for %s (%s); the full reports remain on disk.",
+                                MAX_PASSES_PER_SWEEP_PERIOD, actualPasses, sweepParam.getName(), periodLabel));
+                    }
                     periodMap.put(periodLabel, optResult);
                 } else if (!cancelled) {
                     logMessage("WARNING: Sweep for " + sweepParam.getName() + " on period " + periodLabel + " failed: " + (optResult != null ? optResult.getMessage() : "null result"));
@@ -274,5 +293,41 @@ public class RobustnessRunner {
         if (progressCountCallback != null) progressCountCallback.accept(totalOperations, totalOperations);
         logMessage("Robustness Sweep completely finished.");
         return result;
+    }
+
+    /**
+     * Trims the stored pass lists of one sweep period to
+     * {@link #MAX_PASSES_PER_SWEEP_PERIOD} entries, keeping the best passes by
+     * the configured optimization criterion (same mapping as
+     * {@link OptimizationResult#getBestByCriterion}). Pass order within a period
+     * is irrelevant to all consumers: the HTML report re-sorts by the swept
+     * parameter value and the flat-parameter detection compares profits
+     * order-independently.
+     */
+    private static void trimToTopPasses(OptimizationResult optResult, int criterion) {
+        trimList(optResult.getPasses(), criterion);
+        trimList(optResult.getForwardPasses(), criterion);
+    }
+
+    private static void trimList(List<OptimizationResult.Pass> passes, int criterion) {
+        if (passes == null || passes.size() <= MAX_PASSES_PER_SWEEP_PERIOD) {
+            return;
+        }
+        Comparator<OptimizationResult.Pass> byScore = switch (criterion) {
+            case 0 -> Comparator.comparingDouble(OptimizationResult.Pass::getBalance);
+            case 1 -> Comparator.comparingDouble(OptimizationResult.Pass::getProfitFactor);
+            case 2 -> Comparator.comparingDouble(OptimizationResult.Pass::getExpectedPayoff);
+            case 3 -> Comparator.comparingDouble((OptimizationResult.Pass p) -> -p.getDrawdownPercent());
+            case 4 -> Comparator.comparingDouble(OptimizationResult.Pass::getRecoveryFactor);
+            case 5 -> Comparator.comparingDouble(OptimizationResult.Pass::getSharpeRatio);
+            case 6 -> Comparator.comparingDouble(OptimizationResult.Pass::getCustomCriterion);
+            default -> Comparator.comparingDouble(OptimizationResult.Pass::getProfit);
+        };
+        List<OptimizationResult.Pass> trimmed = passes.stream()
+                .sorted(byScore.reversed())
+                .limit(MAX_PASSES_PER_SWEEP_PERIOD)
+                .collect(Collectors.toCollection(ArrayList::new));
+        passes.clear();
+        passes.addAll(trimmed);
     }
 }

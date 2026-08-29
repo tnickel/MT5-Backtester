@@ -96,13 +96,13 @@ public class OptimizationConfig {
     private boolean shutdownTerminal = true;
 
     /**
-     * Whether stale terminal processes of THIS install may be killed without
-     * asking (unattended workflow/automation runs). false shows a confirmation
-     * dialog (GUI) or aborts (CLI). Independent of {@link #shutdownTerminal},
+     * Contract: {@code true} silently kills stale terminal processes of THIS install
+     * (unattended CLI/workflow runs); {@code false} asks before killing (GUI
+     * confirmation dialog; CLI aborts). Independent of {@link #shutdownTerminal},
      * which only controls whether OUR launched terminal closes itself after
      * the run.
      */
-    private boolean autoKillMt5 = true;
+    private boolean autoKillMt5 = false;
 
     // --- Getters & Setters ---
 

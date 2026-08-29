@@ -467,13 +467,30 @@ public class WorkflowEngine {
             if (expert != null && !expert.isEmpty()) {
                 saveStrategyConfig(expert);
             }
+            // Snapshot the volatile step results under one lock: reading them one by
+            // one below could otherwise tear across pipeline steps (e.g. serialize
+            // step-4 sensitivity results with a step-6 lastActiveStep).
+            final OptimizationResult optResultSnapshot;
+            final List<CombinedPass> selectedDiverseSnapshot;
+            final List<SensitivityResult> sensitivitySnapshot;
+            final List<CombinedPass> finalSelectedSnapshot;
+            final List<ValidationResult> validationSnapshot;
+            final int lastActiveStepSnapshot;
+            synchronized (this) {
+                optResultSnapshot = optResult;
+                selectedDiverseSnapshot = selectedDiversePasses;
+                sensitivitySnapshot = sensitivityResults;
+                finalSelectedSnapshot = finalSelectedPasses;
+                validationSnapshot = validationResults;
+                lastActiveStepSnapshot = lastActiveStep;
+            }
             com.google.gson.Gson gson = buildGson();
             String eaParamsJson = gson.toJson(eaParameters);
-            String optResultJson = gson.toJson(optResult);
-            String selectedDiverseJson = gson.toJson(selectedDiversePasses);
-            String sensitivityJson = gson.toJson(sensitivityResults);
-            String finalSelectedJson = gson.toJson(finalSelectedPasses);
-            String validationJson = gson.toJson(validationResults);
+            String optResultJson = gson.toJson(optResultSnapshot);
+            String selectedDiverseJson = gson.toJson(selectedDiverseSnapshot);
+            String sensitivityJson = gson.toJson(sensitivitySnapshot);
+            String finalSelectedJson = gson.toJson(finalSelectedSnapshot);
+            String validationJson = gson.toJson(validationSnapshot);
 
             boolean persisted = DatabaseManager.getInstance().saveWorkflowState(
                 expert,
@@ -491,7 +508,7 @@ public class WorkflowEngine {
                 sensitivityJson,
                 kiReportText,
                 finalSelectedJson,
-                lastActiveStep,
+                lastActiveStepSnapshot,
                 validationJson,
                 kiGateBypassed
             );
@@ -633,7 +650,9 @@ public class WorkflowEngine {
             throw new IllegalArgumentException("Keine EA Parameter geladen. Bitte lade einen Expert Advisor.");
         }
         // Save parameters to DB so runner can access them
-        DatabaseManager.getInstance().saveEaParameterSettings(expert, symbol, period, new com.google.gson.Gson().toJson(eaParameters));
+        if (!DatabaseManager.getInstance().saveEaParameterSettings(expert, symbol, period, new com.google.gson.Gson().toJson(eaParameters))) {
+            log.error("EA parameter settings for {} could NOT be persisted to database - downstream steps may fall back to compiled defaults", expert);
+        }
         this.lastActiveStep = Math.max(this.lastActiveStep, 1);
         saveState();
         return true;
@@ -691,6 +710,9 @@ public class WorkflowEngine {
         optConfig.setForwardDate(forwardDate);
         optConfig.setUseLocal(true);
         optConfig.setShutdownTerminal(true);
+        // Workflow runs are unattended: a stale-terminal confirmation dialog would
+        // block the pipeline, so allow silent kill regardless of the GUI default.
+        optConfig.setAutoKillMt5(true);
         if (outputBaseDirectory != null) {
             optConfig.setOutputBaseDirectory(outputBaseDirectory.toAbsolutePath().normalize().toString());
         }
@@ -1504,6 +1526,8 @@ public class WorkflowEngine {
         baseConfig.setForwardMode(forwardMode);
         baseConfig.setForwardDate(forwardDate);
         baseConfig.setUseLocal(true);
+        // Unattended workflow step — see runStep2: never block on a kill dialog.
+        baseConfig.setAutoKillMt5(true);
 
         currentSensitivityRunner = new SensitivityRunner(config);
         currentSensitivityRunner.setLogCallback(logCallback);
@@ -1511,7 +1535,7 @@ public class WorkflowEngine {
         currentSensitivityRunner.setResultUpdateCallback(updatedTarget -> {
             synchronized (this) {
                 this.sensitivityRunTimestamp = currentSensitivityRunner.getLastRunTimestamp();
-                this.sensitivityResults = new ArrayList<>(targets);
+                this.sensitivityResults = snapshotSensitivityResults(targets);
                 this.lastActiveStep = Math.max(this.lastActiveStep, 4);
                 saveStateDebounced();
             }
@@ -1548,7 +1572,44 @@ public class WorkflowEngine {
                     "Der Robustness-Lauf lieferte keine Sensitivitätsdaten. Prüfe die optimierten EA-Parameter und MT5-Berichte.");
         }
 
-        return sensitivityResults;
+        return new ArrayList<>(sensitivityResults);
+    }
+
+    /**
+     * Defensive snapshot of the sensitivity results. The runner keeps mutating the
+     * live {@link SensitivityResult} objects (status, CV maps, curves) after this
+     * list has been published via the result-update callback, so a shallow copy
+     * would still expose the in-flight objects to persistence/UI. Each element is
+     * therefore copied into a detached instance; the shared original pass is only
+     * read by the runner and stays shared on purpose.
+     */
+    private static List<SensitivityResult> snapshotSensitivityResults(List<SensitivityResult> source) {
+        List<SensitivityResult> snapshot = new ArrayList<>(source.size());
+        for (SensitivityResult result : source) {
+            if (result == null) continue;
+            SensitivityResult copy = new SensitivityResult(result.getOriginalPass());
+            for (Map.Entry<String, Double> entry : result.getParameterCVs().entrySet()) {
+                copy.addParameterCV(entry.getKey(), entry.getValue());
+            }
+            for (Map.Entry<String, List<SensitivityResult.DataPoint>> entry : result.getParameterCurves().entrySet()) {
+                if (entry.getValue() != null) {
+                    copy.addParameterCurve(entry.getKey(), new ArrayList<>(entry.getValue()));
+                }
+            }
+            for (Map.Entry<String, Double> entry : result.getParameterCVsFw().entrySet()) {
+                copy.addParameterCVFw(entry.getKey(), entry.getValue());
+            }
+            for (Map.Entry<String, List<SensitivityResult.DataPoint>> entry : result.getParameterCurvesFw().entrySet()) {
+                if (entry.getValue() != null) {
+                    copy.addParameterCurveFw(entry.getKey(), new ArrayList<>(entry.getValue()));
+                }
+            }
+            copy.setStatus(result.getStatus());
+            copy.setKiResult(result.getKiResult());
+            copy.setRunTimestamp(result.getRunTimestamp());
+            snapshot.add(copy);
+        }
+        return snapshot;
     }
 
     /** Prevents an AI task from analysing stale sensitivity rows from another databank route, fallback creating items if missing. */
@@ -2191,8 +2252,11 @@ public class WorkflowEngine {
             stateMap.put("ki_gate_bypassed", kiGateBypassed);
 
             String stateJson = gson.toJson(stateMap);
-            DatabaseManager.getInstance().saveRun("Workflow", expert, System.currentTimeMillis(), stateJson, "");
-            log.info("Workflow run successfully saved to HISTORY_RUNS database.");
+            if (DatabaseManager.getInstance().saveRun("Workflow", expert, System.currentTimeMillis(), stateJson, "")) {
+                log.info("Workflow run successfully saved to HISTORY_RUNS database.");
+            } else {
+                log.error("Workflow run for {} could NOT be persisted to HISTORY_RUNS database", expert);
+            }
         } catch (Exception e) {
             log.error("Failed to save workflow run to history database", e);
         }

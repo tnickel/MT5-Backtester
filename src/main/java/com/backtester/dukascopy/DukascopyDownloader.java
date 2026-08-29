@@ -276,19 +276,19 @@ public class DukascopyDownloader {
                 if (response.statusCode() == 200) {
                     byte[] body = response.body();
                     if (body.length > 0) {
-                        Files.write(task.localPath, body);
+                        writeCachedFile(task.localPath, body);
                         log.debug("Downloaded: {}", task.localPath.getFileName());
                         return task.localPath;
                     } else {
                         // Empty response = no data for this hour (e.g. holiday). Write a marker file so we don't redownload it.
                         log.debug("No data for: {}", task.url);
-                        Files.write(task.localPath, new byte[0]);
+                        writeCachedFile(task.localPath, new byte[0]);
                         return task.localPath;
                     }
                 } else if (response.statusCode() == 404) {
                     // No data available for this hour. Write a marker file so we don't redownload it.
                     log.debug("No data (404): {}", task.url);
-                    Files.write(task.localPath, new byte[0]);
+                    writeCachedFile(task.localPath, new byte[0]);
                     return task.localPath;
                 } else {
                     log.warn("HTTP {} for {} (attempt {})", response.statusCode(), task.url, attempt);
@@ -310,6 +310,37 @@ public class DukascopyDownloader {
             }
         }
         return null;
+    }
+
+    /**
+     * Writes a download body into the cache. The bytes first go to a temp file in
+     * the target directory and are moved to the final name only on success, so a
+     * cancelled/interrupted download (e.g. the collection timeout cancelling the
+     * future) can never leave a truncated .bi5 behind — the cache would treat it
+     * as valid data on the next run and skip re-downloading the hour.
+     */
+    private static void writeCachedFile(Path target, byte[] body) throws IOException {
+        Path temp = null;
+        try {
+            temp = Files.createTempFile(target.getParent(), target.getFileName().toString(), ".part");
+            Files.write(temp, body);
+            try {
+                Files.move(temp, target, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+            } catch (AtomicMoveNotSupportedException e) {
+                // Filesystems without atomic-move support: plain move is still far
+                // better than writing the final name directly.
+                Files.move(temp, target, StandardCopyOption.REPLACE_EXISTING);
+            }
+            temp = null;
+        } finally {
+            if (temp != null) {
+                try {
+                    Files.deleteIfExists(temp);
+                } catch (IOException cleanupError) {
+                    log.debug("Could not delete partial download {}: {}", temp, cleanupError.getMessage());
+                }
+            }
+        }
     }
 
     /**

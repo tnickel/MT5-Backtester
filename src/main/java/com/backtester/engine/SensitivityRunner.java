@@ -109,6 +109,8 @@ public class SensitivityRunner {
         sweepConfig.setOptimizationCriterion(baseConfig.getOptimizationCriterion());
         sweepConfig.setForwardMode(0);
         sweepConfig.setUseLocal(baseConfig.isUseLocal());
+        // Sweep läuft unbeaufsichtigt im Rahmen des Basis-Laufs — Kill-Entscheidung erben
+        sweepConfig.setAutoKillMt5(baseConfig.isAutoKillMt5());
 
         currentOptRunner = new OptimizationRunner(config);
         currentOptRunner.setLogCallback(msg -> log.info("Sensitivity Runner [" + label + "]: " + msg));
@@ -343,7 +345,7 @@ public class SensitivityRunner {
                 }
 
                 // Heuristic for categorical / boolean parameters even if they lack optimization bounds
-                String lowerParam = paramName.toLowerCase();
+                String lowerParam = paramName.toLowerCase(java.util.Locale.ROOT);
                 if (lowerParam.startsWith("type") || lowerParam.startsWith("mode") || lowerParam.startsWith("use") 
                     || lowerParam.startsWith("enable") || lowerParam.startsWith("is") || lowerParam.startsWith("has")
                     || lowerParam.contains("boolean") || lowerParam.contains("enum")) {

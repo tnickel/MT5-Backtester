@@ -309,7 +309,7 @@ public class Mt5LogTailer implements Runnable {
 
     public static boolean shouldForwardToUi(String line) {
         if (line == null) return false;
-        String lower = line.toLowerCase();
+        String lower = line.toLowerCase(java.util.Locale.ROOT);
         
         // Always show warnings and errors
         if (lower.contains("error") || lower.contains("failed") || lower.contains("cannot load") || 
@@ -350,7 +350,7 @@ public class Mt5LogTailer implements Runnable {
         for (String line : lines) {
             line = line.trim();
             if (!line.isEmpty()) {
-                String lowerLine = line.toLowerCase();
+                String lowerLine = line.toLowerCase(java.util.Locale.ROOT);
                 
                 // Parse optimization progress from MT5 log lines
                 if (progressCallback != null) {

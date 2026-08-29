@@ -188,6 +188,21 @@ public class VirtualDesktopHelper {
         return processIds;
     }
 
+    /**
+     * Snapshot of alive processes for {@code executable} that were not running in
+     * {@code processesBeforeLaunch}. Bounded to two results so callers can treat
+     * "exactly one" as safe and anything more as ambiguous.
+     */
+    private static List<ProcessHandle> newProcessesForExecutable(String executable, Set<Long> processesBeforeLaunch) {
+        Set<Long> excluded = processesBeforeLaunch != null ? processesBeforeLaunch : Set.of();
+        return ProcessHandle.allProcesses()
+            .filter(ProcessHandle::isAlive)
+            .filter(handle -> !excluded.contains(handle.pid()))
+            .filter(handle -> executableMatches(handle, executable))
+            .limit(2)
+            .toList();
+    }
+
     static Process resolveStartedProcess(long reportedPid,
                                          String executable,
                                          Set<Long> processesBeforeLaunch,
@@ -297,6 +312,37 @@ public class VirtualDesktopHelper {
                 log.info("Process successfully launched on Virtual Desktop {} with PID: {}", desktopNum, targetPid.get());
                 return resolveStartedProcess(targetPid.get(), executable, processesBeforeLaunch, 90_000L);
             } else {
+                // No STARTED_PID from PowerShell. The terminal may still have been
+                // launched (e.g. the desktop module failed only after Start-Process) —
+                // a blind fallback to startNormally would then spawn a SECOND MT5
+                // instance. Wait briefly for exactly one NEW process of the target
+                // executable (compared against the pre-launch snapshot) before giving up.
+                Process newcomer = null;
+                boolean ambiguous = false;
+                long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(5_000L);
+                do {
+                    List<ProcessHandle> newcomers = newProcessesForExecutable(executable, processesBeforeLaunch);
+                    if (newcomers.size() == 1) {
+                        newcomer = new PidProcess(newcomers.getFirst());
+                        break;
+                    }
+                    if (newcomers.size() > 1) {
+                        ambiguous = true;
+                        break;
+                    }
+                    if (System.nanoTime() >= deadline) break;
+                    Thread.sleep(250L);
+                } while (true);
+                if (newcomer != null) {
+                    log.info("Virtual-desktop launch: STARTED_PID missing, but new process appeared (PID {}). Tracking it.",
+                            newcomer.pid());
+                    return newcomer;
+                }
+                if (ambiguous) {
+                    log.error("Virtual-desktop launch: multiple new processes match {} — cannot track one safely, skipping normal-start fallback.",
+                            executable);
+                    return null;
+                }
                 log.warn("Could not determine PID from PowerShell output, falling back to normal start");
                 return startNormally(executable, args, workingDir);
             }

@@ -74,8 +74,8 @@ public class Main {
      * MetaTrader installations on this machine (e.g. a separate live-trading terminal) are
      * never touched, and terminals are never killed machine-wide by image name. The user is
      * asked for confirmation before anything is terminated (CLI/headless runs confirm
-     * automatically). If no terminal path is configured, the terminal kill is skipped
-     * entirely and only the tester agents are cleaned up.
+     * automatically). If no terminal path is configured, no process is killed at all
+     * (tester agents are scoped to the same install directory).
      * </p>
      */
     private static void killLeftoverMt5Processes() {
@@ -85,7 +85,7 @@ public class Main {
 
         Path installDir = resolveConfiguredInstallDir();
         if (installDir == null) {
-            log.warn("No MetaTrader terminal path configured — skipping leftover terminal cleanup, killing tester agents only.");
+            log.warn("No MetaTrader terminal path configured — skipping leftover terminal and tester agent cleanup.");
             killLeftoverTesterAgents();
             return;
         }
@@ -190,19 +190,27 @@ public class Main {
     }
 
     /**
-     * Kills leftover tester agents ({@code metatester64.exe}) machine-wide by image name —
-     * backtest agents are never live-trading processes.
+     * Kills leftover tester agents ({@code metatester64.exe}) under the configured
+     * backtester installation — backtest agents are never live-trading processes.
+     * Like the terminal cleanup, the kill is scoped to the configured install
+     * directory: agents of other MetaTrader installations are never touched and
+     * agents are never killed machine-wide by image name. Processes whose
+     * executable path is not readable are skipped.
      */
     private static void killLeftoverTesterAgents() {
-        try {
-            Process killAgents = new ProcessBuilder("taskkill", "/F", "/IM", "metatester64.exe")
-                .redirectErrorStream(true).start();
-            String killOutput = new String(killAgents.getInputStream().readAllBytes()).trim();
-            killAgents.waitFor();
-            log.info("Tester agents cleanup: {}", killOutput);
-        } catch (Exception ex) {
-            log.warn("Failed to kill leftover tester agents: {}", ex.getMessage());
+        Path installDir = resolveConfiguredInstallDir();
+        if (installDir == null) {
+            log.info("No MetaTrader terminal path configured — skipping tester agent cleanup.");
+            return;
         }
+        List<Long> agentPids = Mt5ProcessGuard.findMetatesterPidsForInstall(installDir);
+        if (agentPids.isEmpty()) {
+            log.info("No leftover tester agents found for install: {}", installDir);
+            return;
+        }
+        log.info("Found leftover tester agent process(es) for install {}: {} — killing...",
+            installDir, agentPids);
+        destroyTerminalProcesses(agentPids);
     }
 
     /**

@@ -127,15 +127,18 @@ public class Bi5Decoder {
                 LocalDate date = LocalDate.of(year, month, day);
                 List<Tick> ticks = decode(file, symbol, date, hour);
                 allTicks.addAll(ticks);
-            } catch (Exception e) {
+            } catch (IOException e) {
+                // Read/decode failure (truncated or corrupt stream): the cached
+                // file itself is broken — remove it so the next run re-downloads.
                 try {
                     Files.deleteIfExists(file);
                 } catch (IOException deleteError) {
                     e.addSuppressed(deleteError);
                 }
-                if (e instanceof IOException ioException) {
-                    throw ioException;
-                }
+                throw new IOException("Failed to decode BI5 file: " + file, e);
+            } catch (RuntimeException e) {
+                // Not a read/decode error (e.g. NumberFormatException from the path
+                // parsing above): the cache file is fine — keep it and rethrow.
                 throw new IOException("Failed to decode BI5 file: " + file, e);
             }
         }
